@@ -1,1 +1,4 @@
 .worktrees/
+.playwright-cli/
+output/playwright/
+tmp/pdfs/

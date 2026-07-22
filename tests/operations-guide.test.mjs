@@ -42,6 +42,11 @@ test('includes responsive, print and local checklist behavior', async () => {
   assert.match(html, /data-checklist-item/);
 });
 
+test('hides interactive controls from printed copies', async () => {
+  const html = await loadHtml();
+  assert.match(html, /@media print[\s\S]*#reset-checklist[\s\S]*display:\s*none\s*!important/);
+});
+
 test('exposes accessible interaction hooks', async () => {
   const html = await loadHtml();
   for (const functionName of ['initMobileNav', 'initSectionTracking', 'initDisclosureControls', 'initChecklist']) {
