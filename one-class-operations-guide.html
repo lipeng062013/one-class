@@ -1,0 +1,1479 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="壹号教室全年运营、平台引流、口碑传播与AI辅助工作方案">
+  <title>壹号教室全年运营指导</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #19221f;
+      --muted: #66706c;
+      --green: #176b4d;
+      --green-soft: #e8f2ed;
+      --blue: #245f8f;
+      --blue-soft: #e9f1f7;
+      --yellow: #d89a20;
+      --yellow-soft: #fff5d9;
+      --risk: #b4423c;
+      --risk-soft: #f9e9e7;
+      --paper: #ffffff;
+      --surface: #f3f5f3;
+      --line: #dce2de;
+      --sidebar-width: 272px;
+      --topbar-height: 64px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-padding-top: calc(var(--topbar-height) + 18px);
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--surface);
+      font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+      font-size: 16px;
+      line-height: 1.72;
+      letter-spacing: 0;
+    }
+
+    button, input { font: inherit; }
+
+    button, a { -webkit-tap-highlight-color: transparent; }
+
+    a { color: var(--blue); }
+
+    a:hover { color: #174a70; }
+
+    .skip-link {
+      position: fixed;
+      left: 12px;
+      top: -80px;
+      z-index: 100;
+      padding: 10px 14px;
+      color: var(--paper);
+      background: var(--ink);
+    }
+
+    .skip-link:focus { top: 10px; }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      min-height: var(--topbar-height);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 22px;
+      color: var(--paper);
+      background: #173c31;
+      border-bottom: 3px solid var(--yellow);
+    }
+
+    .brand {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      margin-right: auto;
+      font-weight: 700;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
+      display: grid;
+      place-items: center;
+      color: #173c31;
+      background: var(--paper);
+      border-radius: 6px;
+      font-size: 18px;
+    }
+
+    .brand-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .header-progress {
+      min-width: 142px;
+      display: grid;
+      gap: 4px;
+      font-size: 12px;
+    }
+
+    .progress-track {
+      height: 5px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.24);
+      border-radius: 3px;
+    }
+
+    .progress-fill {
+      width: 0;
+      height: 100%;
+      background: #f3c45f;
+      transition: width 180ms ease;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .command {
+      min-height: 40px;
+      padding: 7px 12px;
+      color: inherit;
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.42);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .command:hover, .command:focus-visible {
+      background: rgba(255, 255, 255, 0.12);
+      outline: none;
+    }
+
+    .menu-button { display: none; }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+      min-height: calc(100vh - var(--topbar-height));
+    }
+
+    .sidebar {
+      position: sticky;
+      top: var(--topbar-height);
+      align-self: start;
+      height: calc(100vh - var(--topbar-height));
+      overflow-y: auto;
+      padding: 22px 14px 36px;
+      background: #edf1ee;
+      border-right: 1px solid var(--line);
+    }
+
+    .nav-label {
+      margin: 0 10px 10px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .nav-list {
+      display: grid;
+      gap: 2px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .nav-link {
+      display: block;
+      padding: 8px 10px;
+      color: #3f4b46;
+      border-left: 3px solid transparent;
+      text-decoration: none;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .nav-link:hover {
+      color: var(--green);
+      background: rgba(255, 255, 255, 0.62);
+    }
+
+    .nav-link.is-active {
+      color: #0f563c;
+      background: var(--paper);
+      border-left-color: var(--green);
+      font-weight: 700;
+    }
+
+    main {
+      min-width: 0;
+      width: 100%;
+      max-width: 1160px;
+      margin: 0 auto;
+      padding: 34px 42px 80px;
+    }
+
+    .intro {
+      padding: 12px 0 34px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--green);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    h1, h2, h3, h4 {
+      margin-top: 0;
+      line-height: 1.3;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      max-width: 820px;
+      margin-bottom: 14px;
+      font-size: 40px;
+    }
+
+    h2 { font-size: 26px; }
+    h3 { font-size: 19px; }
+    h4 { font-size: 16px; }
+
+    .intro-copy {
+      max-width: 850px;
+      margin: 0;
+      color: #4d5954;
+      font-size: 17px;
+    }
+
+    .fact-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px 18px;
+      margin-top: 22px;
+      color: #44504b;
+      font-size: 14px;
+    }
+
+    .fact-line span::before {
+      content: "";
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      margin-right: 7px;
+      background: var(--yellow);
+      border-radius: 50%;
+      vertical-align: 1px;
+    }
+
+    .quick-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    .primary-action, .secondary-action {
+      min-height: 44px;
+      padding: 9px 15px;
+      border-radius: 6px;
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .primary-action {
+      color: var(--paper);
+      background: var(--green);
+      border: 1px solid var(--green);
+    }
+
+    .secondary-action {
+      color: var(--green);
+      background: var(--paper);
+      border: 1px solid #9cb9ac;
+    }
+
+    .primary-action:hover, .primary-action:focus-visible { background: #10583e; }
+    .secondary-action:hover, .secondary-action:focus-visible { background: var(--green-soft); }
+
+    .guide-section {
+      padding: 34px 0;
+      border-bottom: 1px solid var(--line);
+      scroll-margin-top: calc(var(--topbar-height) + 16px);
+    }
+
+    .section-details > summary {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      list-style: none;
+      cursor: pointer;
+    }
+
+    .section-details > summary::-webkit-details-marker { display: none; }
+
+    .section-number {
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
+      display: grid;
+      place-items: center;
+      color: var(--paper);
+      background: var(--green);
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .section-title {
+      margin: 0;
+      flex: 1;
+    }
+
+    .disclosure-indicator {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      color: var(--green);
+      border: 1px solid #a7bbb1;
+      border-radius: 50%;
+      font-weight: 700;
+    }
+
+    details[open] .disclosure-indicator { transform: rotate(45deg); }
+
+    .section-body {
+      margin-top: 24px;
+      padding-left: 46px;
+    }
+
+    .lead {
+      max-width: 850px;
+      color: #4f5d57;
+      font-size: 17px;
+    }
+
+    .summary-grid, .path-grid, .phase-grid, .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin: 22px 0;
+    }
+
+    .info-block {
+      min-width: 0;
+      padding: 18px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-top: 4px solid var(--green);
+      border-radius: 6px;
+    }
+
+    .info-block.blue { border-top-color: var(--blue); }
+    .info-block.yellow { border-top-color: var(--yellow); }
+    .info-block.risk { border-top-color: var(--risk); }
+
+    .info-block h3, .info-block h4 { margin-bottom: 8px; }
+    .info-block p:last-child { margin-bottom: 0; }
+
+    .metric {
+      color: var(--green);
+      font-size: 28px;
+      font-weight: 800;
+      line-height: 1.2;
+    }
+
+    .callout {
+      margin: 22px 0;
+      padding: 16px 18px;
+      background: var(--green-soft);
+      border-left: 4px solid var(--green);
+    }
+
+    .callout.info {
+      background: var(--blue-soft);
+      border-left-color: var(--blue);
+    }
+
+    .callout.warning {
+      background: var(--yellow-soft);
+      border-left-color: var(--yellow);
+    }
+
+    .callout.risk {
+      background: var(--risk-soft);
+      border-left-color: var(--risk);
+    }
+
+    .callout > :last-child { margin-bottom: 0; }
+
+    .flow {
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+      margin: 22px 0;
+      overflow-x: auto;
+      padding-bottom: 6px;
+    }
+
+    .flow-step {
+      position: relative;
+      min-width: 142px;
+      flex: 1 0 142px;
+      padding: 14px 30px 14px 14px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+    }
+
+    .flow-step + .flow-step { border-left: 0; }
+
+    .flow-step:not(:last-child)::after {
+      content: ">";
+      position: absolute;
+      right: 9px;
+      top: 50%;
+      color: var(--green);
+      transform: translateY(-50%);
+      font-weight: 800;
+    }
+
+    .flow-step strong { display: block; }
+    .flow-step small { color: var(--muted); }
+
+    .table-wrap {
+      width: 100%;
+      margin: 20px 0;
+      overflow-x: auto;
+      background: var(--paper);
+      border: 1px solid var(--line);
+    }
+
+    table {
+      width: 100%;
+      min-width: 680px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th, td {
+      padding: 12px 14px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+    }
+
+    th {
+      color: #25332e;
+      background: #e8eeea;
+      font-weight: 700;
+    }
+
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr:nth-child(even) td { background: #fafbfa; }
+
+    .compact-list, .check-list, .number-list {
+      margin: 14px 0;
+      padding-left: 22px;
+    }
+
+    .compact-list li, .check-list li, .number-list li { margin: 7px 0; }
+
+    .quote {
+      margin: 20px 0;
+      padding: 16px 18px;
+      color: #334039;
+      background: var(--paper);
+      border-left: 4px solid var(--blue);
+      font-style: normal;
+    }
+
+    .template {
+      margin: 18px 0;
+      padding: 16px 18px;
+      overflow-x: auto;
+      color: #dce9e2;
+      background: #20332c;
+      border-radius: 6px;
+      white-space: pre-wrap;
+      font-family: Consolas, "Microsoft YaHei", monospace;
+      font-size: 14px;
+    }
+
+    .platform-heading {
+      margin-top: 28px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--line);
+    }
+
+    .resource-list {
+      display: grid;
+      gap: 10px;
+      margin: 18px 0;
+    }
+
+    .resource-link {
+      display: block;
+      padding: 14px 16px;
+      color: var(--ink);
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--blue);
+      text-decoration: none;
+    }
+
+    .resource-link:hover {
+      background: var(--blue-soft);
+      border-left-color: var(--green);
+    }
+
+    .resource-link strong { color: var(--blue); }
+    .resource-link span { display: block; color: var(--muted); font-size: 14px; }
+
+    .checklist {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin: 20px 0;
+    }
+
+    .checklist-item {
+      min-width: 0;
+      display: flex;
+      align-items: flex-start;
+      gap: 11px;
+      padding: 13px 14px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .checklist-item:hover { border-color: #9ab0a5; }
+
+    .checklist-item input {
+      width: 19px;
+      height: 19px;
+      flex: 0 0 19px;
+      margin: 3px 0 0;
+      accent-color: var(--green);
+    }
+
+    .checklist-item:has(input:checked) {
+      color: #496059;
+      background: var(--green-soft);
+      border-color: #a6c4b6;
+    }
+
+    .checklist-summary {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .checklist-summary .progress-track {
+      width: min(360px, 50vw);
+      height: 8px;
+      background: #d8e1dc;
+    }
+
+    .checklist-summary .progress-fill { background: var(--green); }
+
+    .footer-note {
+      padding: 32px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    noscript {
+      display: block;
+      margin: 16px;
+      padding: 12px;
+      color: #693b06;
+      background: var(--yellow-soft);
+      border: 1px solid #e4c36c;
+    }
+
+    @media (max-width: 1000px) {
+      .summary-grid, .path-grid, .tool-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      main { padding: 30px 28px 70px; }
+    }
+
+    @media (max-width: 760px) {
+      :root { --topbar-height: 58px; }
+
+      .topbar {
+        min-height: var(--topbar-height);
+        padding: 8px 12px;
+        gap: 8px;
+      }
+
+      .brand-mark { width: 32px; height: 32px; flex-basis: 32px; }
+      .brand-text { max-width: 150px; font-size: 14px; }
+      .header-progress { display: none; }
+      .toolbar .command:not(.menu-button) { display: none; }
+
+      .menu-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 46px;
+      }
+
+      .app-shell { display: block; }
+
+      .sidebar {
+        position: fixed;
+        inset: var(--topbar-height) 0 auto 0;
+        z-index: 30;
+        height: min(70vh, 620px);
+        display: none;
+        padding: 16px 14px 24px;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+        box-shadow: 0 12px 24px rgba(24, 43, 35, 0.16);
+      }
+
+      .sidebar.is-open { display: block; }
+
+      main {
+        max-width: none;
+        padding: 24px 18px 64px;
+      }
+
+      .intro { padding-top: 4px; }
+      h1 { font-size: 31px; overflow-wrap: anywhere; }
+      h2 { font-size: 23px; }
+      .intro-copy, .lead { font-size: 16px; }
+
+      .summary-grid, .path-grid, .phase-grid, .tool-grid, .checklist {
+        grid-template-columns: 1fr;
+      }
+
+      .guide-section { padding: 28px 0; }
+      .section-details > summary { align-items: flex-start; }
+      .section-number { width: 30px; height: 30px; flex-basis: 30px; }
+      .section-title { padding-top: 1px; }
+      .disclosure-indicator { width: 26px; height: 26px; flex-basis: 26px; }
+      .section-body { margin-top: 20px; padding-left: 0; }
+
+      .quick-actions { display: grid; grid-template-columns: 1fr; }
+      .primary-action, .secondary-action { text-align: center; }
+
+      .flow-step { min-width: 176px; flex-basis: 176px; }
+      table { min-width: 620px; }
+      th, td { padding: 10px 12px; }
+      .checklist-summary { align-items: flex-start; flex-direction: column; }
+      .checklist-summary .progress-track { width: 100%; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: 0.01ms !important; }
+    }
+
+    @media print {
+      @page { margin: 16mm 14mm; }
+      body { color: #000; background: #fff; font-size: 11pt; }
+      .topbar, .sidebar, .quick-actions, .disclosure-indicator, .skip-link, noscript { display: none !important; }
+      .app-shell { display: block; }
+      main { max-width: none; margin: 0; padding: 0; }
+      .intro { padding-top: 0; }
+      h1 { font-size: 26pt; }
+      h2, h3, h4 { break-after: avoid; }
+      .guide-section { break-inside: auto; padding: 18px 0; }
+      .section-details, .section-body { display: block !important; }
+      .section-details > summary { display: flex !important; cursor: default; }
+      .section-body { margin-top: 12px; padding-left: 0; }
+      .info-block, .callout, .quote, .resource-link, .checklist-item { break-inside: avoid; }
+      .summary-grid, .path-grid, .phase-grid, .tool-grid { grid-template-columns: repeat(2, 1fr); }
+      .table-wrap { overflow: visible; border-color: #999; }
+      table { min-width: 0; font-size: 9pt; }
+      a { color: #000; text-decoration: none; }
+      a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 8pt; overflow-wrap: anywhere; }
+      .checklist { grid-template-columns: repeat(2, 1fr); }
+      .footer-note { break-before: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到正文</a>
+  <noscript>互动功能不可用，但全部运营内容仍可正常阅读。</noscript>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">壹</span>
+      <span class="brand-text">壹号教室全年运营指导</span>
+    </div>
+    <div class="header-progress" aria-live="polite">
+      <span id="header-progress-text">首月清单 0 / 12</span>
+      <div class="progress-track" aria-hidden="true"><div class="progress-fill" id="header-progress-fill"></div></div>
+    </div>
+    <div class="toolbar" aria-label="页面工具">
+      <button class="command" type="button" id="expand-all">全部展开</button>
+      <button class="command" type="button" id="collapse-all">全部收起</button>
+      <button class="command" type="button" id="print-guide">打印/导出 PDF</button>
+      <button class="command menu-button" type="button" id="menu-button" aria-expanded="false" aria-controls="section-nav">目录</button>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    <nav class="sidebar" id="section-nav" aria-label="章节导航">
+      <p class="nav-label">运营手册目录</p>
+      <ol class="nav-list">
+        <li><a class="nav-link is-active" href="#summary">01 执行摘要</a></li>
+        <li><a class="nav-link" href="#growth">02 三条增长路径</a></li>
+        <li><a class="nav-link" href="#channels">03 各平台定位</a></li>
+        <li><a class="nav-link" href="#annual-plan">04 全年宣传计划</a></li>
+        <li><a class="nav-link" href="#cadence">05 每月每周每天</a></li>
+        <li><a class="nav-link" href="#materials">06 老师素材提交</a></li>
+        <li><a class="nav-link" href="#platform-playbooks">07 平台操作指南</a></li>
+        <li><a class="nav-link" href="#reviews">08 好评外传</a></li>
+        <li><a class="nav-link" href="#ai-stack">09 AI工具组合</a></li>
+        <li><a class="nav-link" href="#automation-boundaries">10 自动化边界</a></li>
+        <li><a class="nav-link" href="#internal-tools">11 自用工具路线</a></li>
+        <li><a class="nav-link" href="#official-learning">12 官方学习入口</a></li>
+        <li><a class="nav-link" href="#learning-plan">13 8周学习计划</a></li>
+        <li><a class="nav-link" href="#ninety-days">14 30/60/90天计划</a></li>
+        <li><a class="nav-link" href="#roles-budget">15 分工与预算</a></li>
+        <li><a class="nav-link" href="#metrics">16 KPI与复盘</a></li>
+        <li><a class="nav-link" href="#compliance">17 合规与隐私</a></li>
+        <li><a class="nav-link" href="#first-month-checklist">18 首月任务清单</a></li>
+      </ol>
+    </nav>
+
+    <main id="main-content">
+      <div class="intro">
+        <p class="eyebrow">上海市嘉定区 · 嘉定新城 · 本地教育服务</p>
+        <h1>壹号教室全年运营与宣传执行方案</h1>
+        <p class="intro-copy">这份手册回答一个具体问题：在没有固定宣传预算、由兼职人员晚间执行的条件下，如何持续做好朋友圈、视频号、大众点评、美团和口碑传播，并逐步建立一套AI辅助的运营系统。</p>
+        <div class="fact-line" aria-label="方案基础信息">
+          <span>三年级以上文化课与托管</span>
+          <span>每周运营投入约6-8小时</span>
+          <span>先自然增长，后小额测试</span>
+          <span>先跑流程，再开发工具</span>
+        </div>
+        <div class="quick-actions">
+          <a class="primary-action" href="#ninety-days">先看90天执行计划</a>
+          <a class="secondary-action" href="#annual-plan">查看全年宣传日历</a>
+          <button class="secondary-action" type="button" id="print-guide-main">打印/导出 PDF</button>
+        </div>
+      </div>
+
+      <section class="guide-section" id="summary">
+        <details class="section-details" open>
+          <summary aria-expanded="true">
+            <span class="section-number">01</span>
+            <h2 class="section-title">执行摘要</h2>
+            <span class="disclosure-indicator" aria-hidden="true">+</span>
+          </summary>
+          <div class="section-body">
+            <p class="lead">壹号教室已经正常营业，有稳定在读学生和真实素材，但整体生源尚未达到理想规模。运营采用“双引擎”：用老生学习过程、续费和转介绍建立信任，同时通过本地搜索与短内容获得新咨询。</p>
+            <div class="summary-grid">
+              <article class="info-block">
+                <h3>主营服务</h3>
+                <p>三至六年级语数英同步辅导；初中语数英培优或薄弱科提升；作业托管、晚托、寒暑假班；一对一和一对多。</p>
+              </article>
+              <article class="info-block blue">
+                <h3>真实优势</h3>
+                <p>小班制、固定老师、全程陪学；学习习惯、错题订正和阶段测评；接送、安全管理与离校流程。</p>
+              </article>
+              <article class="info-block yellow">
+                <h3>推荐路线</h3>
+                <p>采用AI辅助的轻量运营系统。共享素材库、固定模板、批量生成初稿，发布与家长沟通仍由人工完成。</p>
+              </article>
+            </div>
+            <h3>为什么不立即开发平台</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>路线</th><th>优势</th><th>限制</th><th>结论</th></tr></thead>
+                <tbody>
+                  <tr><td>纯手工轻运营</td><td>零成本、马上开始</td><td>容易断更，素材和数据分散</td><td>仅适合短期过渡</td></tr>
+                  <tr><td>AI辅助标准化运营</td><td>低成本、可持续、每周可批量处理</td><td>需要建立素材和审核习惯</td><td><strong>当前采用</strong></td></tr>
+                  <tr><td>自研运营平台</td><td>长期效率和数据统一性更高</td><td>过早开发容易做错需求</td><td>运行8-12周后再评估</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="callout"><strong>核心判断：</strong>内容不是为了把账号发得热闹，而是持续回答家长的四个问题：适合谁、能解决什么、服务过程是否可靠、下一步怎样咨询。</div>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="growth">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">02</span><h2 class="section-title">三条增长路径</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <div class="path-grid">
+              <article class="info-block">
+                <h3>新客获客</h3>
+                <p>本地家长在朋友圈、视频号或点评/美团看到真实内容，进入门店页，咨询并预约到店测评或试听，最后报名。</p>
+              </article>
+              <article class="info-block blue">
+                <h3>老生续费</h3>
+                <p>把课堂、作业、错题和阶段测评变成家长能看懂的过程证据，推动续费或升级服务。</p>
+              </article>
+              <article class="info-block yellow">
+                <h3>口碑转介绍</h3>
+                <p>在进步、满意和续费节点邀请真实评价，经授权和脱敏后用于口碑外传与老带新。</p>
+              </article>
+            </div>
+            <h3>新客路径</h3>
+            <div class="flow" aria-label="新客获客流程">
+              <div class="flow-step"><strong>本地曝光</strong><small>内容或搜索</small></div>
+              <div class="flow-step"><strong>查看证据</strong><small>环境、老师、案例</small></div>
+              <div class="flow-step"><strong>有效咨询</strong><small>年级、科目、需求</small></div>
+              <div class="flow-step"><strong>到店沟通</strong><small>测评或试听</small></div>
+              <div class="flow-step"><strong>报名跟进</strong><small>课程与服务匹配</small></div>
+            </div>
+            <h3>续费路径</h3>
+            <div class="flow" aria-label="老生续费流程">
+              <div class="flow-step"><strong>课堂记录</strong><small>每周少量素材</small></div>
+              <div class="flow-step"><strong>问题识别</strong><small>作业与错题变化</small></div>
+              <div class="flow-step"><strong>阶段反馈</strong><small>测评与建议</small></div>
+              <div class="flow-step"><strong>家长沟通</strong><small>看见过程</small></div>
+              <div class="flow-step"><strong>续费升级</strong><small>匹配下一阶段</small></div>
+            </div>
+            <h3>转介绍路径</h3>
+            <div class="flow" aria-label="口碑转介绍流程">
+              <div class="flow-step"><strong>满意节点</strong><small>进步、续费、认可</small></div>
+              <div class="flow-step"><strong>真实邀请</strong><small>不指定好评内容</small></div>
+              <div class="flow-step"><strong>授权脱敏</strong><small>保护学生隐私</small></div>
+              <div class="flow-step"><strong>二次传播</strong><small>多平台内容</small></div>
+              <div class="flow-step"><strong>老带新</strong><small>自然推荐</small></div>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="channels">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">03</span><h2 class="section-title">各平台定位</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <p class="lead">各平台不能平均用力。每个平台承担不同任务，但最终都指向一个明确行动入口，例如“预约一次学习情况沟通”或“预约到店了解晚托流程”。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>平台</th><th>核心任务</th><th>主要内容</th><th>建议频率</th></tr></thead>
+                <tbody>
+                  <tr><td>朋友圈</td><td>熟人信任、咨询转化</td><td>教学日常、学习变化、家长反馈、班级名额</td><td>每周4-5条</td></tr>
+                  <tr><td>视频号</td><td>本地曝光、专业表达</td><td>课堂片段、老师讲题、学习方法、真实场景</td><td>每周1-2条</td></tr>
+                  <tr><td>大众点评</td><td>承接主动本地搜索</td><td>门店资料、环境、师资、课程特色、真实评价</td><td>每天检查，每周维护</td></tr>
+                  <tr><td>美团</td><td>产品化和到店转化</td><td>测评、体验、托管与阶段课程入口</td><td>每天检查，每周维护</td></tr>
+                  <tr><td>微信私聊/电话</td><td>咨询、预约和成交</td><td>需求判断、预约试听、回访与报名跟进</td><td>有线索及时处理</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="callout info"><strong>运营分工：</strong>大众点评和美团承接已经在寻找机构的家长；视频号扩大本地触达；朋友圈持续建立信任；微信私聊和电话完成咨询与到店预约。</div>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="annual-plan">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">04</span><h2 class="section-title">全年12个月宣传计划</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <p class="lead">一年不平均用力，而是围绕寒假、春季开学、暑假和秋季开学四个招生窗口。每月只设一个主主题，再搭配专业、信任、成果和招生四类常规内容。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>月份</th><th>宣传主题</th><th>重点内容</th><th>主要转化目标</th></tr></thead>
+                <tbody>
+                  <tr><td>1月</td><td>期末复盘、寒假规划</td><td>错题分析、阶段反馈、寒假学习安排</td><td>寒假班、老生续费</td></tr>
+                  <tr><td>2月</td><td>新学期衔接</td><td>学期目标、习惯恢复、教材同步准备</td><td>春季班、晚托</td></tr>
+                  <tr><td>3月</td><td>学习习惯养成</td><td>作业效率、错题整理、固定老师陪学</td><td>托管、同步辅导</td></tr>
+                  <tr><td>4月</td><td>期中查漏补缺</td><td>高频问题、老师讲题、阶段测评</td><td>测评、薄弱科辅导</td></tr>
+                  <tr><td>5月</td><td>期中复盘与提升</td><td>真实进步案例、家长反馈、后续计划</td><td>续费、一对一提升</td></tr>
+                  <tr><td>6月</td><td>期末冲刺、暑期规划</td><td>复习方法、知识漏洞、暑期安排</td><td>暑假班预报名</td></tr>
+                  <tr><td>7月</td><td>暑期集中提升</td><td>暑期课堂、每日状态、弱项改善</td><td>暑期班、秋季预报名</td></tr>
+                  <tr><td>8月</td><td>新学期提前衔接</td><td>新学期预习、状态调整、班级名额</td><td>秋季班、晚托</td></tr>
+                  <tr><td>9月</td><td>开学同步与晚托</td><td>放学接送、作业管理、同步辅导</td><td>晚托、同步班</td></tr>
+                  <tr><td>10月</td><td>学情诊断月</td><td>开学后问题、错题变化、个性化方案</td><td>到店测评、一对一</td></tr>
+                  <tr><td>11月</td><td>期中成果展示</td><td>阶段报告、课堂记录、真实评价</td><td>插班、续费、转介绍</td></tr>
+                  <tr><td>12月</td><td>期末准备、寒假预招</td><td>复习规划、年度成长、寒假名额</td><td>寒假班、年度续费</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="phase-grid">
+              <article class="info-block"><h3>1-3月</h3><p>寒假成果转春季续费，突出稳定陪伴和学习习惯。</p></article>
+              <article class="info-block blue"><h3>4-6月</h3><p>围绕期中、期末展示专业能力，提前锁定暑期学生。</p></article>
+              <article class="info-block yellow"><h3>7-9月</h3><p>全年获客重点期，暑期效果、秋季衔接和托管同时宣传。</p></article>
+              <article class="info-block"><h3>10-12月</h3><p>沉淀案例与评价，推动续费、转介绍和寒假预报名。</p></article>
+            </div>
+            <h3>每月内容结构</h3>
+            <ul class="compact-list">
+              <li><strong>专业内容：</strong>学习方法、错题、讲题、学情分析。</li>
+              <li><strong>信任内容：</strong>老师、课堂、接送、安全、离校流程。</li>
+              <li><strong>成果内容：</strong>学习变化、阶段测评、家长反馈。</li>
+              <li><strong>招生内容：</strong>适合人群、课程安排、试听或测评入口。</li>
+            </ul>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="cadence">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">05</span><h2 class="section-title">每月、每周、每天怎么做</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <p class="lead">执行原则是“每天检查、每周批量生产、按平台分发”。大众点评和美团不需要每天强行发布新内容。</p>
+            <h3>每天晚上20-30分钟</h3>
+            <ul class="compact-list">
+              <li>查看微信、大众点评、美团的新咨询、评论和评价。</li>
+              <li>登记家长称呼、年级、科目、需求、来源和下次跟进时间。</li>
+              <li>回复评价和私信，目标是不超过24小时。</li>
+              <li>从老师当日素材中选一条可用内容，必要时发布朋友圈。</li>
+              <li>记录访问、咨询、到店和报名变化。</li>
+            </ul>
+            <h3>每周固定节奏</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>时间</th><th>主要动作</th><th>预计用时</th></tr></thead>
+                <tbody>
+                  <tr><td>周一晚</td><td>整理老师提交的照片、视频和学生进展</td><td>30分钟</td></tr>
+                  <tr><td>周二晚</td><td>用AI批量生成朋友圈、视频脚本和点评文案</td><td>60分钟</td></tr>
+                  <tr><td>周三晚</td><td>发布学习方法类朋友圈和一条视频号</td><td>30-60分钟</td></tr>
+                  <tr><td>周四晚</td><td>更新大众点评/美团图片、课程、问答和门店动态</td><td>45分钟</td></tr>
+                  <tr><td>周五晚</td><td>发布课堂日常、老师陪学或家长反馈</td><td>20分钟</td></tr>
+                  <tr><td>周六/周日</td><td>编辑下周视频、整理案例、复盘线索数据</td><td>2-3小时</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <h3>每周建议产量</h3>
+            <div class="summary-grid">
+              <article class="info-block"><div class="metric">4-5</div><p>朋友圈内容</p></article>
+              <article class="info-block blue"><div class="metric">1-2</div><p>视频号内容</p></article>
+              <article class="info-block yellow"><div class="metric">1次</div><p>点评与美团集中维护</p></article>
+            </div>
+            <h3>朋友圈一周模板</h3>
+            <ul class="compact-list">
+              <li>周一：本周课程或学习目标。</li>
+              <li>周二：老师分享一个作业、错题或学习习惯问题。</li>
+              <li>周三：真实课堂和陪学过程。</li>
+              <li>周四：脱敏后的学生变化或家长反馈。</li>
+              <li>周五：本周总结、可预约测评或剩余名额。</li>
+              <li>周末：轻量课堂花絮、老师介绍或下周安排。</li>
+            </ul>
+            <div class="callout warning"><strong>内容比例：</strong>约60%有价值内容 + 25%信任与案例 + 15%招生信息。不是每条都带招生广告。</div>
+            <h3>每月固定动作</h3>
+            <p>月初确定一个招生主题和转化产品；月中检查内容和咨询数据；月末整理优秀案例、评价、招生来源和下月计划。</p>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="materials">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">06</span><h2 class="section-title">老师怎样提交素材</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <p class="lead">老师不负责写宣传稿，只需要每周提交2组真实、可解释的素材。运营人员负责筛选、改写、脱敏和排期。</p>
+            <pre class="template">日期：
+年级/科目：
+今天解决了什么问题：
+孩子有哪些变化：
+可公开的照片或视频：
+是否已获得家长公开授权：
+补充说明：</pre>
+            <h3>素材状态</h3>
+            <ul class="compact-list">
+              <li><strong>待整理：</strong>老师刚提交，尚未判断用途。</li>
+              <li><strong>可发布：</strong>内容真实、信息完整、授权明确。</li>
+              <li><strong>已发布：</strong>记录平台和发布日期，避免短期重复。</li>
+              <li><strong>需授权/不可公开：</strong>存在正脸、姓名、学校、成绩单编号或其他隐私信息。</li>
+            </ul>
+            <div class="callout risk"><strong>底线：</strong>没有明确授权的学生影像和评价不能公开。可先保留为内部教学记录，不能因为内容“很好看”就跳过授权。</div>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="platform-playbooks">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">07</span><h2 class="section-title">各平台具体怎么运营</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <h3 class="platform-heading">朋友圈：建立信任</h3>
+            <p>一条内容尽量包含“一个具体场景 + 一个家长痛点 + 老师怎么处理 + 下一步入口”。真实课堂、老师工作和孩子学习过程通常比复杂海报更有说服力。</p>
+            <blockquote class="quote">五年级孩子做应用题总是读完就下笔，错的并不是计算，而是没有先找数量关系。今天老师带他把题目分成“已知、问题、关系”三步，再完成同类题订正。同步辅导不只是把作业做完，更重要的是把错误背后的习惯找出来。需要了解孩子目前学习情况的家长，可以预约到店沟通。</blockquote>
+
+            <h3 class="platform-heading">视频号：本地曝光与专业表达</h3>
+            <p>每条建议20-60秒，前3秒直接提出问题。固定栏目比临时想选题更容易坚持。</p>
+            <ul class="compact-list">
+              <li>“孩子作业写得慢，真的是不专心吗？”</li>
+              <li>“数学错题抄了很多，为什么下次还会错？”</li>
+              <li>“托管班只是看着孩子写完作业吗？”</li>
+              <li>“五年级开始，哪些学习习惯最容易拉开差距？”</li>
+            </ul>
+            <p>栏目可固定为：老师讲一个学习问题、一道题背后的思考方法、课堂或晚托真实片段、一周学习变化、接送和离校流程。</p>
+
+            <h3 class="platform-heading">大众点评：承接主动搜索</h3>
+            <ul class="compact-list">
+              <li>名称、地址、电话和营业时间准确一致。</li>
+              <li>门头、前台、教室、学习区、安全设施和接送场景清晰。</li>
+              <li>老师介绍只写真实教龄、年级与科目，不写无法证明的头衔。</li>
+              <li>课程写清适合年级、班型、服务内容和上课方式。</li>
+              <li>自然使用“嘉定新城、小学同步辅导、初中薄弱科提升、晚托”等真实业务词。</li>
+              <li>检查家长常问问题，所有评价尽量在24小时内个性化回复。</li>
+            </ul>
+            <p>遇到差评时先确认事实，说明处理动作并邀请线下沟通，不与家长公开争辩，也不公开学生信息。</p>
+
+            <h3 class="platform-heading">美团：产品化与到店转化</h3>
+            <p>页面先设置少量、容易理解的入口：学情沟通或阶段测评、小学同步辅导体验、初中薄弱科体验、晚托体验、寒暑假阶段课程。</p>
+            <p>每个产品写清适合对象、包含内容、时长、预约方式、使用限制，以及是否需要携带作业或试卷。价格和促销必须真实，并在机构资质、平台类目和当地规定允许的范围内上线。</p>
+
+            <h3 class="platform-heading">咨询与成交：统一入口</h3>
+            <p>不要在同一条内容里同时要求家长点赞、加微信、打电话和买套餐。统一使用一个行动入口，例如“预约一次学习情况沟通”。咨询时至少记录年级、科目、主要问题、意向服务、来源和下一次跟进时间。</p>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="reviews">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">08</span><h2 class="section-title">好评外传：一条评价变成五份内容</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <div class="flow" aria-label="好评外传流程">
+              <div class="flow-step"><strong>真实反馈</strong><small>满意节点自然提出</small></div>
+              <div class="flow-step"><strong>询问授权</strong><small>明确可用范围</small></div>
+              <div class="flow-step"><strong>隐私脱敏</strong><small>姓名、学校、头像</small></div>
+              <div class="flow-step"><strong>提炼故事</strong><small>问题、动作、变化</small></div>
+              <div class="flow-step"><strong>多端复用</strong><small>按平台改写</small></div>
+            </div>
+            <h3>评价邀请话术</h3>
+            <blockquote class="quote">感谢您这段时间对老师工作的认可。如果您愿意，可以在大众点评上真实分享一下孩子的学习体验，给附近正在选择辅导机构的家长提供参考。按您的实际感受写就可以。</blockquote>
+            <h3>复用方式</h3>
+            <ul class="compact-list">
+              <li>朋友圈：讲清老师如何解决具体问题。</li>
+              <li>视频号：让老师解释对应的学习方法。</li>
+              <li>点评动态：展示学习习惯管理或服务过程。</li>
+              <li>咨询案例：向有相似问题的家长说明服务方式。</li>
+              <li>月度复盘：记录该类内容带来的咨询变化。</li>
+            </ul>
+            <div class="callout info"><strong>例子：</strong>家长说“以前每天写作业都要催，现在回来会先自己列任务”，可以转化为任务清单训练案例，而不是只截一张“老师很好”的泛泛好评。</div>
+            <div class="callout risk"><strong>禁止：</strong>购买评价、代写评价、让家长照模板写指定内容、用礼品交换指定好评、刷量或删除真实问题。</div>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="ai-stack">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">09</span><h2 class="section-title">AI工具组合与运营中枢</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <p class="lead">先把飞书多维表格作为运营中枢，不同时学习四套复杂工具。普通AI负责内容初稿，剪映负责视频，扣子或Dify二选一进阶，n8n最后学习。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>工作</th><th>当前建议</th><th>作用</th><th>阶段</th></tr></thead>
+                <tbody>
+                  <tr><td>素材与任务管理</td><td>飞书多维表格</td><td>素材、排期、授权、发布记录和线索</td><td>立即使用</td></tr>
+                  <tr><td>文案与脚本</td><td>豆包、Kimi或通义千问任选一个</td><td>同一素材改写为多平台初稿</td><td>立即使用</td></tr>
+                  <tr><td>图片与视频</td><td>剪映、醒图或稿定设计</td><td>字幕、封面、脱敏和基础剪辑</td><td>立即使用</td></tr>
+                  <tr><td>初级自动化</td><td>飞书表单、自动化、AI字段</td><td>提醒、状态流转、批量初稿</td><td>第2-4周</td></tr>
+                  <tr><td>AI工作流</td><td>扣子或Dify</td><td>固化品牌知识、文案结构和审核规则</td><td>第7周后</td></tr>
+                  <tr><td>高级系统集成</td><td>n8n</td><td>连接表格、AI、提醒和自建系统</td><td>流程稳定后</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <h3>飞书运营中枢的五张表</h3>
+            <div class="tool-grid">
+              <article class="info-block"><h3>素材库</h3><p>照片、视频、年级、科目、说明和授权状态。</p></article>
+              <article class="info-block blue"><h3>内容日历</h3><p>主题、平台、日期、文案、素材、审核和发布状态。</p></article>
+              <article class="info-block yellow"><h3>评价库</h3><p>原话、问题、变化、授权范围和脱敏版本。</p></article>
+              <article class="info-block"><h3>招生线索表</h3><p>来源、年级、需求、跟进阶段和下次联系时间。</p></article>
+              <article class="info-block blue"><h3>数据复盘表</h3><p>访问、咨询、到店、报名、续费和转介绍。</p></article>
+            </div>
+            <h3>推荐工作流</h3>
+            <div class="flow" aria-label="AI辅助运营工作流">
+              <div class="flow-step"><strong>老师提交</strong><small>表单进入素材库</small></div>
+              <div class="flow-step"><strong>AI生成</strong><small>多平台初稿</small></div>
+              <div class="flow-step"><strong>人工审核</strong><small>事实、隐私、合规</small></div>
+              <div class="flow-step"><strong>人工发布</strong><small>各平台原生操作</small></div>
+              <div class="flow-step"><strong>数据回填</strong><small>咨询来源与结果</small></div>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="automation-boundaries">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">10</span><h2 class="section-title">哪些能自动化，哪些必须人工</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <div class="path-grid">
+              <article class="info-block">
+                <h3>适合自动化</h3>
+                <ul class="compact-list">
+                  <li>每周提醒老师交素材</li>
+                  <li>新素材自动建立任务</li>
+                  <li>生成多平台初稿</li>
+                  <li>未授权内容标记禁发</li>
+                  <li>发布与回访提醒</li>
+                  <li>月底汇总数量和线索</li>
+                </ul>
+              </article>
+              <article class="info-block blue">
+                <h3>必须人工</h3>
+                <ul class="compact-list">
+                  <li>发布前事实与隐私检查</li>
+                  <li>平台最终发布</li>
+                  <li>私信、评价和咨询回复</li>
+                  <li>案例是否适合公开</li>
+                  <li>课程与价格最终确认</li>
+                  <li>家长关系和投诉处理</li>
+                </ul>
+              </article>
+              <article class="info-block risk">
+                <h3>明确禁止</h3>
+                <ul class="compact-list">
+                  <li>刷评与虚假评价</li>
+                  <li>自动养号和模拟人工</li>
+                  <li>抓取家长个人信息</li>
+                  <li>未授权批量发布</li>
+                  <li>把未脱敏学生资料交给通用AI</li>
+                  <li>绕过平台接口和规则</li>
+                </ul>
+              </article>
+            </div>
+            <div class="callout warning"><strong>平台边界：</strong>微信、视频号、大众点评和美团没有明确开放并授权的发布接口时，不把“一键跨平台自动发布”作为目标。自动化重点是整理、提醒、初稿和统计。</div>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="internal-tools">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">11</span><h2 class="section-title">以后适合开发哪些自用工具</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <p class="lead">先用飞书流程运行8-12周，只记录反复出现的真实痛点。确认高频需求后，再开发轻量内部后台。</p>
+            <ol class="number-list">
+              <li><strong>老师手机上传素材：</strong>提交场景、学习问题、文件和授权信息。</li>
+              <li><strong>AI多平台草稿：</strong>依据壹号教室课程、语气和禁用词生成初稿。</li>
+              <li><strong>审核与排期：</strong>显示待授权、待审核、可发布、已发布状态。</li>
+              <li><strong>咨询与回访：</strong>记录来源、需求、预约和下一步提醒。</li>
+              <li><strong>招生数据看板：</strong>展示咨询、到店、报名、续费和转介绍。</li>
+              <li><strong>机构知识库：</strong>课程、师资、常见问题、服务流程和宣传禁用词。</li>
+            </ol>
+            <div class="callout info"><strong>第一版不做：</strong>平台账号托管、自动发布、评价抓取和复杂多人权限。先解决素材、内容、线索和复盘四个核心问题。</div>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="official-learning">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">12</span><h2 class="section-title">AI自动化官方学习入口</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <p class="lead">学习顺序：先飞书，再学一个普通AI工具和剪映；之后在扣子与Dify中选一个；最后才学n8n。</p>
+            <div class="resource-list">
+              <a class="resource-link" href="https://www.feishu.cn/product/base" target="_blank" rel="noopener noreferrer"><strong>飞书多维表格</strong><span>官方产品与教学入口：表单、视图、自动化、AI字段和仪表盘。</span></a>
+              <a class="resource-link" href="https://www.feishu.cn/landing/feishu_base_course?from=bitable_website_seventh_course" target="_blank" rel="noopener noreferrer"><strong>飞书多维表格官方课程</strong><span>官方标注约1小时，适合零基础搭建业务工具。</span></a>
+              <a class="resource-link" href="https://docs.dify.ai/zh/home" target="_blank" rel="noopener noreferrer"><strong>Dify中文文档</strong><span>了解AI应用、知识库、工作流和API。</span></a>
+              <a class="resource-link" href="https://docs.dify.ai/zh/learn/tutorials/workflow-101/lesson-01" target="_blank" rel="noopener noreferrer"><strong>Dify工作流入门教程</strong><span>从第一个工作流开始，后期可制作机构专属文案助手。</span></a>
+              <a class="resource-link" href="https://docs.n8n.io/learning-paths" target="_blank" rel="noopener noreferrer"><strong>n8n官方学习路径</strong><span>含实操练习、测验和完整课程，适合作为进阶学习。</span></a>
+              <a class="resource-link" href="https://docs.coze.cn/guides_welcome" target="_blank" rel="noopener noreferrer"><strong>扣子官方文档</strong><span>适合用自然语言尝试智能体、工作流和简单内部应用。</span></a>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="learning-plan">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">13</span><h2 class="section-title">8周学习路线</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>周次</th><th>学习内容</th><th>当周必须完成的成果</th></tr></thead>
+                <tbody>
+                  <tr><td>第1周</td><td>本地教育机构获客与转化</td><td>梳理课程、师资、价格、优势、常见问题和禁用词</td></tr>
+                  <tr><td>第2周</td><td>飞书多维表格基础</td><td>建好素材、内容、评价、线索和数据五张表</td></tr>
+                  <tr><td>第3周</td><td>AI提示词与文案改写</td><td>完成机构固定提示词和3种平台文案</td></tr>
+                  <tr><td>第4周</td><td>朋友圈、点评和美团运营</td><td>完成一周内容并统一门店资料</td></tr>
+                  <tr><td>第5周</td><td>剪映与短视频结构</td><td>制作2条真实课堂或老师讲题视频</td></tr>
+                  <tr><td>第6周</td><td>评价、案例和咨询跟进</td><td>建立授权、脱敏、回访和评价邀请SOP</td></tr>
+                  <tr><td>第7周</td><td>扣子或Dify工作流</td><td>制作“素材生成多平台草稿”的内部助手</td></tr>
+                  <tr><td>第8周</td><td>数据分析与优化</td><td>比较不同主题带来的访问、咨询和到店</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="callout"><strong>学习方法：</strong>20%看教程，80%完成壹号教室真实任务。每周只学一个新工具，周末用30分钟记录“继续使用、需要调整、暂时不用”。</div>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="ninety-days">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">14</span><h2 class="section-title">30/60/90天执行计划</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <div class="phase-grid">
+              <article class="info-block">
+                <h3>前30天：基础跑起来</h3>
+                <ul class="compact-list">
+                  <li>盘点账号、课程、师资、素材和授权</li>
+                  <li>完善点评与美团门店资料</li>
+                  <li>建立飞书五张运营表</li>
+                  <li>发布约16条朋友圈、4-6条视频号</li>
+                  <li>登记全部咨询来源和阶段</li>
+                  <li>建立第一个月数据基线</li>
+                </ul>
+              </article>
+              <article class="info-block blue">
+                <h3>第31-60天：优化转化</h3>
+                <ul class="compact-list">
+                  <li>筛选最有效的三个内容方向</li>
+                  <li>建立AI批量生成初稿流程</li>
+                  <li>固定老师每周交素材机制</li>
+                  <li>未成交咨询建立回访提醒</li>
+                  <li>把真实评价改成多平台案例</li>
+                  <li>形成第一份月度运营报告</li>
+                </ul>
+              </article>
+              <article class="info-block yellow">
+                <h3>第61-90天：验证增长</h3>
+                <ul class="compact-list">
+                  <li>比较三个自然月的转化数据</li>
+                  <li>区分获客、续费和转介绍内容</li>
+                  <li>固化发布、回复和回访模板</li>
+                  <li>完成一个扣子或Dify助手</li>
+                  <li>记录确实值得开发的功能</li>
+                  <li>决定继续飞书或开发轻量后台</li>
+                </ul>
+              </article>
+            </div>
+            <div class="callout warning"><strong>目标不是保证：</strong>三个月有效咨询量可争取比首月基线提高20%-40%，但必须结合真实曝光、市场、资质和门店承接能力调整，不能作为招生结果承诺。</div>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="roles-budget">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">15</span><h2 class="section-title">人员分工与预算</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>角色</th><th>主要责任</th><th>明确边界</th></tr></thead>
+                <tbody>
+                  <tr><td>兼职运营</td><td>内容计划、AI初稿、视频加工、平台维护、数据复盘</td><td>主要在晚间工作，不承担全天客服</td></tr>
+                  <tr><td>朋友/负责人</td><td>课程价格确认、宣传审核、白天咨询、到店成交</td><td>白天线索不能等到晚上才回复</td></tr>
+                  <tr><td>授课老师</td><td>每周提交2组素材，确认信息和授权</td><td>不要求老师写宣传稿</td></tr>
+                  <tr><td>门店人员</td><td>记录到店、试听、报名、续费和转介绍</td><td>结果必须回填，才能做数据复盘</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <h3>预算建议</h3>
+            <ul class="compact-list">
+              <li><strong>首月0-300元：</strong>只用于必要的手机支架、补光或基础模板，不投广告。</li>
+              <li><strong>第2-3月每月300-800元：</strong>工具、设计或拍摄确实能节省时间时再购买。</li>
+              <li><strong>付费推广1000-2000元小范围测试：</strong>仅在机构资质、平台类目、白天承接和线索追踪均准备好之后考虑。</li>
+            </ul>
+            <div class="callout info"><strong>关键运营条件：</strong>兼职运营晚上做内容和系统；负责人或门店老师白天处理咨询。否则即使内容带来线索，也会因回复延迟而流失。</div>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="metrics">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">16</span><h2 class="section-title">KPI与月度复盘</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <p class="lead">第一个月只建立基线，第二个月开始比较变化。点赞和播放量可以观察，但不能代替咨询、到店和报名。</p>
+            <div class="summary-grid">
+              <article class="info-block"><div class="metric">≥85%</div><p>内容计划完成率</p></article>
+              <article class="info-block blue"><div class="metric">≤24h</div><p>私信与评价回复</p></article>
+              <article class="info-block yellow"><div class="metric">≥90%</div><p>咨询来源登记完整率</p></article>
+            </div>
+            <h3>每月只复盘六个核心数字</h3>
+            <div class="flow" aria-label="经营指标链路">
+              <div class="flow-step"><strong>平台访问</strong><small>被多少人看见</small></div>
+              <div class="flow-step"><strong>有效咨询</strong><small>明确年级与需求</small></div>
+              <div class="flow-step"><strong>预约到店</strong><small>愿意进一步了解</small></div>
+              <div class="flow-step"><strong>实际到店</strong><small>完成测评或试听</small></div>
+              <div class="flow-step"><strong>报名续费</strong><small>真实经营结果</small></div>
+              <div class="flow-step"><strong>转介绍</strong><small>口碑增长</small></div>
+            </div>
+            <ul class="compact-list">
+              <li>每条有效咨询都必须记录下一次跟进时间。</li>
+              <li>分别计算咨询到店率、到店报名率、续费率和转介绍率。</li>
+              <li>每月底只回答三个问题：什么继续做、什么停止做、下个月重点招生什么。</li>
+            </ul>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="compliance">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">17</span><h2 class="section-title">合规、隐私与发布前检查</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <div class="path-grid">
+              <article class="info-block risk">
+                <h3>宣传用语</h3>
+                <p>不承诺“保证提分、保证名次、名师押题、包过”等结果，不虚构师资、荣誉和案例。</p>
+              </article>
+              <article class="info-block risk">
+                <h3>未成年人隐私</h3>
+                <p>学生正脸、声音、姓名、学校、班级、成绩单编号等信息公开前必须获得明确授权并脱敏。</p>
+              </article>
+              <article class="info-block risk">
+                <h3>资质与平台规则</h3>
+                <p>文化课培训的课程、时段、收费和招生宣传必须符合机构实际资质、平台类目和上海当地监管要求。</p>
+              </article>
+            </div>
+            <h3>每次发布前五项检查</h3>
+            <ol class="number-list">
+              <li>事实是否真实，课程、价格和名额是否准确。</li>
+              <li>学生和家长信息是否已授权并完成脱敏。</li>
+              <li>是否出现保证结果、夸大效果或无法证明的称号。</li>
+              <li>图片、音乐和评价是否具有使用权限。</li>
+              <li>行动入口是否清楚，平台是否允许该类内容或产品。</li>
+            </ol>
+            <div class="callout risk"><strong>正式执行前：</strong>由机构负责人核实办学资质、课程安排、收费、合同与宣传口径。本方案提供运营方法，不替代法律、教育监管或平台合规意见。</div>
+          </div>
+        </details>
+      </section>
+
+      <section class="guide-section" id="first-month-checklist">
+        <details class="section-details" open>
+          <summary aria-expanded="true"><span class="section-number">18</span><h2 class="section-title">首月执行清单</h2><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+          <div class="section-body">
+            <p class="lead">勾选状态只保存在当前浏览器。它用于讨论和跟进，不会上传或共享任何业务数据。</p>
+            <div class="checklist" id="checklist">
+              <label class="checklist-item"><input type="checkbox" data-checklist-item="accounts"><span>盘点朋友圈、视频号、大众点评和美团账号现状</span></label>
+              <label class="checklist-item"><input type="checkbox" data-checklist-item="courses"><span>整理课程、年级、科目、班型、价格和咨询入口</span></label>
+              <label class="checklist-item"><input type="checkbox" data-checklist-item="teachers"><span>整理老师介绍、负责年级和真实可用资历</span></label>
+              <label class="checklist-item"><input type="checkbox" data-checklist-item="permissions"><span>建立家长授权、学生隐私和内容脱敏规则</span></label>
+              <label class="checklist-item"><input type="checkbox" data-checklist-item="feishu"><span>建立飞书素材、内容、评价、线索和数据五张表</span></label>
+              <label class="checklist-item"><input type="checkbox" data-checklist-item="merchant-pages"><span>完善大众点评和美团门店资料</span></label>
+              <label class="checklist-item"><input type="checkbox" data-checklist-item="teacher-form"><span>让老师按固定表单每周提交2组素材</span></label>
+              <label class="checklist-item"><input type="checkbox" data-checklist-item="moments"><span>完成首月约16条朋友圈排期</span></label>
+              <label class="checklist-item"><input type="checkbox" data-checklist-item="videos"><span>完成首月4-6条视频号选题与制作</span></label>
+              <label class="checklist-item"><input type="checkbox" data-checklist-item="reviews"><span>开始真实评价邀请、授权和好评外传流程</span></label>
+              <label class="checklist-item"><input type="checkbox" data-checklist-item="leads"><span>所有咨询登记来源、需求和下一次跟进时间</span></label>
+              <label class="checklist-item"><input type="checkbox" data-checklist-item="baseline"><span>月底汇总访问、咨询、到店、报名、续费和转介绍基线</span></label>
+            </div>
+            <div class="checklist-summary" aria-live="polite">
+              <strong id="checklist-progress-text">已完成 0 / 12</strong>
+              <div class="progress-track" aria-hidden="true"><div class="progress-fill" id="checklist-progress-fill"></div></div>
+              <button class="secondary-action" type="button" id="reset-checklist">清空勾选</button>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <p class="footer-note">本手册依据壹号教室当前业务与兼职运营条件整理。执行时以真实业务、家长授权、机构资质和平台最新规则为准。</p>
+    </main>
+  </div>
+
+  <script>
+    document.documentElement.classList.add('js');
+
+    const checklistStorageKey = 'one-class-first-month-checklist-v1';
+
+    function initMobileNav() {
+      const button = document.getElementById('menu-button');
+      const nav = document.getElementById('section-nav');
+      if (!button || !nav) return;
+
+      const close = () => {
+        nav.classList.remove('is-open');
+        button.setAttribute('aria-expanded', 'false');
+      };
+
+      button.addEventListener('click', () => {
+        const nextOpen = !nav.classList.contains('is-open');
+        nav.classList.toggle('is-open', nextOpen);
+        button.setAttribute('aria-expanded', String(nextOpen));
+      });
+
+      nav.querySelectorAll('a').forEach((link) => link.addEventListener('click', close));
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') close();
+      });
+    }
+
+    function initSectionTracking() {
+      const sections = [...document.querySelectorAll('.guide-section')];
+      const links = [...document.querySelectorAll('.nav-link')];
+      if (!('IntersectionObserver' in window) || !sections.length) return;
+
+      const linkById = new Map(links.map((link) => [link.getAttribute('href').slice(1), link]));
+      const observer = new IntersectionObserver((entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!visible) return;
+        links.forEach((link) => link.classList.remove('is-active'));
+        linkById.get(visible.target.id)?.classList.add('is-active');
+      }, { rootMargin: '-18% 0px -68% 0px', threshold: [0, 0.15, 0.45] });
+
+      sections.forEach((section) => observer.observe(section));
+    }
+
+    function initDisclosureControls() {
+      const details = [...document.querySelectorAll('.section-details')];
+      const expandButton = document.getElementById('expand-all');
+      const collapseButton = document.getElementById('collapse-all');
+
+      const syncSummary = (item) => {
+        item.querySelector('summary')?.setAttribute('aria-expanded', String(item.open));
+      };
+
+      details.forEach((item) => {
+        syncSummary(item);
+        item.addEventListener('toggle', () => syncSummary(item));
+      });
+
+      expandButton?.addEventListener('click', () => details.forEach((item) => { item.open = true; }));
+      collapseButton?.addEventListener('click', () => {
+        details.forEach((item, index) => { item.open = index === 0; });
+        document.getElementById('summary')?.scrollIntoView({ behavior: 'smooth' });
+      });
+
+      const print = () => window.print();
+      document.getElementById('print-guide')?.addEventListener('click', print);
+      document.getElementById('print-guide-main')?.addEventListener('click', print);
+
+      let printState = [];
+      window.addEventListener('beforeprint', () => {
+        printState = details.map((item) => item.open);
+        details.forEach((item) => { item.open = true; });
+      });
+      window.addEventListener('afterprint', () => {
+        details.forEach((item, index) => { item.open = printState[index] ?? true; });
+      });
+    }
+
+    function initChecklist() {
+      const items = [...document.querySelectorAll('[data-checklist-item]')];
+      const headerText = document.getElementById('header-progress-text');
+      const headerFill = document.getElementById('header-progress-fill');
+      const sectionText = document.getElementById('checklist-progress-text');
+      const sectionFill = document.getElementById('checklist-progress-fill');
+      let saved = {};
+
+      try {
+        saved = JSON.parse(localStorage.getItem(checklistStorageKey) || '{}');
+        if (!saved || typeof saved !== 'object' || Array.isArray(saved)) saved = {};
+      } catch {
+        saved = {};
+      }
+
+      const update = () => {
+        const state = Object.fromEntries(items.map((item) => [item.dataset.checklistItem, item.checked]));
+        const complete = items.filter((item) => item.checked).length;
+        const percentage = items.length ? Math.round((complete / items.length) * 100) : 0;
+        const headerLabel = `首月清单 ${complete} / ${items.length}`;
+        const sectionLabel = `已完成 ${complete} / ${items.length}（${percentage}%）`;
+
+        try { localStorage.setItem(checklistStorageKey, JSON.stringify(state)); } catch { /* local file privacy settings may block storage */ }
+        if (headerText) headerText.textContent = headerLabel;
+        if (sectionText) sectionText.textContent = sectionLabel;
+        if (headerFill) headerFill.style.width = `${percentage}%`;
+        if (sectionFill) sectionFill.style.width = `${percentage}%`;
+      };
+
+      items.forEach((item) => {
+        item.checked = saved[item.dataset.checklistItem] === true;
+        item.addEventListener('change', update);
+      });
+
+      document.getElementById('reset-checklist')?.addEventListener('click', () => {
+        items.forEach((item) => { item.checked = false; });
+        update();
+      });
+
+      update();
+    }
+
+    initMobileNav();
+    initSectionTracking();
+    initDisclosureControls();
+    initChecklist();
+  </script>
+</body>
+</html>
