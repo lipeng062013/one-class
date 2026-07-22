@@ -42,6 +42,16 @@ test('includes responsive, print and local checklist behavior', async () => {
   assert.match(html, /data-checklist-item/);
 });
 
+test('exposes accessible interaction hooks', async () => {
+  const html = await loadHtml();
+  for (const functionName of ['initMobileNav', 'initSectionTracking', 'initDisclosureControls', 'initChecklist']) {
+    assert.match(html, new RegExp(`function ${functionName}\\(`), `missing ${functionName}`);
+  }
+  assert.match(html, /<noscript>/);
+  assert.match(html, /aria-expanded=/);
+  assert.match(html, /one-class-first-month-checklist-v1/);
+});
+
 test('links only to the approved official learning sources', async () => {
   const html = await loadHtml();
   for (const url of [
