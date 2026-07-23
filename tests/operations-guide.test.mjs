@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const htmlPath = new URL('../one-class-operations-guide.html', import.meta.url);
+const workflowPath = new URL('../.github/workflows/deploy-pages.yml', import.meta.url);
 const sectionIds = [
   'summary', 'growth', 'channels', 'annual-plan', 'cadence', 'materials',
   'platform-playbooks', 'reviews', 'ai-stack', 'automation-boundaries',
@@ -67,6 +68,18 @@ test('links only to the approved official learning sources', async () => {
   ]) {
     assert.ok(html.includes(url), `missing official source: ${url}`);
   }
+});
+
+test('deploys only the guide through the official GitHub Pages workflow', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  assert.match(workflow, /name: Deploy GitHub Pages/);
+  assert.match(workflow, /pages:\s*write/);
+  assert.match(workflow, /id-token:\s*write/);
+  assert.match(workflow, /name:\s*github-pages/);
+  assert.match(workflow, /cp one-class-operations-guide\.html _site\/index\.html/);
+  assert.match(workflow, /actions\/upload-pages-artifact@v3/);
+  assert.match(workflow, /path:\s*_site/);
+  assert.match(workflow, /actions\/deploy-pages@v4/);
 });
 
 test('starts with only the summary and current 90-day actions expanded when JavaScript runs', async () => {
