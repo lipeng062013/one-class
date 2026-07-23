@@ -141,9 +141,14 @@
       cursor: pointer;
     }
 
-    .command:hover, .command:focus-visible {
+    .command:hover {
       background: rgba(255, 255, 255, 0.12);
-      outline: none;
+    }
+
+    .command:focus-visible {
+      background: rgba(255, 255, 255, 0.12);
+      outline: 3px solid #f3c45f;
+      outline-offset: 2px;
     }
 
     .menu-button { display: none; }
@@ -170,6 +175,25 @@
       color: var(--muted);
       font-size: 13px;
       font-weight: 700;
+    }
+
+    .mobile-tools {
+      display: none;
+    }
+
+    .mobile-command {
+      min-height: 42px;
+      padding: 8px 10px;
+      color: #173c31;
+      background: var(--paper);
+      border: 1px solid #b6c5bd;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .mobile-command:focus-visible {
+      outline: 3px solid var(--yellow);
+      outline-offset: 2px;
     }
 
     .nav-list {
@@ -264,6 +288,20 @@
       border-radius: 50%;
       vertical-align: 1px;
     }
+
+    .ninety-day-target {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-top: 18px;
+      padding: 12px 15px;
+      color: #263d34;
+      background: var(--paper);
+      border-left: 4px solid var(--yellow);
+    }
+
+    .ninety-day-target strong { flex: 0 0 auto; }
+    .ninety-day-target span { color: #4d5954; }
 
     .quick-actions {
       display: flex;
@@ -610,8 +648,13 @@
       }
 
       .brand-mark { width: 32px; height: 32px; flex-basis: 32px; }
-      .brand-text { max-width: 150px; font-size: 14px; }
-      .header-progress { display: none; }
+      .brand-text { display: none; }
+      .header-progress {
+        min-width: 105px;
+        width: 105px;
+        display: grid;
+        margin-left: auto;
+      }
       .toolbar .command:not(.menu-button) { display: none; }
 
       .menu-button {
@@ -637,6 +680,13 @@
 
       .sidebar.is-open { display: block; }
 
+      .mobile-tools {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+        margin: 0 0 16px;
+      }
+
       main {
         max-width: none;
         padding: 24px 18px 64px;
@@ -660,6 +710,7 @@
 
       .quick-actions { display: grid; grid-template-columns: 1fr; }
       .primary-action, .secondary-action { text-align: center; }
+      .ninety-day-target { align-items: flex-start; flex-direction: column; gap: 2px; }
 
       .flow-step { min-width: 176px; flex-basis: 176px; }
       table { min-width: 620px; }
@@ -711,9 +762,9 @@
       <div class="progress-track" aria-hidden="true"><div class="progress-fill" id="header-progress-fill"></div></div>
     </div>
     <div class="toolbar" aria-label="页面工具">
-      <button class="command" type="button" id="expand-all">全部展开</button>
-      <button class="command" type="button" id="collapse-all">全部收起</button>
-      <button class="command" type="button" id="print-guide">打印/导出 PDF</button>
+      <button class="command" type="button" id="expand-all" data-disclosure-action="expand">全部展开</button>
+      <button class="command" type="button" id="collapse-all" data-disclosure-action="collapse">全部收起</button>
+      <button class="command" type="button" id="print-guide" data-print-guide>打印/导出 PDF</button>
       <button class="command menu-button" type="button" id="menu-button" aria-expanded="false" aria-controls="section-nav">目录</button>
     </div>
   </header>
@@ -721,8 +772,13 @@
   <div class="app-shell">
     <nav class="sidebar" id="section-nav" aria-label="章节导航">
       <p class="nav-label">运营手册目录</p>
+      <div class="mobile-tools" aria-label="移动端页面工具">
+        <button class="mobile-command" type="button" data-disclosure-action="expand">展开</button>
+        <button class="mobile-command" type="button" data-disclosure-action="collapse">收起</button>
+        <button class="mobile-command" type="button" data-print-guide>打印</button>
+      </div>
       <ol class="nav-list">
-        <li><a class="nav-link is-active" href="#summary">01 执行摘要</a></li>
+        <li><a class="nav-link is-active" href="#summary" aria-current="location">01 执行摘要</a></li>
         <li><a class="nav-link" href="#growth">02 三条增长路径</a></li>
         <li><a class="nav-link" href="#channels">03 各平台定位</a></li>
         <li><a class="nav-link" href="#annual-plan">04 全年宣传计划</a></li>
@@ -754,10 +810,14 @@
           <span>先自然增长，后小额测试</span>
           <span>先跑流程，再开发工具</span>
         </div>
+        <div class="ninety-day-target">
+          <strong>90天目标（不承诺）</strong>
+          <span>稳定周更与线索追踪流程，有效咨询量较首月基线争取提升20%-40%，再决定是否小额投放或开发工具。</span>
+        </div>
         <div class="quick-actions">
           <a class="primary-action" href="#ninety-days">先看90天执行计划</a>
           <a class="secondary-action" href="#annual-plan">查看全年宣传日历</a>
-          <button class="secondary-action" type="button" id="print-guide-main">打印/导出 PDF</button>
+          <button class="secondary-action" type="button" id="print-guide-main" data-print-guide>打印/导出 PDF</button>
         </div>
       </div>
 
@@ -1252,7 +1312,7 @@
             <ul class="compact-list">
               <li><strong>首月0-300元：</strong>只用于必要的手机支架、补光或基础模板，不投广告。</li>
               <li><strong>第2-3月每月300-800元：</strong>工具、设计或拍摄确实能节省时间时再购买。</li>
-              <li><strong>付费推广1000-2000元小范围测试：</strong>仅在机构资质、平台类目、白天承接和线索追踪均准备好之后考虑。</li>
+              <li><strong>审批后可选：1000-2000元付费推广测试。</strong>这不是既定支出，仅在负责人同意，且机构资质、平台类目、白天承接和线索追踪均准备好之后考虑。</li>
             </ul>
             <div class="callout info"><strong>关键运营条件：</strong>兼职运营晚上做内容和系统；负责人或门店老师白天处理咨询。否则即使内容带来线索，也会因回复延迟而流失。</div>
           </div>
@@ -1371,7 +1431,7 @@
         button.setAttribute('aria-expanded', String(nextOpen));
       });
 
-      nav.querySelectorAll('a').forEach((link) => link.addEventListener('click', close));
+      nav.querySelectorAll('a, button').forEach((control) => control.addEventListener('click', close));
       document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') close();
       });
@@ -1388,8 +1448,13 @@
           .filter((entry) => entry.isIntersecting)
           .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
         if (!visible) return;
-        links.forEach((link) => link.classList.remove('is-active'));
-        linkById.get(visible.target.id)?.classList.add('is-active');
+        links.forEach((link) => {
+          link.classList.remove('is-active');
+          link.removeAttribute('aria-current');
+        });
+        const activeLink = linkById.get(visible.target.id);
+        activeLink?.classList.add('is-active');
+        activeLink?.setAttribute('aria-current', 'location');
       }, { rootMargin: '-18% 0px -68% 0px', threshold: [0, 0.15, 0.45] });
 
       sections.forEach((section) => observer.observe(section));
@@ -1397,27 +1462,30 @@
 
     function initDisclosureControls() {
       const details = [...document.querySelectorAll('.section-details')];
-      const expandButton = document.getElementById('expand-all');
-      const collapseButton = document.getElementById('collapse-all');
+      const expandButtons = [...document.querySelectorAll('[data-disclosure-action="expand"]')];
+      const collapseButtons = [...document.querySelectorAll('[data-disclosure-action="collapse"]')];
+      const defaultOpenSectionIds = new Set(['summary', 'ninety-days']);
 
       const syncSummary = (item) => {
         item.querySelector('summary')?.setAttribute('aria-expanded', String(item.open));
       };
 
       details.forEach((item) => {
+        item.open = defaultOpenSectionIds.has(item.closest('.guide-section')?.id);
         syncSummary(item);
         item.addEventListener('toggle', () => syncSummary(item));
       });
 
-      expandButton?.addEventListener('click', () => details.forEach((item) => { item.open = true; }));
-      collapseButton?.addEventListener('click', () => {
-        details.forEach((item, index) => { item.open = index === 0; });
+      expandButtons.forEach((button) => button.addEventListener('click', () => {
+        details.forEach((item) => { item.open = true; });
+      }));
+      collapseButtons.forEach((button) => button.addEventListener('click', () => {
+        details.forEach((item) => { item.open = false; });
         document.getElementById('summary')?.scrollIntoView({ behavior: 'smooth' });
-      });
+      }));
 
       const print = () => window.print();
-      document.getElementById('print-guide')?.addEventListener('click', print);
-      document.getElementById('print-guide-main')?.addEventListener('click', print);
+      document.querySelectorAll('[data-print-guide]').forEach((button) => button.addEventListener('click', print));
 
       let printState = [];
       window.addEventListener('beforeprint', () => {

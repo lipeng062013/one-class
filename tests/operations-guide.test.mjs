@@ -68,3 +68,33 @@ test('links only to the approved official learning sources', async () => {
     assert.ok(html.includes(url), `missing official source: ${url}`);
   }
 });
+
+test('starts with only the summary and current 90-day actions expanded when JavaScript runs', async () => {
+  const html = await loadHtml();
+  assert.match(html, /const defaultOpenSectionIds = new Set\(\['summary', 'ninety-days'\]\)/);
+  assert.match(html, /item\.open = defaultOpenSectionIds\.has\(item\.closest\('\.guide-section'\)\?\.id\)/);
+});
+
+test('keeps progress and disclosure commands available on mobile', async () => {
+  const html = await loadHtml();
+  assert.match(html, /class="mobile-tools"/);
+  assert.match(html, /data-disclosure-action="expand"/);
+  assert.match(html, /data-disclosure-action="collapse"/);
+  assert.match(html, /@media \(max-width: 760px\)[\s\S]*\.header-progress\s*\{[^}]*display:\s*grid/);
+  assert.doesNotMatch(html, /@media \(max-width: 760px\)[\s\S]*\.header-progress\s*\{\s*display:\s*none/);
+});
+
+test('shows a qualified 90-day target in the first screen', async () => {
+  const html = await loadHtml();
+  assert.match(html, /class="ninety-day-target"/);
+  assert.match(html, /90天目标（不承诺）/);
+  assert.match(html, /有效咨询量较首月基线争取提升20%-40%/);
+});
+
+test('exposes visible focus, current navigation semantics and honest collapse behavior', async () => {
+  const html = await loadHtml();
+  assert.match(html, /\.command:focus-visible\s*\{[^}]*outline:\s*3px solid/);
+  assert.match(html, /setAttribute\('aria-current', 'location'\)/);
+  assert.match(html, /details\.forEach\(\(item\) => \{ item\.open = false; \}\)/);
+  assert.match(html, /审批后可选：1000-2000元付费推广测试/);
+});
