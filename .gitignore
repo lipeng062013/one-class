@@ -2,3 +2,9 @@
 .playwright-cli/
 output/playwright/
 tmp/pdfs/
+
+.superpowers/
+.env
+.env.*
+!.env.example
+data/
