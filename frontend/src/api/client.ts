@@ -17,6 +17,10 @@ client.interceptors.request.use((config) => {
 client.interceptors.response.use(
   (response) => {
     const body = response.data
+    // Skip envelope checks for binary downloads (Blob)
+    if (typeof Blob !== 'undefined' && body instanceof Blob) {
+      return response
+    }
     if (body && typeof body === 'object' && 'error' in body && body.error) {
       const message = body.error.message || '请求失败'
       return Promise.reject(new Error(message))

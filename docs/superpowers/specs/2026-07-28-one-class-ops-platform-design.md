@@ -418,3 +418,13 @@ IMAGE_MODEL=
 1. 用户审阅并批准本规格。
 2. 使用 writing-plans 技能编写分任务实现计划。
 3. 按计划实现 V1（建议 TDD / 按模块交付）。
+
+## 16. 实现状态（2026-07-29）
+
+V1 主路径已在 **master** 落地：
+
+- 前端：Vue 3 + **Element Plus**（登录、用户、素材、文案、海报、线索、知识库、模板、工作台、老师手机端）
+- 后端：FastAPI 模块（auth/users/materials/knowledge/templates/content/posters/leads/dashboard）
+- 历史 worktree `feat/ops-platform` 中的业务能力已合入；重复占位页已清理
+- 运行说明：`README-ops-platform.md`
+- 认证细化规格：`2026-07-29-auth-element-ui-rebuild-design.md`

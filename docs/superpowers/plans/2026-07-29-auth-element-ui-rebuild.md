@@ -175,3 +175,8 @@ Demo seeds: `admin/admin123`, `ops/ops123`, `teacher1/t123`
 | Self change-password | 3, 6 |
 | Element Plus | 5, 6 |
 | No password in list/me | 3, 4 |
+
+## Status (2026-07-29)
+
+Auth + Element Plus login/users tasks completed on `master`. Full business modules (materials, copies, posters, leads, knowledge, templates, dashboard) ported from `.worktrees/feat-ops-platform` and rebuilt with Element Plus. Duplicate placeholder views removed. See `README-ops-platform.md`.
+

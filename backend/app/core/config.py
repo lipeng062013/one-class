@@ -12,6 +12,13 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 60 * 24 * 7
     storage_root: str = "./data/uploads"
 
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+    llm_model: str = "gpt-4o-mini"
+    image_api_base_url: str = ""
+    image_api_key: str = ""
+    image_model: str = ""
+
     seed_admin_username: str = "admin"
     seed_admin_password: str = "admin123"
     seed_ops_username: str = "ops"

@@ -20,6 +20,12 @@ class LocalStorage:
     def open_bytes(self, relative_path: str) -> bytes:
         return self.absolute_path(relative_path).read_bytes()
 
+    def read(self, relative_path: str) -> bytes:
+        return self.open_bytes(relative_path)
+
+    def open(self, relative_path: str):
+        return self.absolute_path(relative_path).open("rb")
+
 
 def get_storage() -> LocalStorage:
     return LocalStorage()

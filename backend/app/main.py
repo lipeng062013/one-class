@@ -5,11 +5,27 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.db import Base, SessionLocal, engine, ensure_data_dir
 from app.core.responses import ok
-from app.models import Material, MaterialFile, User  # noqa: F401 — register models
+from app.models import (  # noqa: F401 — register models
+    CopyTemplate,
+    GeneratedCopy,
+    GeneratedPoster,
+    KnowledgeEntry,
+    Lead,
+    Material,
+    MaterialFile,
+    PosterTemplate,
+    User,
+)
 from app.modules.auth.router import router as auth_router
+from app.modules.content.router import router as content_router
+from app.modules.dashboard.router import router as dashboard_router
+from app.modules.knowledge.router import router as knowledge_router
+from app.modules.leads.router import router as leads_router
 from app.modules.materials.router import router as materials_router
+from app.modules.posters.router import router as posters_router
+from app.modules.templates.router import router as templates_router
 from app.modules.users.router import router as users_router
-from app.seed import seed_demo_users
+from app.seed import seed_all
 
 
 @asynccontextmanager
@@ -18,7 +34,7 @@ async def lifespan(_app: FastAPI):
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        seed_demo_users(db)
+        seed_all(db)
     finally:
         db.close()
     yield
@@ -37,6 +53,12 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
 app.include_router(materials_router, prefix="/api/v1")
+app.include_router(knowledge_router, prefix="/api/v1")
+app.include_router(templates_router, prefix="/api/v1")
+app.include_router(content_router, prefix="/api/v1")
+app.include_router(posters_router, prefix="/api/v1")
+app.include_router(leads_router, prefix="/api/v1")
+app.include_router(dashboard_router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")

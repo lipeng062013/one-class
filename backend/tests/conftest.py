@@ -12,6 +12,7 @@ from app.core.security import hash_password
 from app.core.storage import LocalStorage, get_storage
 from app.main import app
 from app.models.user import User
+from app.seed import seed_sample_knowledge, seed_system_templates
 
 
 @pytest.fixture()
@@ -67,6 +68,8 @@ def client(tmp_path: Path):
         )
     )
     db.commit()
+    seed_system_templates(db)
+    seed_sample_knowledge(db)
     db.close()
 
     with TestClient(app) as c:

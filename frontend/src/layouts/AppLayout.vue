@@ -16,6 +16,11 @@ const menus = computed(() => {
   const items = [
     { index: '/', title: '工作台', icon: 'Odometer' },
     { index: '/materials', title: '素材', icon: 'Picture' },
+    { index: '/copies', title: '文案', icon: 'Document' },
+    { index: '/posters', title: '海报', icon: 'PictureFilled' },
+    { index: '/leads', title: '线索', icon: 'Phone' },
+    { index: '/knowledge', title: '知识库', icon: 'Collection' },
+    { index: '/templates', title: '模板', icon: 'Files' },
   ]
   if (auth.isAdmin) {
     items.push({ index: '/users', title: '用户管理', icon: 'User' })

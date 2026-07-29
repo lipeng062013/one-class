@@ -14,11 +14,7 @@ const router = createRouter({
       path: '/',
       component: () => import('../layouts/AppLayout.vue'),
       children: [
-        {
-          path: '',
-          name: 'dashboard',
-          component: () => import('../views/DashboardView.vue'),
-        },
+        { path: '', name: 'dashboard', component: () => import('../views/DashboardView.vue') },
         {
           path: 'materials',
           name: 'materials',
@@ -29,6 +25,48 @@ const router = createRouter({
           path: 'materials/:id',
           name: 'material-detail',
           component: () => import('../views/materials/MaterialDetailView.vue'),
+          meta: { roles: ['admin', 'operator'] },
+        },
+        {
+          path: 'copies',
+          name: 'copies',
+          component: () => import('../views/copies/CopyListView.vue'),
+          meta: { roles: ['admin', 'operator'] },
+        },
+        {
+          path: 'copies/generate',
+          name: 'copies-generate',
+          component: () => import('../views/copies/CopyGenerateView.vue'),
+          meta: { roles: ['admin', 'operator'] },
+        },
+        {
+          path: 'posters',
+          name: 'posters',
+          component: () => import('../views/posters/PosterListView.vue'),
+          meta: { roles: ['admin', 'operator'] },
+        },
+        {
+          path: 'posters/generate',
+          name: 'posters-generate',
+          component: () => import('../views/posters/PosterGenerateView.vue'),
+          meta: { roles: ['admin', 'operator'] },
+        },
+        {
+          path: 'leads',
+          name: 'leads',
+          component: () => import('../views/leads/LeadListView.vue'),
+          meta: { roles: ['admin', 'operator'] },
+        },
+        {
+          path: 'knowledge',
+          name: 'knowledge',
+          component: () => import('../views/knowledge/KnowledgeView.vue'),
+          meta: { roles: ['admin', 'operator'] },
+        },
+        {
+          path: 'templates',
+          name: 'templates',
+          component: () => import('../views/templates/TemplateViews.vue'),
           meta: { roles: ['admin', 'operator'] },
         },
         {

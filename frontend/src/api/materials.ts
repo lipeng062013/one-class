@@ -37,6 +37,9 @@ export async function listMaterialsApi(): Promise<Material[]> {
   return res.data.data
 }
 
+/** Alias used by copy/poster generators */
+export const listMaterials = listMaterialsApi
+
 export async function getMaterialApi(id: number): Promise<Material> {
   const res = await client.get(`/materials/${id}`)
   return res.data.data
