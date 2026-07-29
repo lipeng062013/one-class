@@ -6,8 +6,24 @@ from app.models.user import User
 VALID_ROLES = {"admin", "operator", "teacher"}
 
 
-def list_users(db: Session) -> list[User]:
-    return db.query(User).order_by(User.id.asc()).all()
+def list_users(
+    db: Session,
+    *,
+    role: str | None = None,
+    is_active: bool | None = None,
+    username: str | None = None,
+    display_name: str | None = None,
+) -> list[User]:
+    q = db.query(User)
+    if role:
+        q = q.filter(User.role == role)
+    if is_active is not None:
+        q = q.filter(User.is_active.is_(is_active))
+    if username:
+        q = q.filter(User.username.contains(username))
+    if display_name:
+        q = q.filter(User.display_name.contains(display_name))
+    return q.order_by(User.id.asc()).all()
 
 
 def create_user(db: Session, *, username: str, display_name: str, role: str, password: str) -> User | str:

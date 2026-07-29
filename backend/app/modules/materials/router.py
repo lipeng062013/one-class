@@ -13,10 +13,12 @@ from app.models.user import User
 from app.modules.materials.schemas import MaterialCreate, MaterialUpdate
 from app.modules.materials.service import (
     add_file,
+    can_delete,
     can_patch,
     can_upload_file,
     can_view,
     create_material,
+    delete_material,
     get_material,
     list_materials,
     material_to_dict,
@@ -119,6 +121,21 @@ def patch_material(
         code = 403 if "无权限" in result or "不能修改" in result else 400
         return fail("MATERIAL_UPDATE_FAILED", result, status_code=code)
     return ok(material_to_dict(result))
+
+
+@router.delete("/{material_id}")
+def remove_material(
+    material_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    m = get_material(db, material_id)
+    if not m:
+        return fail("NOT_FOUND", "素材不存在", status_code=404)
+    if not can_delete(user, m):
+        return fail("FORBIDDEN", "无权限删除", status_code=403)
+    delete_material(db, m)
+    return ok({"deleted": True, "id": material_id})
 
 
 @router.post("/{material_id}/files")

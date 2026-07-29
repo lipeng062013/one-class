@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  deleteMaterialApi,
   getMaterialApi,
   materialFileObjectUrl,
   patchMaterialApi,
@@ -73,6 +74,20 @@ async function setAuth(auth_status: string) {
   ElMessage.success('授权已更新')
 }
 
+async function onDelete() {
+  if (!item.value) return
+  try {
+    await ElMessageBox.confirm(`确定删除素材「${item.value.title}」？`, '删除确认', {
+      type: 'warning',
+    })
+    await deleteMaterialApi(item.value.id)
+    ElMessage.success('已删除')
+    router.push('/materials')
+  } catch {
+    /* cancel */
+  }
+}
+
 watch(
   () => route.params.id,
   () => load(),
@@ -102,19 +117,22 @@ onUnmounted(revokePreviews)
         <el-descriptions-item label="创建时间">{{ item.created_at || '—' }}</el-descriptions-item>
       </el-descriptions>
 
-      <div v-if="!auth.isTeacher" class="actions">
+      <div class="actions">
         <el-space wrap>
-          <el-button type="success" @click="setStatus('usable')">标为可用</el-button>
-          <el-button @click="setStatus('used')">标为已用</el-button>
-          <el-button @click="setStatus('archived')">归档</el-button>
-          <el-button type="primary" plain @click="setAuth('authorized')">确认授权</el-button>
-          <el-button plain @click="setAuth('anonymized')">已脱敏</el-button>
-          <el-button type="primary" @click="router.push({ path: '/copies/generate', query: { material_id: String(item.id) } })">
-            生成文案
-          </el-button>
-          <el-button @click="router.push({ path: '/posters/generate', query: { material_id: String(item.id) } })">
-            生成海报
-          </el-button>
+          <template v-if="!auth.isTeacher">
+            <el-button type="success" @click="setStatus('usable')">标为可用</el-button>
+            <el-button @click="setStatus('used')">标为已用</el-button>
+            <el-button @click="setStatus('archived')">归档</el-button>
+            <el-button type="primary" plain @click="setAuth('authorized')">确认授权</el-button>
+            <el-button plain @click="setAuth('anonymized')">已脱敏</el-button>
+            <el-button type="primary" @click="router.push({ path: '/copies/generate', query: { material_id: String(item.id) } })">
+              生成文案
+            </el-button>
+            <el-button @click="router.push({ path: '/posters/generate', query: { material_id: String(item.id) } })">
+              生成海报
+            </el-button>
+          </template>
+          <el-button type="danger" @click="onDelete">删除</el-button>
         </el-space>
       </div>
 

@@ -16,6 +16,13 @@ const createVisible = ref(false)
 const formRef = ref<FormInstance>()
 const saving = ref(false)
 
+const filters = reactive({
+  source: '',
+  status: '',
+  name: '',
+  phone: '',
+})
+
 const form = reactive({
   student_or_parent_name: '',
   phone: '',
@@ -71,10 +78,23 @@ const sorted = computed(() =>
 async function load() {
   loading.value = true
   try {
-    rows.value = await listLeads()
+    const params: Record<string, string> = {}
+    if (filters.source) params.source = filters.source
+    if (filters.status) params.status = filters.status
+    if (filters.name) params.name = filters.name
+    if (filters.phone) params.phone = filters.phone
+    rows.value = await listLeads(params)
   } finally {
     loading.value = false
   }
+}
+
+function resetFilters() {
+  filters.source = ''
+  filters.status = ''
+  filters.name = ''
+  filters.phone = ''
+  load()
 }
 
 function openCreate() {
@@ -141,7 +161,32 @@ onMounted(load)
       <el-button type="primary" @click="openCreate">新建线索</el-button>
     </div>
 
-    <el-card style="margin-top: 16px" v-loading="loading">
+    <el-card class="filters" shadow="never" style="margin-top: 12px">
+      <el-form :inline="true" @submit.prevent="load">
+        <el-form-item label="来源">
+          <el-select v-model="filters.source" clearable placeholder="全部" style="width: 120px">
+            <el-option v-for="(label, key) in sourceLabels" :key="key" :label="label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="filters.status" clearable placeholder="全部" style="width: 120px">
+            <el-option v-for="(label, key) in statusLabels" :key="key" :label="label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="姓名">
+          <el-input v-model="filters.name" clearable placeholder="搜索姓名" style="width: 130px" />
+        </el-form-item>
+        <el-form-item label="电话">
+          <el-input v-model="filters.phone" clearable placeholder="搜索电话" style="width: 130px" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="load">查询</el-button>
+          <el-button @click="resetFilters">重置</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-card style="margin-top: 12px" v-loading="loading">
       <el-table :data="sorted" stripe style="width: 100%">
         <el-table-column prop="student_or_parent_name" label="姓名" min-width="120" />
         <el-table-column prop="phone" label="电话" width="120" />
@@ -226,6 +271,11 @@ onMounted(load)
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.filters {
+  border: 1px solid var(--oc-border, #e8e0d0);
+  background: var(--oc-card, #fffdf8);
 }
 
 .follow-cell {

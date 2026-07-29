@@ -30,10 +30,25 @@ def _validate_status(status_val: str) -> None:
 
 @router.get("")
 def list_leads(
+    source: str | None = None,
+    status: str | None = None,
+    name: str | None = None,
+    phone: str | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(require_roles("admin", "operator")),
 ):
-    leads = db.query(Lead).order_by(Lead.id.desc()).all()
+    q = db.query(Lead)
+    if source:
+        _validate_source(source)
+        q = q.filter(Lead.source == source)
+    if status:
+        _validate_status(status)
+        q = q.filter(Lead.status == status)
+    if name:
+        q = q.filter(Lead.student_or_parent_name.contains(name))
+    if phone:
+        q = q.filter(Lead.phone.contains(phone))
+    leads = q.order_by(Lead.id.desc()).all()
     return ok([_serialize(lead) for lead in leads])
 
 

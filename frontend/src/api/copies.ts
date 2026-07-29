@@ -57,3 +57,7 @@ export async function patchCopy(id: number, payload: PatchCopyInput): Promise<Ge
   const res = await client.patch<ApiResponse<GeneratedCopy>>(`/copies/${id}`, payload)
   return unwrap(res, 'Failed to update copy')
 }
+
+export async function deleteCopy(id: number): Promise<void> {
+  await client.delete(`/copies/${id}`)
+}

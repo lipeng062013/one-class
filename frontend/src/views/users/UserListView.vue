@@ -5,6 +5,12 @@ import { createUserApi, listUsersApi, patchUserApi, resetPasswordApi, type UserR
 
 const loading = ref(false)
 const rows = ref<UserRow[]>([])
+const filters = reactive({
+  role: '',
+  is_active: '' as '' | 'true' | 'false',
+  username: '',
+  display_name: '',
+})
 
 const createVisible = ref(false)
 const resetVisible = ref(false)
@@ -56,10 +62,29 @@ const roleLabel: Record<string, string> = {
 async function load() {
   loading.value = true
   try {
-    rows.value = await listUsersApi()
+    const params: {
+      role?: string
+      is_active?: boolean
+      username?: string
+      display_name?: string
+    } = {}
+    if (filters.role) params.role = filters.role
+    if (filters.is_active === 'true') params.is_active = true
+    if (filters.is_active === 'false') params.is_active = false
+    if (filters.username) params.username = filters.username
+    if (filters.display_name) params.display_name = filters.display_name
+    rows.value = await listUsersApi(params)
   } finally {
     loading.value = false
   }
+}
+
+function resetFilters() {
+  filters.role = ''
+  filters.is_active = ''
+  filters.username = ''
+  filters.display_name = ''
+  load()
 }
 
 function randomPassword(len = 10) {
@@ -147,7 +172,35 @@ onMounted(load)
       <el-button type="primary" @click="openCreate">新建用户</el-button>
     </div>
 
-    <el-card style="margin-top: 16px">
+    <el-card class="filters" shadow="never" style="margin-top: 12px">
+      <el-form :inline="true" @submit.prevent="load">
+        <el-form-item label="角色">
+          <el-select v-model="filters.role" clearable placeholder="全部" style="width: 120px">
+            <el-option label="负责人" value="admin" />
+            <el-option label="运营" value="operator" />
+            <el-option label="老师" value="teacher" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="filters.is_active" clearable placeholder="全部" style="width: 110px">
+            <el-option label="启用" value="true" />
+            <el-option label="停用" value="false" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="用户名">
+          <el-input v-model="filters.username" clearable placeholder="搜索" style="width: 120px" />
+        </el-form-item>
+        <el-form-item label="显示名">
+          <el-input v-model="filters.display_name" clearable placeholder="搜索" style="width: 120px" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="load">查询</el-button>
+          <el-button @click="resetFilters">重置</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-card style="margin-top: 12px">
       <el-table v-loading="loading" :data="rows" stripe style="width: 100%">
         <el-table-column prop="username" label="用户名" min-width="120" />
         <el-table-column prop="display_name" label="显示名" min-width="120" />
@@ -239,6 +292,11 @@ onMounted(load)
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.filters {
+  border: 1px solid var(--oc-border, #e8e0d0);
+  background: var(--oc-card, #fffdf8);
 }
 
 .pwd-row {

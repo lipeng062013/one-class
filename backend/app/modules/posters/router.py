@@ -35,6 +35,16 @@ def list_posters(
     return ok([service.serialize_poster(p) for p in items])
 
 
+@router.delete("/posters/{poster_id}")
+def remove_poster(
+    poster_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(_ops),
+):
+    service.delete_poster(db, poster_id)
+    return ok({"deleted": True, "id": poster_id})
+
+
 @router.get("/files/posters/{poster_id}")
 def stream_poster_file(
     poster_id: int,

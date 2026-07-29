@@ -113,6 +113,17 @@ def update_material(db: Session, user: User, material: Material, data: dict) -> 
     return get_material(db, material.id) or material
 
 
+def can_delete(user: User, material: Material) -> bool:
+    if user.role in {"admin", "operator"}:
+        return True
+    return material.uploader_id == user.id
+
+
+def delete_material(db: Session, material: Material) -> None:
+    db.delete(material)
+    db.commit()
+
+
 def add_file(
     db: Session,
     storage: LocalStorage,

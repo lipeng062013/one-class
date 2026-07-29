@@ -40,3 +40,13 @@ def patch_copy(
 ):
     copy = service.update_copy(db, copy_id, body)
     return ok(service.serialize_copy(copy))
+
+
+@router.delete("/{copy_id}")
+def remove_copy(
+    copy_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(_ops),
+):
+    service.delete_copy(db, copy_id)
+    return ok({"deleted": True, "id": copy_id})

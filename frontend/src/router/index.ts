@@ -58,7 +58,23 @@ const router = createRouter({
           meta: { roles: ['admin', 'operator'] },
         },
         {
+          path: 'students',
+          name: 'students',
+          component: () => import('../views/students/StudentListView.vue'),
+          meta: { roles: ['admin'] },
+        },
+        {
+          path: 'students/:id',
+          name: 'student-detail',
+          component: () => import('../views/students/StudentDetailView.vue'),
+          meta: { roles: ['admin'] },
+        },
+        {
           path: 'knowledge',
+          redirect: '/knowledge/scripts',
+        },
+        {
+          path: 'knowledge/:section',
           name: 'knowledge',
           component: () => import('../views/knowledge/KnowledgeView.vue'),
           meta: { roles: ['admin', 'operator'] },
@@ -91,6 +107,26 @@ const router = createRouter({
           name: 'mobile-materials',
           component: () => import('../views/mobile/MobileMaterialsView.vue'),
         },
+        {
+          path: 'students',
+          name: 'mobile-students',
+          component: () => import('../views/mobile/MobileStudentsView.vue'),
+        },
+        {
+          path: 'students/:id',
+          name: 'mobile-student-detail',
+          component: () => import('../views/mobile/MobileStudentDetailView.vue'),
+        },
+        {
+          path: 'learning',
+          name: 'mobile-learning',
+          component: () => import('../views/mobile/MobileLearningView.vue'),
+        },
+        {
+          path: 'learning/new',
+          name: 'mobile-learning-new',
+          component: () => import('../views/mobile/MobileLearningNewView.vue'),
+        },
       ],
     },
   ],
@@ -118,7 +154,8 @@ router.beforeEach(async (to) => {
     }
   }
 
-  if (auth.isTeacher && !to.path.startsWith('/m/')) {
+  // 老师默认手机端；工作台（含今日待办）允许访问桌面 /
+  if (auth.isTeacher && !to.path.startsWith('/m/') && to.path !== '/') {
     return '/m/upload'
   }
 

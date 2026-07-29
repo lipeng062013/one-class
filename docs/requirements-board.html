@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>壹号教室 · 需求看板</title>
+  <style>
+    :root {
+      --sidebar: #292524;
+      --gold: #f5e6c8;
+      --primary: #a16207;
+      --page: #faf8f3;
+      --card: #fffdf8;
+      --border: #e8e0d0;
+      --ink: #44403c;
+      --muted: #78716c;
+      --ok: #15803d;
+      --partial: #b45309;
+      --todo: #1d4ed8;
+      --idea: #7c3aed;
+      --no: #9f1239;
+      --drop: #57534e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--page);
+      color: var(--ink);
+      line-height: 1.5;
+    }
+    header {
+      background: var(--sidebar);
+      color: var(--gold);
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+    header p { margin: 0.25rem 0 0; color: #a8a29e; font-size: 0.85rem; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .toolbar input, .toolbar select, .toolbar button {
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      padding: 0.45rem 0.7rem;
+      font-size: 0.875rem;
+      background: var(--card);
+      color: var(--ink);
+    }
+    .toolbar button {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .toolbar button.secondary {
+      background: transparent;
+      color: var(--gold);
+      border-color: #57534e;
+    }
+    .toolbar button:hover { filter: brightness(1.08); }
+    main { padding: 1.25rem 1.5rem 3rem; max-width: 1400px; margin: 0 auto; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+    .stat {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      text-align: center;
+    }
+    .stat b { display: block; font-size: 1.5rem; color: var(--primary); }
+    .stat span { font-size: 0.8rem; color: var(--muted); }
+    .board {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1rem;
+      align-items: start;
+    }
+    .col {
+      background: #f5f0e6;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      min-height: 200px;
+      padding: 0.75rem;
+    }
+    .col h2 {
+      margin: 0 0 0.75rem;
+      font-size: 0.9rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .col h2 .count {
+      background: #fff;
+      border-radius: 999px;
+      padding: 0.1rem 0.5rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.75rem;
+      margin-bottom: 0.6rem;
+      box-shadow: 0 1px 2px rgba(41, 37, 36, 0.04);
+      cursor: grab;
+    }
+    .card:active { cursor: grabbing; }
+    .card.dragging { opacity: 0.5; }
+    .card .id {
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 0.72rem;
+      color: var(--primary);
+      font-weight: 600;
+    }
+    .card .title { font-size: 0.9rem; margin: 0.25rem 0; font-weight: 500; }
+    .card .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      margin-top: 0.4rem;
+    }
+    .tag {
+      font-size: 0.7rem;
+      padding: 0.1rem 0.4rem;
+      border-radius: 6px;
+      background: #f5e6c8;
+      color: #78350f;
+    }
+    .tag.mod { background: #e7e5e4; color: #44403c; }
+    .card .actions {
+      margin-top: 0.5rem;
+      display: flex;
+      gap: 0.35rem;
+    }
+    .card .actions button {
+      font-size: 0.72rem;
+      padding: 0.2rem 0.45rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #fff;
+      cursor: pointer;
+      color: var(--muted);
+    }
+    .card .actions button.danger { color: var(--no); }
+    .hint {
+      background: var(--card);
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 1rem;
+      margin-bottom: 1.25rem;
+      color: var(--muted);
+      font-size: 0.875rem;
+    }
+    .hint code { background: #f5e6c8; padding: 0.05rem 0.3rem; border-radius: 4px; color: var(--primary); }
+    dialog {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0;
+      max-width: 480px;
+      width: calc(100% - 2rem);
+      background: var(--card);
+    }
+    dialog::backdrop { background: rgba(41, 37, 36, 0.45); }
+    dialog form { padding: 1.25rem; display: grid; gap: 0.75rem; }
+    dialog h3 { margin: 0; }
+    dialog label { display: grid; gap: 0.25rem; font-size: 0.85rem; color: var(--muted); }
+    dialog input, dialog select, dialog textarea {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.5rem 0.65rem;
+      font: inherit;
+      color: var(--ink);
+      background: #fff;
+    }
+    dialog .row { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.5rem; }
+    dialog .row button {
+      border-radius: 8px;
+      padding: 0.45rem 0.9rem;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      font: inherit;
+    }
+    dialog .row button[type=submit] {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
+    }
+    footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.8rem;
+      padding: 0 1.5rem 2rem;
+    }
+    footer a { color: var(--primary); }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>壹号教室 · 需求看板</h1>
+      <p>可视化增删改 · 数据保存在本机浏览器 localStorage · 正式清单以 requirements.md 为准</p>
+    </div>
+    <div class="toolbar">
+      <input id="q" type="search" placeholder="搜索 ID / 标题…" />
+      <select id="filterModule">
+        <option value="">全部模块</option>
+      </select>
+      <select id="filterVersion">
+        <option value="">全部版本</option>
+        <option>V1</option>
+        <option>V1.1</option>
+        <option>V2</option>
+        <option>以后</option>
+      </select>
+      <button type="button" id="btnAdd">＋ 新增需求</button>
+      <button type="button" class="secondary" id="btnExport">导出 JSON</button>
+      <button type="button" class="secondary" id="btnReset">恢复默认</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="hint">
+      <strong>使用说明：</strong>
+      拖拽卡片可改状态列；点「编辑 / 删除」维护条目。
+      改完后可用「导出 JSON」备份，或把结果同步回仓库里的
+      <code>docs/requirements.md</code>（权威文档）。
+      本页改动<strong>不会自动写回 Git</strong>。
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="board" id="board"></div>
+  </main>
+
+  <footer>
+    源数据对齐 <a href="./requirements.md">docs/requirements.md</a> · 打开方式：用浏览器打开本文件即可
+  </footer>
+
+  <dialog id="dlg">
+    <form method="dialog" id="form">
+      <h3 id="dlgTitle">新增需求</h3>
+      <label>ID <input name="id" required placeholder="REQ-MAT-11" /></label>
+      <label>标题 <input name="title" required placeholder="一句话描述" /></label>
+      <label>模块
+        <select name="module">
+          <option>认证</option>
+          <option>用户</option>
+          <option>工作台</option>
+          <option>素材</option>
+          <option>知识库</option>
+          <option>模板</option>
+          <option>文案</option>
+          <option>海报</option>
+          <option>线索</option>
+          <option>学生</option>
+          <option>学情</option>
+          <option>UI</option>
+          <option>基础设施</option>
+        </select>
+      </label>
+      <label>优先级
+        <select name="priority">
+          <option>P0</option>
+          <option>P1</option>
+          <option>P2</option>
+          <option>P3</option>
+        </select>
+      </label>
+      <label>版本
+        <select name="version">
+          <option>V1</option>
+          <option>V1.1</option>
+          <option>V2</option>
+          <option>以后</option>
+        </select>
+      </label>
+      <label>状态
+        <select name="status">
+          <option value="done">✅ 已交付</option>
+          <option value="partial">🟡 部分完成</option>
+          <option value="todo">⬜ 待做</option>
+          <option value="idea">💡 候选</option>
+          <option value="wont">🚫 明确不做</option>
+          <option value="dropped">❌ 废弃</option>
+        </select>
+      </label>
+      <label>角色 <input name="roles" placeholder="admin, operator" /></label>
+      <label>验收要点 <textarea name="accept" rows="3"></textarea></label>
+      <div class="row">
+        <button type="button" id="btnCancel">取消</button>
+        <button type="submit">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script>
+    const STORAGE_KEY = "one-class-requirements-v1";
+    const STATUS_COLS = [
+      { key: "done", label: "✅ 已交付", color: "var(--ok)" },
+      { key: "partial", label: "🟡 部分完成", color: "var(--partial)" },
+      { key: "todo", label: "⬜ 待做", color: "var(--todo)" },
+      { key: "idea", label: "💡 候选", color: "var(--idea)" },
+      { key: "wont", label: "🚫 明确不做", color: "var(--no)" },
+      { key: "dropped", label: "❌ 废弃", color: "var(--drop)" },
+    ];
+
+    const DEFAULT = [
+      { id: "REQ-AUTH-01", title: "用户名+密码登录，返回 JWT", module: "认证", priority: "P0", version: "V1", status: "done", roles: "全部", accept: "错误统一提示" },
+      { id: "REQ-AUTH-02", title: "三角色 admin / operator / teacher", module: "认证", priority: "P0", version: "V1", status: "done", roles: "全部", accept: "菜单路由隔离" },
+      { id: "REQ-AUTH-03", title: "停用账号不可登录", module: "认证", priority: "P0", version: "V1", status: "done", roles: "全部", accept: "提示联系负责人" },
+      { id: "REQ-AUTH-04", title: "角色默认落地页", module: "认证", priority: "P0", version: "V1", status: "done", roles: "全部", accept: "teacher→手机上传" },
+      { id: "REQ-AUTH-05", title: "用户修改自己的密码", module: "认证", priority: "P0", version: "V1", status: "done", roles: "全部", accept: "校验旧密码" },
+      { id: "REQ-AUTH-06", title: "登录页忘记密码说明", module: "认证", priority: "P1", version: "V1", status: "done", roles: "全部", accept: "无短信邮箱" },
+      { id: "REQ-AUTH-07", title: "首次登录强制改密", module: "认证", priority: "P2", version: "V1.1", status: "idea", roles: "全部", accept: "规格延后" },
+      { id: "REQ-AUTH-08", title: "短信/邮箱/微信 OAuth 登录", module: "认证", priority: "P3", version: "以后", status: "wont", roles: "全部", accept: "V1 非目标" },
+      { id: "REQ-USER-01", title: "负责人新建用户（必填初始密码）", module: "用户", priority: "P0", version: "V1", status: "done", roles: "admin", accept: "明文仅展示一次" },
+      { id: "REQ-USER-02", title: "管理员重置他人密码", module: "用户", priority: "P0", version: "V1", status: "done", roles: "admin", accept: "可随机生成" },
+      { id: "REQ-USER-03", title: "用户列表启用/停用、改资料", module: "用户", priority: "P1", version: "V1", status: "done", roles: "admin", accept: "不返回 hash" },
+      { id: "REQ-USER-04", title: "开发种子演示账号（幂等）", module: "用户", priority: "P1", version: "V1", status: "done", roles: "—", accept: "admin/ops/teacher1" },
+      { id: "REQ-DASH-01", title: "待处理素材数量与入口", module: "工作台", priority: "P0", version: "V1", status: "done", roles: "admin, operator", accept: "卡片可跳转" },
+      { id: "REQ-DASH-02", title: "今日待跟进线索", module: "工作台", priority: "P0", version: "V1", status: "done", roles: "admin, operator", accept: "按 next_follow_at" },
+      { id: "REQ-DASH-03", title: "最近生成摘要", module: "工作台", priority: "P1", version: "V1", status: "done", roles: "admin, operator", accept: "可点进列表" },
+      { id: "REQ-DASH-04", title: "AI 接入状态展示", module: "工作台", priority: "P1", version: "V1", status: "done", roles: "admin, operator", accept: "已配置/未配置" },
+      { id: "REQ-DASH-05", title: "招生数据大盘", module: "工作台", priority: "P2", version: "V2", status: "wont", roles: "admin", accept: "V1 非目标" },
+      { id: "REQ-MAT-01", title: "老师手机端上传素材（图+文）", module: "素材", priority: "P0", version: "V1", status: "done", roles: "teacher", accept: "多图、少字段" },
+      { id: "REQ-MAT-02", title: "业务字段：场景/年级/科目等", module: "素材", priority: "P0", version: "V1", status: "done", roles: "teacher, operator", accept: "详情可见" },
+      { id: "REQ-MAT-03", title: "授权状态机", module: "素材", priority: "P0", version: "V1", status: "done", roles: "全部", accept: "未授权可警告继续" },
+      { id: "REQ-MAT-04", title: "素材状态 new→usable→used→archived", module: "素材", priority: "P0", version: "V1", status: "done", roles: "operator", accept: "可 PATCH" },
+      { id: "REQ-MAT-05", title: "素材可见性按角色隔离", module: "素材", priority: "P0", version: "V1", status: "done", roles: "全部", accept: "越权 403" },
+      { id: "REQ-MAT-06", title: "素材详情图片预览", module: "素材", priority: "P1", version: "V1", status: "done", roles: "operator", accept: "鉴权预览" },
+      { id: "REQ-MAT-07", title: "从素材跳转生成文案/海报", module: "素材", priority: "P1", version: "V1", status: "done", roles: "operator", accept: "带 material_id" },
+      { id: "REQ-MAT-08", title: "上传类型与大小限制", module: "素材", priority: "P1", version: "V1", status: "partial", roles: "全部", accept: "可再收紧" },
+      { id: "REQ-MAT-09", title: "素材批量归档/标 used", module: "素材", priority: "P2", version: "V1.1", status: "idea", roles: "operator", accept: "批量清理" },
+      { id: "REQ-MAT-10", title: "复杂审核排期看板", module: "素材", priority: "P2", version: "V2", status: "wont", roles: "operator", accept: "V1 非目标" },
+      { id: "REQ-KNOW-01", title: "知识库多分类", module: "知识库", priority: "P0", version: "V1", status: "done", roles: "admin, operator", accept: "可筛选" },
+      { id: "REQ-KNOW-02", title: "负责人读写、运营只读", module: "知识库", priority: "P0", version: "V1", status: "done", roles: "admin, operator", accept: "teacher 不可见" },
+      { id: "REQ-KNOW-03", title: "条目 title/content/tags/启用", module: "知识库", priority: "P0", version: "V1", status: "done", roles: "admin", accept: "is_active" },
+      { id: "REQ-KNOW-04", title: "生成文案注入知识库摘要", module: "知识库", priority: "P0", version: "V1", status: "done", roles: "system", accept: "语气+禁用词" },
+      { id: "REQ-KNOW-05", title: "知识库全文检索", module: "知识库", priority: "P2", version: "V1.1", status: "idea", roles: "admin, operator", accept: "关键字" },
+      { id: "REQ-TPL-01", title: "文案模板：系统+自定义", module: "模板", priority: "P0", version: "V1", status: "done", roles: "admin, operator", accept: "{{变量}}" },
+      { id: "REQ-TPL-02", title: "系统模板不可删可复制", module: "模板", priority: "P0", version: "V1", status: "done", roles: "operator", accept: "is_system" },
+      { id: "REQ-TPL-03", title: "海报版式模板 layout_json", module: "模板", priority: "P0", version: "V1", status: "done", roles: "admin, operator", accept: "区域字段" },
+      { id: "REQ-TPL-04", title: "预置场景模板 seed", module: "模板", priority: "P1", version: "V1", status: "done", roles: "—", accept: "老带新/试听等" },
+      { id: "REQ-TPL-05", title: "模板版本历史", module: "模板", priority: "P3", version: "以后", status: "idea", roles: "admin", accept: "可回滚" },
+      { id: "REQ-COPY-01", title: "仅模板生成（无 Key 可用）", module: "文案", priority: "P0", version: "V1", status: "done", roles: "operator", accept: "变量填充" },
+      { id: "REQ-COPY-02", title: "模板后大模型润色", module: "文案", priority: "P0", version: "V1", status: "done", roles: "operator", accept: "失败回退" },
+      { id: "REQ-COPY-03", title: "直接大模型生成", module: "文案", priority: "P1", version: "V1", status: "done", roles: "operator", accept: "未配置回退" },
+      { id: "REQ-COPY-04", title: "可编辑、复制、落库", module: "文案", priority: "P0", version: "V1", status: "done", roles: "operator", accept: "列表回看" },
+      { id: "REQ-COPY-05", title: "禁用词命中提示", module: "文案", priority: "P1", version: "V1", status: "done", roles: "operator", accept: "可改后保存" },
+      { id: "REQ-COPY-06", title: "平台字段预留（默认 xhs）", module: "文案", priority: "P2", version: "V1", status: "done", roles: "—", accept: "可扩展" },
+      { id: "REQ-COPY-07", title: "多平台草稿", module: "文案", priority: "P1", version: "V2", status: "wont", roles: "operator", accept: "V1 非目标" },
+      { id: "REQ-COPY-08", title: "生成接口按用户限流", module: "文案", priority: "P1", version: "V1", status: "partial", roles: "system", accept: "可配置化" },
+      { id: "REQ-POSTER-01", title: "版式导出 PNG（预览+下载）", module: "海报", priority: "P0", version: "V1", status: "done", roles: "operator", accept: "Pillow" },
+      { id: "REQ-POSTER-02", title: "可选 AI 生图", module: "海报", priority: "P1", version: "V1", status: "done", roles: "operator", accept: "失败回退版式" },
+      { id: "REQ-POSTER-03", title: "海报生成记录落库", module: "海报", priority: "P0", version: "V1", status: "done", roles: "operator", accept: "列表" },
+      { id: "REQ-POSTER-04", title: "在线拖拽排版器", module: "海报", priority: "P2", version: "V2", status: "idea", roles: "operator", accept: "现固定区域" },
+      { id: "REQ-LEAD-01", title: "新建线索核心字段", module: "线索", priority: "P0", version: "V1", status: "done", roles: "operator", accept: "来源枚举" },
+      { id: "REQ-LEAD-02", title: "线索状态机", module: "线索", priority: "P0", version: "V1", status: "done", roles: "operator", accept: "列表可改" },
+      { id: "REQ-LEAD-03", title: "下次跟进日期时间", module: "线索", priority: "P0", version: "V1", status: "done", roles: "operator", accept: "驱动工作台" },
+      { id: "REQ-LEAD-04", title: "备注与负责人", module: "线索", priority: "P1", version: "V1", status: "done", roles: "operator", accept: "可筛选" },
+      { id: "REQ-LEAD-05", title: "自动回访提醒", module: "线索", priority: "P2", version: "V2", status: "wont", roles: "operator", accept: "V1 仅列表" },
+      { id: "REQ-LEAD-06", title: "线索导出 Excel/CSV", module: "线索", priority: "P2", version: "V1.1", status: "idea", roles: "admin, operator", accept: "周报" },
+      { id: "REQ-LEAD-07", title: "侧栏「获客与学员」：线索+学生子菜单", module: "线索", priority: "P0", version: "V1.1", status: "todo", roles: "admin, operator", accept: "子目录不混表" },
+      { id: "REQ-LEAD-08", title: "线索已报名一键转学生", module: "线索", priority: "P1", version: "V1.1", status: "idea", roles: "admin, operator", accept: "source_lead_id" },
+      { id: "REQ-STU-01", title: "学生建档：姓名/年级/电话", module: "学生", priority: "P0", version: "V1.1", status: "todo", roles: "admin, operator, teacher", accept: "独立 students 表" },
+      { id: "REQ-STU-02", title: "家长称呼/主责老师/在读状态", module: "学生", priority: "P0", version: "V1.1", status: "todo", roles: "admin, operator, teacher", accept: "active 等" },
+      { id: "REQ-STU-03", title: "列表筛年级/搜姓名/搜电话", module: "学生", priority: "P0", version: "V1.1", status: "todo", roles: "admin, operator", accept: "组合筛选" },
+      { id: "REQ-STU-04", title: "学生详情+学情时间线", module: "学生", priority: "P0", version: "V1.1", status: "todo", roles: "全部相关", accept: "/students/:id" },
+      { id: "REQ-STU-05", title: "编辑学生；删除仅 admin", module: "学生", priority: "P0", version: "V1.1", status: "todo", roles: "见规格", accept: "二次确认" },
+      { id: "REQ-STU-06", title: "老师手机学生列表", module: "学生", priority: "P0", version: "V1.1", status: "todo", roles: "teacher", accept: "/m/students" },
+      { id: "REQ-STU-07", title: "老师可见全部学生（小机构）", module: "学生", priority: "P1", version: "V1.1", status: "todo", roles: "teacher", accept: "以后可收紧" },
+      { id: "REQ-STU-08", title: "学生名册导出 Excel", module: "学生", priority: "P2", version: "V1.1", status: "idea", roles: "admin", accept: "导出" },
+      { id: "REQ-LRN-01", title: "录学情：学生/日期/状态/情况/备注", module: "学情", priority: "P0", version: "V1.1", status: "todo", roles: "teacher, admin", accept: "class_status" },
+      { id: "REQ-LRN-02", title: "学情多图上传", module: "学情", priority: "P0", version: "V1.1", status: "todo", roles: "teacher, admin", accept: "Storage" },
+      { id: "REQ-LRN-03", title: "老师手机写学情主路径", module: "学情", priority: "P0", version: "V1.1", status: "todo", roles: "teacher", accept: "1 分钟完成" },
+      { id: "REQ-LRN-04", title: "我的学情列表回看", module: "学情", priority: "P0", version: "V1.1", status: "todo", roles: "teacher", accept: "/m/learning" },
+      { id: "REQ-LRN-05", title: "详情学情时间线", module: "学情", priority: "P0", version: "V1.1", status: "todo", roles: "全部相关", accept: "倒序" },
+      { id: "REQ-LRN-06", title: "operator 学情只读", module: "学情", priority: "P1", version: "V1.1", status: "todo", roles: "operator", accept: "无写按钮" },
+      { id: "REQ-LRN-07", title: "老师仅改自己的学情", module: "学情", priority: "P1", version: "V1.1", status: "todo", roles: "teacher", accept: "admin 全管" },
+      { id: "REQ-LRN-08", title: "工作台久未学情提醒", module: "学情", priority: "P2", version: "V1.1", status: "idea", roles: "admin, operator", accept: "近7日" },
+      { id: "REQ-LRN-09", title: "学情一键转素材", module: "学情", priority: "P2", version: "V2", status: "idea", roles: "teacher, operator", accept: "进步外发" },
+      { id: "REQ-LRN-10", title: "学情推送家长", module: "学情", priority: "P3", version: "V2", status: "idea", roles: "—", accept: "需触点" },
+      { id: "REQ-UI-01", title: "Element Plus 统一组件", module: "UI", priority: "P0", version: "V1", status: "done", roles: "全部", accept: "表单表格对话框" },
+      { id: "REQ-UI-02", title: "桌面侧栏后台布局", module: "UI", priority: "P0", version: "V1", status: "done", roles: "admin, operator", accept: "≥992px" },
+      { id: "REQ-UI-03", title: "窄屏抽屉导航 / 响应式", module: "UI", priority: "P0", version: "V1", status: "done", roles: "全部", accept: "手机主流程" },
+      { id: "REQ-UI-04", title: "老师 MobileLayout 底栏", module: "UI", priority: "P0", version: "V1", status: "done", roles: "teacher", accept: "上传|我的" },
+      { id: "REQ-UI-05", title: "米金轻奢主题壳层", module: "UI", priority: "P1", version: "V1", status: "done", roles: "全部", accept: "非默认蓝" },
+      { id: "REQ-UI-06", title: "业务页逐页视觉精修", module: "UI", priority: "P2", version: "V1.1", status: "idea", roles: "全部", accept: "当前继承" },
+      { id: "REQ-UI-07", title: "暗色模式", module: "UI", priority: "P3", version: "以后", status: "idea", roles: "全部", accept: "—" },
+      { id: "REQ-UI-08", title: "老师底栏 4 Tab：上传/素材/学生/学情", module: "UI", priority: "P0", version: "V1.1", status: "todo", roles: "teacher", accept: "MobileLayout" },
+      { id: "REQ-UI-09", title: "侧栏获客与学员子菜单样式", module: "UI", priority: "P0", version: "V1.1", status: "todo", roles: "admin, operator", accept: "Element 子菜单" },
+      { id: "REQ-INFRA-01", title: "AI Key 仅后端环境变量", module: "基础设施", priority: "P0", version: "V1", status: "done", roles: "system", accept: "前端无 Key" },
+      { id: "REQ-INFRA-02", title: ".env.example 仅变量名", module: "基础设施", priority: "P0", version: "V1", status: "done", roles: "—", accept: "仓库无真实 Key" },
+      { id: "REQ-INFRA-03", title: "Docker Compose 一键启动", module: "基础设施", priority: "P0", version: "V1", status: "done", roles: "—", accept: "data 卷" },
+      { id: "REQ-INFRA-04", title: "SQLite 可迁 PostgreSQL", module: "基础设施", priority: "P1", version: "V1", status: "done", roles: "—", accept: "模型写法" },
+      { id: "REQ-INFRA-05", title: "本地 Storage 抽象", module: "基础设施", priority: "P1", version: "V1", status: "done", roles: "—", accept: "可换 OSS" },
+      { id: "REQ-INFRA-06", title: "后端 pytest 覆盖主模块", module: "基础设施", priority: "P1", version: "V1", status: "done", roles: "—", accept: "pytest -v" },
+      { id: "REQ-INFRA-07", title: "文件下载鉴权", module: "基础设施", priority: "P0", version: "V1", status: "done", roles: "system", accept: "未登录不可下" },
+      { id: "REQ-INFRA-08", title: "运营手册 HTML 独立保留", module: "基础设施", priority: "P1", version: "V1", status: "done", roles: "—", accept: "不塞进平台" },
+      { id: "REQ-INFRA-09", title: "多机构 SaaS 租户", module: "基础设施", priority: "P3", version: "V2", status: "wont", roles: "—", accept: "预留即可" },
+      { id: "REQ-INFRA-10", title: "自动发布到微信/小红书", module: "基础设施", priority: "P3", version: "V2", status: "wont", roles: "—", accept: "V1 非目标" },
+      { id: "REQ-INFRA-11", title: "生产 HTTPS + 域名文档", module: "基础设施", priority: "P2", version: "V1.1", status: "idea", roles: "—", accept: "部署说明" },
+      { id: "REQ-INFRA-12", title: "Alembic 正式迁移链", module: "基础设施", priority: "P2", version: "V1.1", status: "partial", roles: "—", accept: "视 create_all" },
+    ];
+
+    let items = load();
+    let editId = null;
+    let dragId = null;
+
+    function load() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) return JSON.parse(raw);
+      } catch (_) {}
+      return structuredClone(DEFAULT);
+    }
+    function save() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    }
+
+    const board = document.getElementById("board");
+    const stats = document.getElementById("stats");
+    const q = document.getElementById("q");
+    const filterModule = document.getElementById("filterModule");
+    const filterVersion = document.getElementById("filterVersion");
+    const dlg = document.getElementById("dlg");
+    const form = document.getElementById("form");
+
+    // module options
+    [...new Set(DEFAULT.map((x) => x.module))].forEach((m) => {
+      const o = document.createElement("option");
+      o.value = m;
+      o.textContent = m;
+      filterModule.appendChild(o);
+    });
+
+    function filtered() {
+      const qq = q.value.trim().toLowerCase();
+      const mod = filterModule.value;
+      const ver = filterVersion.value;
+      return items.filter((it) => {
+        if (mod && it.module !== mod) return false;
+        if (ver && it.version !== ver) return false;
+        if (!qq) return true;
+        return (
+          it.id.toLowerCase().includes(qq) ||
+          it.title.toLowerCase().includes(qq) ||
+          (it.accept || "").toLowerCase().includes(qq)
+        );
+      });
+    }
+
+    function render() {
+      const list = filtered();
+      stats.innerHTML = STATUS_COLS.map((c) => {
+        const n = items.filter((i) => i.status === c.key).length;
+        return `<div class="stat"><b style="color:${c.color}">${n}</b><span>${c.label}</span></div>`;
+      }).join("");
+
+      board.innerHTML = STATUS_COLS.map((col) => {
+        const cards = list.filter((i) => i.status === col.key);
+        return `
+          <section class="col" data-status="${col.key}">
+            <h2 style="color:${col.color}">${col.label} <span class="count">${cards.length}</span></h2>
+            ${cards.map(cardHtml).join("") || `<div style="color:var(--muted);font-size:0.8rem;padding:0.5rem">暂无</div>`}
+          </section>`;
+      }).join("");
+
+      board.querySelectorAll(".card").forEach((el) => {
+        el.addEventListener("dragstart", (e) => {
+          dragId = el.dataset.id;
+          el.classList.add("dragging");
+          e.dataTransfer.effectAllowed = "move";
+        });
+        el.addEventListener("dragend", () => el.classList.remove("dragging"));
+      });
+      board.querySelectorAll(".col").forEach((col) => {
+        col.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+        });
+        col.addEventListener("drop", (e) => {
+          e.preventDefault();
+          if (!dragId) return;
+          const it = items.find((x) => x.id === dragId);
+          if (it) {
+            it.status = col.dataset.status;
+            save();
+            render();
+          }
+          dragId = null;
+        });
+      });
+      board.querySelectorAll("[data-edit]").forEach((btn) => {
+        btn.addEventListener("click", () => openEdit(btn.dataset.edit));
+      });
+      board.querySelectorAll("[data-del]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.dataset.del;
+          if (!confirm(`删除 ${id}？建议优先改为「废弃」以保留历史。`)) return;
+          items = items.filter((x) => x.id !== id);
+          save();
+          render();
+        });
+      });
+    }
+
+    function cardHtml(it) {
+      return `
+        <article class="card" draggable="true" data-id="${it.id}">
+          <div class="id">${it.id}</div>
+          <div class="title">${escapeHtml(it.title)}</div>
+          <div class="meta">
+            <span class="tag mod">${escapeHtml(it.module)}</span>
+            <span class="tag">${it.priority}</span>
+            <span class="tag">${it.version}</span>
+          </div>
+          <div class="actions">
+            <button type="button" data-edit="${it.id}">编辑</button>
+            <button type="button" class="danger" data-del="${it.id}">删除</button>
+          </div>
+        </article>`;
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function openEdit(id) {
+      editId = id || null;
+      document.getElementById("dlgTitle").textContent = id ? "编辑需求" : "新增需求";
+      const it = id ? items.find((x) => x.id === id) : null;
+      form.id.value = it?.id || "";
+      form.id.readOnly = !!id;
+      form.title.value = it?.title || "";
+      form.module.value = it?.module || "素材";
+      form.priority.value = it?.priority || "P2";
+      form.version.value = it?.version || "V1.1";
+      form.status.value = it?.status || "idea";
+      form.roles.value = it?.roles || "";
+      form.accept.value = it?.accept || "";
+      dlg.showModal();
+    }
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const data = {
+        id: form.id.value.trim(),
+        title: form.title.value.trim(),
+        module: form.module.value,
+        priority: form.priority.value,
+        version: form.version.value,
+        status: form.status.value,
+        roles: form.roles.value.trim(),
+        accept: form.accept.value.trim(),
+      };
+      if (!editId && items.some((x) => x.id === data.id)) {
+        alert("ID 已存在，请换一个编号");
+        return;
+      }
+      if (editId) {
+        const idx = items.findIndex((x) => x.id === editId);
+        items[idx] = data;
+      } else {
+        items.push(data);
+      }
+      save();
+      dlg.close();
+      render();
+    });
+
+    document.getElementById("btnCancel").addEventListener("click", () => dlg.close());
+    document.getElementById("btnAdd").addEventListener("click", () => openEdit(null));
+    document.getElementById("btnExport").addEventListener("click", () => {
+      const blob = new Blob([JSON.stringify(items, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "one-class-requirements.json";
+      a.click();
+    });
+    document.getElementById("btnReset").addEventListener("click", () => {
+      if (!confirm("恢复为仓库默认清单？本机修改会丢失。")) return;
+      items = structuredClone(DEFAULT);
+      save();
+      render();
+    });
+    q.addEventListener("input", render);
+    filterModule.addEventListener("change", render);
+    filterVersion.addEventListener("change", render);
+
+    render();
+  </script>
+</body>
+</html>

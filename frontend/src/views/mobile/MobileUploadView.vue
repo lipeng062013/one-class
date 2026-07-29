@@ -3,6 +3,7 @@ import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules, type UploadUserFile } from 'element-plus'
 import { createMaterialApi, uploadMaterialFileApi } from '../../api/materials'
+import TodayTodos from '../../components/TodayTodos.vue'
 
 const router = useRouter()
 const formRef = ref<FormInstance>()
@@ -56,6 +57,7 @@ async function submit() {
 
 <template>
   <div class="page">
+    <TodayTodos class="todo-block" />
     <h2>上传素材</h2>
     <el-card>
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top" size="large">
@@ -107,6 +109,10 @@ async function submit() {
 <style scoped>
 .page {
   padding: 16px 16px 80px;
+}
+
+.todo-block {
+  margin-bottom: 14px;
 }
 
 h2 {

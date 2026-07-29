@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { listCopies, type GeneratedCopy } from '../../api/copies'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { deleteCopy, listCopies, type GeneratedCopy } from '../../api/copies'
 
 const router = useRouter()
 const loading = ref(false)
@@ -23,6 +23,17 @@ async function copyBody(row: GeneratedCopy) {
     ElMessage.success('已复制到剪贴板')
   } catch {
     ElMessage.warning('复制失败，请手动选择')
+  }
+}
+
+async function onDelete(row: GeneratedCopy) {
+  try {
+    await ElMessageBox.confirm(`删除文案「${row.title || row.id}」？`, '确认', { type: 'warning' })
+    await deleteCopy(row.id)
+    ElMessage.success('已删除')
+    await load()
+  } catch {
+    /* cancel */
   }
 }
 
@@ -52,6 +63,7 @@ onMounted(load)
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="copyBody(row)">复制</el-button>
+            <el-button link type="danger" @click="onDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

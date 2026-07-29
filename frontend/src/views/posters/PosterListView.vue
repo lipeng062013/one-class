@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { listPosters, openPosterDownload, type GeneratedPoster } from '../../api/posters'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { deletePoster, listPosters, openPosterDownload, type GeneratedPoster } from '../../api/posters'
 
 const router = useRouter()
 const loading = ref(false)
@@ -26,6 +26,17 @@ async function download(row: GeneratedPoster) {
   }
 }
 
+async function onDelete(row: GeneratedPoster) {
+  try {
+    await ElMessageBox.confirm(`删除海报「${row.title || row.id}」？`, '确认', { type: 'warning' })
+    await deletePoster(row.id)
+    ElMessage.success('已删除')
+    await load()
+  } catch {
+    /* cancel */
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -41,9 +52,10 @@ onMounted(load)
         <el-table-column prop="title" label="标题" min-width="160" />
         <el-table-column prop="mode" label="模式" width="110" />
         <el-table-column prop="file_path" label="文件" min-width="180" show-overflow-tooltip />
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="download(row)">下载</el-button>
+            <el-button link type="danger" @click="onDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

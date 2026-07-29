@@ -207,3 +207,9 @@ def get_poster(db: Session, poster_id: int) -> GeneratedPoster:
     if not poster:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Poster not found")
     return poster
+
+
+def delete_poster(db: Session, poster_id: int) -> None:
+    poster = get_poster(db, poster_id)
+    db.delete(poster)
+    db.commit()

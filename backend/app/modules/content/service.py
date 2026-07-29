@@ -69,9 +69,10 @@ def _build_context(db: Session, material: Material | None) -> dict[str, Any]:
             }
         )
 
-    tone_entries = (
+    # 成长中心话术作为品牌表达参考（替代已删除的 tone 分类）
+    script_entries = (
         db.query(KnowledgeEntry)
-        .filter(KnowledgeEntry.category == "tone", KnowledgeEntry.is_active.is_(True))
+        .filter(KnowledgeEntry.category == "script", KnowledgeEntry.is_active.is_(True))
         .order_by(KnowledgeEntry.id.asc())
         .all()
     )
@@ -81,9 +82,9 @@ def _build_context(db: Session, material: Material | None) -> dict[str, Any]:
         .order_by(KnowledgeEntry.id.asc())
         .all()
     )
-    if tone_entries:
+    if script_entries:
         context["tone"] = "；".join(
-            e.content or e.title for e in tone_entries if (e.content or e.title)
+            e.content or e.title for e in script_entries if (e.content or e.title)
         )
     if course_entries:
         context["course"] = "；".join(
@@ -110,7 +111,7 @@ def _banned_words(db: Session) -> list[str]:
 
 def _knowledge_snippets(db: Session) -> str:
     parts: list[str] = []
-    for category in ("tone", "course", "banned"):
+    for category in ("script", "objection", "banned", "course"):
         entries = (
             db.query(KnowledgeEntry)
             .filter(KnowledgeEntry.category == category, KnowledgeEntry.is_active.is_(True))
@@ -317,3 +318,11 @@ def update_copy(db: Session, copy_id: int, body: GeneratedCopyUpdate) -> Generat
     db.commit()
     db.refresh(copy)
     return copy
+
+
+def delete_copy(db: Session, copy_id: int) -> None:
+    copy = db.get(GeneratedCopy, copy_id)
+    if not copy:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Generated copy not found")
+    db.delete(copy)
+    db.commit()

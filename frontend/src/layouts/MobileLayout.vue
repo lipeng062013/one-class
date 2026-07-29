@@ -9,6 +9,8 @@ const auth = useAuthStore()
 
 const active = computed(() => {
   if (route.path.startsWith('/m/materials')) return '/m/materials'
+  if (route.path.startsWith('/m/students')) return '/m/students'
+  if (route.path.startsWith('/m/learning')) return '/m/learning'
   return '/m/upload'
 })
 
@@ -39,7 +41,15 @@ function logout() {
         </el-menu-item>
         <el-menu-item index="/m/materials">
           <el-icon><Folder /></el-icon>
-          <span>我的素材</span>
+          <span>素材</span>
+        </el-menu-item>
+        <el-menu-item index="/m/students">
+          <el-icon><User /></el-icon>
+          <span>学生</span>
+        </el-menu-item>
+        <el-menu-item index="/m/learning">
+          <el-icon><EditPen /></el-icon>
+          <span>学情</span>
         </el-menu-item>
       </el-menu>
     </nav>
@@ -68,6 +78,7 @@ function logout() {
   font-weight: 700;
   color: var(--oc-ink, #44403c);
   letter-spacing: 0.02em;
+  font-size: 14px;
 }
 
 .logout {
@@ -78,6 +89,8 @@ function logout() {
 .body {
   flex: 1;
   padding: 12px;
+  padding-bottom: 8px;
+  min-height: 0;
 }
 
 .bottom {
@@ -85,6 +98,7 @@ function logout() {
   bottom: 0;
   background: var(--oc-card, #fffdf8);
   border-top: 1px solid var(--oc-border, #e8e0d0);
+  z-index: 10;
 }
 
 .bottom :deep(.el-menu) {
@@ -97,12 +111,23 @@ function logout() {
 .bottom :deep(.el-menu-item) {
   flex: 1;
   justify-content: center;
+  flex-direction: column;
+  height: 56px;
+  line-height: 1.2;
+  padding: 6px 0 !important;
   color: var(--oc-muted, #78716c);
+  font-size: 11px;
+  gap: 2px;
+}
+
+.bottom :deep(.el-menu-item .el-icon) {
+  margin-right: 0;
+  font-size: 18px;
 }
 
 .bottom :deep(.el-menu-item.is-active) {
   color: var(--oc-primary, #a16207) !important;
   font-weight: 600;
-  border-bottom-color: var(--oc-primary, #a16207) !important;
+  border-bottom-color: transparent !important;
 }
 </style>

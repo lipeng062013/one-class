@@ -69,3 +69,7 @@ export async function openPosterDownload(id: number, filename?: string): Promise
   a.remove()
   URL.revokeObjectURL(url)
 }
+
+export async function deletePoster(id: number): Promise<void> {
+  await client.delete(`/posters/${id}`)
+}

@@ -57,8 +57,15 @@ function unwrap<T>(res: { data: ApiResponse<T> }, fallback: string): T {
   return res.data.data
 }
 
-export async function listLeads(): Promise<Lead[]> {
-  const res = await client.get<ApiResponse<Lead[]>>('/leads')
+export interface LeadListParams {
+  source?: string
+  status?: string
+  name?: string
+  phone?: string
+}
+
+export async function listLeads(params: LeadListParams = {}): Promise<Lead[]> {
+  const res = await client.get<ApiResponse<Lead[]>>('/leads', { params })
   return unwrap(res, 'Failed to list leads')
 }
 

@@ -58,6 +58,10 @@ export async function patchMaterialApi(
   return res.data.data
 }
 
+export async function deleteMaterialApi(id: number): Promise<void> {
+  await client.delete(`/materials/${id}`)
+}
+
 export async function uploadMaterialFileApi(id: number, file: File): Promise<MaterialFile> {
   const form = new FormData()
   form.append('file', file)

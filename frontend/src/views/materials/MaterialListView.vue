@@ -2,7 +2,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { listMaterialsApi, patchMaterialApi, type Material } from '../../api/materials'
+import { ElMessageBox } from 'element-plus'
+import { deleteMaterialApi, listMaterialsApi, patchMaterialApi, type Material } from '../../api/materials'
 import { useAuthStore } from '../../stores/auth'
 
 const router = useRouter()
@@ -42,6 +43,17 @@ async function markUsable(row: Material) {
   await patchMaterialApi(row.id, { status: 'usable', auth_status: 'authorized' })
   ElMessage.success('已标为可用')
   await load()
+}
+
+async function onDelete(row: Material) {
+  try {
+    await ElMessageBox.confirm(`确定删除素材「${row.title}」？`, '删除确认', { type: 'warning' })
+    await deleteMaterialApi(row.id)
+    ElMessage.success('已删除')
+    await load()
+  } catch {
+    /* cancel */
+  }
 }
 
 onMounted(load)
@@ -89,6 +101,7 @@ onMounted(load)
             >
               标为可用
             </el-button>
+            <el-button link type="danger" @click="onDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

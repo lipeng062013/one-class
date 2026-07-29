@@ -5,8 +5,15 @@ export interface UserRow extends UserInfo {
   created_at?: string | null
 }
 
-export async function listUsersApi(): Promise<UserRow[]> {
-  const res = await client.get('/users')
+export interface UserListParams {
+  role?: string
+  is_active?: boolean
+  username?: string
+  display_name?: string
+}
+
+export async function listUsersApi(params: UserListParams = {}): Promise<UserRow[]> {
+  const res = await client.get('/users', { params })
   return res.data.data
 }
 

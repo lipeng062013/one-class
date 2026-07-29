@@ -12,16 +12,47 @@ const drawer = ref(false)
 const isMobile = ref(false)
 const changePwdVisible = ref(false)
 
-const active = computed(() => route.path)
+const active = computed(() => {
+  if (route.path.startsWith('/students')) return '/students'
+  if (route.path.startsWith('/leads')) return '/leads'
+  if (route.path.startsWith('/knowledge')) return route.path
+  return route.path
+})
 
-const menus = computed(() => {
-  const items = [
+type MenuItem = { index: string; title: string; icon: string }
+type MenuGroup = { type: 'group'; index: string; title: string; icon: string; children: MenuItem[] }
+type MenuEntry = (MenuItem & { type?: 'item' }) | MenuGroup
+
+const menus = computed((): MenuEntry[] => {
+  const crmChildren: MenuItem[] = [{ index: '/leads', title: '线索跟进', icon: 'Phone' }]
+  // 学生信息：运营不可见
+  if (auth.isAdmin) {
+    crmChildren.push({ index: '/students', title: '学生信息', icon: 'Avatar' })
+  }
+
+  const items: MenuEntry[] = [
     { index: '/', title: '工作台', icon: 'Odometer' },
     { index: '/materials', title: '素材', icon: 'Picture' },
     { index: '/copies', title: '文案', icon: 'Document' },
     { index: '/posters', title: '海报', icon: 'PictureFilled' },
-    { index: '/leads', title: '线索', icon: 'Phone' },
-    { index: '/knowledge', title: '知识库', icon: 'Collection' },
+    {
+      type: 'group',
+      index: 'crm',
+      title: '获客与学员',
+      icon: 'UserFilled',
+      children: crmChildren,
+    },
+    {
+      type: 'group',
+      index: 'growth',
+      title: '成长中心',
+      icon: 'Reading',
+      children: [
+        { index: '/knowledge/scripts', title: '沟通话术', icon: 'ChatDotRound' },
+        { index: '/knowledge/objections', title: '异议处理', icon: 'Comment' },
+        { index: '/knowledge/banned', title: '禁用词列表', icon: 'Warning' },
+      ],
+    },
     { index: '/templates', title: '模板', icon: 'Files' },
   ]
   if (auth.isAdmin) {
@@ -68,6 +99,7 @@ onUnmounted(() => window.removeEventListener('resize', checkMobile))
       </div>
       <el-menu
         :default-active="active"
+        :default-openeds="['crm', 'growth']"
         :collapse="collapsed"
         router
         background-color="transparent"
@@ -75,10 +107,22 @@ onUnmounted(() => window.removeEventListener('resize', checkMobile))
         active-text-color="#f5e6c8"
         @select="onSelect"
       >
-        <el-menu-item v-for="m in menus" :key="m.index" :index="m.index">
-          <el-icon><component :is="m.icon" /></el-icon>
-          <span>{{ m.title }}</span>
-        </el-menu-item>
+        <template v-for="m in menus" :key="m.index">
+          <el-sub-menu v-if="m.type === 'group'" :index="m.index">
+            <template #title>
+              <el-icon><component :is="m.icon" /></el-icon>
+              <span>{{ m.title }}</span>
+            </template>
+            <el-menu-item v-for="c in m.children" :key="c.index" :index="c.index">
+              <el-icon><component :is="c.icon" /></el-icon>
+              <span>{{ c.title }}</span>
+            </el-menu-item>
+          </el-sub-menu>
+          <el-menu-item v-else :index="m.index">
+            <el-icon><component :is="m.icon" /></el-icon>
+            <span>{{ m.title }}</span>
+          </el-menu-item>
+        </template>
       </el-menu>
     </el-aside>
 
@@ -86,16 +130,29 @@ onUnmounted(() => window.removeEventListener('resize', checkMobile))
       <div class="brand drawer-brand">壹号教室</div>
       <el-menu
         :default-active="active"
+        :default-openeds="['crm', 'growth']"
         router
         background-color="transparent"
         text-color="#e7e5e4"
         active-text-color="#f5e6c8"
         @select="onSelect"
       >
-        <el-menu-item v-for="m in menus" :key="m.index" :index="m.index">
-          <el-icon><component :is="m.icon" /></el-icon>
-          <span>{{ m.title }}</span>
-        </el-menu-item>
+        <template v-for="m in menus" :key="m.index">
+          <el-sub-menu v-if="m.type === 'group'" :index="m.index">
+            <template #title>
+              <el-icon><component :is="m.icon" /></el-icon>
+              <span>{{ m.title }}</span>
+            </template>
+            <el-menu-item v-for="c in m.children" :key="c.index" :index="c.index">
+              <el-icon><component :is="c.icon" /></el-icon>
+              <span>{{ c.title }}</span>
+            </el-menu-item>
+          </el-sub-menu>
+          <el-menu-item v-else :index="m.index">
+            <el-icon><component :is="m.icon" /></el-icon>
+            <span>{{ m.title }}</span>
+          </el-menu-item>
+        </template>
       </el-menu>
     </el-drawer>
 
@@ -167,6 +224,26 @@ onUnmounted(() => window.removeEventListener('resize', checkMobile))
   background: rgba(180, 140, 60, 0.28) !important;
   color: var(--oc-gold, #f5e6c8) !important;
   font-weight: 600;
+}
+
+.aside :deep(.el-sub-menu__title),
+.nav-drawer :deep(.el-sub-menu__title) {
+  margin: 4px 8px;
+  border-radius: 8px;
+  height: 44px;
+  line-height: 44px;
+  color: #e7e5e4 !important;
+}
+
+.aside :deep(.el-sub-menu__title:hover),
+.nav-drawer :deep(.el-sub-menu__title:hover) {
+  background: rgba(180, 140, 60, 0.18) !important;
+}
+
+.aside :deep(.el-sub-menu .el-menu-item),
+.nav-drawer :deep(.el-sub-menu .el-menu-item) {
+  min-width: auto;
+  padding-left: 48px !important;
 }
 
 .brand {

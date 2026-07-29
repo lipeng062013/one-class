@@ -24,10 +24,20 @@ def _public(user: User) -> dict:
 
 @router.get("")
 def get_users(
+    role: str | None = None,
+    is_active: bool | None = None,
+    username: str | None = None,
+    display_name: str | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(require_roles("admin")),
 ):
-    users = list_users(db)
+    users = list_users(
+        db,
+        role=role,
+        is_active=is_active,
+        username=username,
+        display_name=display_name,
+    )
     return ok([_public(u) for u in users])
 
 
