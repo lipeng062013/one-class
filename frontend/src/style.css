@@ -1,3 +1,41 @@
+/* 壹号教室 · 米金轻奢 design tokens */
+:root {
+  --oc-sidebar: #292524;
+  --oc-sidebar-text: #e7e5e4;
+  --oc-gold: #f5e6c8;
+  --oc-primary: #a16207;
+  --oc-primary-hover: #86530a;
+  --oc-page: #faf8f3;
+  --oc-card: #fffdf8;
+  --oc-border: #e8e0d0;
+  --oc-ink: #44403c;
+  --oc-muted: #78716c;
+  --oc-radius: 10px;
+  --oc-shadow: 0 8px 24px rgba(41, 37, 36, 0.06);
+
+  /* Element Plus primary → 琥珀金 */
+  --el-color-primary: #a16207;
+  --el-color-primary-light-3: #b88239;
+  --el-color-primary-light-5: #c9a066;
+  --el-color-primary-light-7: #dbbf94;
+  --el-color-primary-light-8: #e6d2b3;
+  --el-color-primary-light-9: #f2e8d6;
+  --el-color-primary-dark-2: #814e06;
+
+  --el-border-radius-base: 8px;
+  --el-border-color: #e8e0d0;
+  --el-border-color-light: #f0e9dc;
+  --el-border-color-lighter: #f5f0e6;
+  --el-bg-color-page: #faf8f3;
+  --el-text-color-primary: #44403c;
+  --el-text-color-regular: #57534e;
+  --el-text-color-secondary: #78716c;
+  --el-text-color-placeholder: #a8a29e;
+  --el-fill-color-blank: #fffdf8;
+  --el-fill-color-light: #f5f0e6;
+  --el-mask-color: rgba(41, 37, 36, 0.45);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -8,11 +46,52 @@ body,
   margin: 0;
   min-height: 100%;
   font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
-  background: #f5f7fa;
-  color: #303133;
+  background: var(--oc-page);
+  color: var(--oc-ink);
 }
 
 a {
   color: inherit;
   text-decoration: none;
+}
+
+/* 通用卡片气质 */
+.el-card {
+  --el-card-bg-color: var(--oc-card);
+  border-color: var(--oc-border);
+  border-radius: var(--oc-radius);
+}
+
+.el-card.is-hover-shadow:hover,
+.el-card.is-always-shadow {
+  box-shadow: var(--oc-shadow);
+}
+
+.el-button--primary {
+  --el-button-bg-color: var(--oc-primary);
+  --el-button-border-color: var(--oc-primary);
+  --el-button-hover-bg-color: var(--oc-primary-hover);
+  --el-button-hover-border-color: var(--oc-primary-hover);
+  --el-button-active-bg-color: var(--oc-primary-hover);
+  --el-button-active-border-color: var(--oc-primary-hover);
+}
+
+.el-table {
+  --el-table-header-bg-color: #f5f0e6;
+  --el-table-header-text-color: #78716c;
+  --el-table-row-hover-bg-color: #faf6ee;
+  --el-table-border-color: var(--oc-border);
+  --el-table-bg-color: var(--oc-card);
+  --el-table-tr-bg-color: var(--oc-card);
+}
+
+.el-page-header__content {
+  font-weight: 600;
+  color: var(--oc-ink);
+}
+
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  border-radius: 8px;
 }

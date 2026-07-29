@@ -51,11 +51,15 @@ function fillDemo(username: string, password: string) {
 
 <template>
   <div class="login-page">
-    <el-card class="login-card" shadow="hover">
+    <div class="login-ornament" aria-hidden="true" />
+    <el-card class="login-card" shadow="never">
       <template #header>
         <div class="card-header">
-          <h2>壹号教室运营工具</h2>
-          <p>账号密码登录</p>
+          <div class="logo-mark">壹</div>
+          <div>
+            <h2>壹号教室运营工具</h2>
+            <p>账号密码登录 · 米金轻奢</p>
+          </div>
         </div>
       </template>
 
@@ -74,7 +78,7 @@ function fillDemo(username: string, password: string) {
           />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" native-type="submit" :loading="loading" style="width: 100%">
+          <el-button type="primary" native-type="submit" :loading="loading" class="submit-btn">
             登录
           </el-button>
         </el-form-item>
@@ -118,23 +122,75 @@ function fillDemo(username: string, password: string) {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: linear-gradient(145deg, #e8f3ff 0%, #f5f7fa 45%, #eef2f8 100%);
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 80% 60% at 10% 20%, rgba(245, 230, 200, 0.55), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 90% 80%, rgba(161, 98, 7, 0.12), transparent 50%),
+    linear-gradient(160deg, #faf8f3 0%, #f3eee4 48%, #ebe4d6 100%);
+}
+
+.login-ornament {
+  position: absolute;
+  width: 420px;
+  height: 420px;
+  border-radius: 50%;
+  border: 1px solid rgba(161, 98, 7, 0.12);
+  top: -120px;
+  right: -80px;
+  pointer-events: none;
 }
 
 .login-card {
   width: 100%;
   max-width: 420px;
+  position: relative;
+  z-index: 1;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 14px;
+  background: var(--oc-card, #fffdf8);
+  box-shadow: 0 16px 40px rgba(41, 37, 36, 0.08);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo-mark {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 18px;
+  color: #f5e6c8;
+  background: #292524;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(245, 230, 200, 0.25);
 }
 
 .card-header h2 {
   margin: 0 0 4px;
-  font-size: 1.35rem;
+  font-size: 1.25rem;
+  color: var(--oc-ink, #44403c);
+  font-weight: 700;
 }
 
 .card-header p {
   margin: 0;
-  color: #909399;
-  font-size: 0.9rem;
+  color: var(--oc-muted, #78716c);
+  font-size: 0.88rem;
+}
+
+.submit-btn {
+  width: 100%;
+  height: 40px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .login-links {
@@ -145,6 +201,7 @@ function fillDemo(username: string, password: string) {
 
 .demo-accounts {
   margin-top: 12px;
+  border: none;
 }
 
 .demo-tag {
@@ -153,7 +210,7 @@ function fillDemo(username: string, password: string) {
 
 .hint {
   margin: 8px 0 0;
-  color: #909399;
+  color: var(--oc-muted, #78716c);
   font-size: 12px;
 }
 </style>

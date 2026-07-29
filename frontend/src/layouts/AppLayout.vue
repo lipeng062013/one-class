@@ -66,7 +66,15 @@ onUnmounted(() => window.removeEventListener('resize', checkMobile))
         <span v-if="!collapsed">壹号教室</span>
         <span v-else>壹</span>
       </div>
-      <el-menu :default-active="active" :collapse="collapsed" router @select="onSelect">
+      <el-menu
+        :default-active="active"
+        :collapse="collapsed"
+        router
+        background-color="transparent"
+        text-color="#e7e5e4"
+        active-text-color="#f5e6c8"
+        @select="onSelect"
+      >
         <el-menu-item v-for="m in menus" :key="m.index" :index="m.index">
           <el-icon><component :is="m.icon" /></el-icon>
           <span>{{ m.title }}</span>
@@ -76,7 +84,14 @@ onUnmounted(() => window.removeEventListener('resize', checkMobile))
 
     <el-drawer v-model="drawer" direction="ltr" size="220px" :with-header="false" class="nav-drawer">
       <div class="brand drawer-brand">壹号教室</div>
-      <el-menu :default-active="active" router @select="onSelect">
+      <el-menu
+        :default-active="active"
+        router
+        background-color="transparent"
+        text-color="#e7e5e4"
+        active-text-color="#f5e6c8"
+        @select="onSelect"
+      >
         <el-menu-item v-for="m in menus" :key="m.index" :index="m.index">
           <el-icon><component :is="m.icon" /></el-icon>
           <span>{{ m.title }}</span>
@@ -84,18 +99,18 @@ onUnmounted(() => window.removeEventListener('resize', checkMobile))
       </el-menu>
     </el-drawer>
 
-    <el-container>
+    <el-container class="content-wrap">
       <el-header class="header">
-        <el-button v-if="isMobile" text @click="drawer = true">
+        <el-button v-if="isMobile" text class="icon-btn" @click="drawer = true">
           <el-icon><Menu /></el-icon>
         </el-button>
-        <el-button v-else text @click="collapsed = !collapsed">
+        <el-button v-else text class="icon-btn" @click="collapsed = !collapsed">
           <el-icon><Fold v-if="!collapsed" /><Expand v-else /></el-icon>
         </el-button>
         <div class="spacer" />
         <el-dropdown>
           <span class="user-trigger">
-            <el-avatar :size="28">{{ auth.user?.display_name?.[0] || 'U' }}</el-avatar>
+            <el-avatar :size="28" class="user-avatar">{{ auth.user?.display_name?.[0] || 'U' }}</el-avatar>
             <span class="user-name">{{ auth.user?.display_name }}（{{ auth.user?.role }}）</span>
           </span>
           <template #dropdown>
@@ -118,12 +133,14 @@ onUnmounted(() => window.removeEventListener('resize', checkMobile))
 <style scoped>
 .layout {
   min-height: 100vh;
+  background: var(--oc-page, #faf8f3);
 }
 
 .aside {
-  background: #001529;
-  color: #fff;
+  background: var(--oc-sidebar, #292524);
+  color: var(--oc-sidebar-text, #e7e5e4);
   transition: width 0.2s;
+  border-right: 1px solid rgba(245, 230, 200, 0.08);
 }
 
 .aside :deep(.el-menu),
@@ -132,27 +149,59 @@ onUnmounted(() => window.removeEventListener('resize', checkMobile))
   background: transparent;
 }
 
+.aside :deep(.el-menu-item),
+.nav-drawer :deep(.el-menu-item) {
+  margin: 4px 8px;
+  border-radius: 8px;
+  height: 44px;
+  line-height: 44px;
+}
+
+.aside :deep(.el-menu-item:hover),
+.nav-drawer :deep(.el-menu-item:hover) {
+  background: rgba(180, 140, 60, 0.18) !important;
+}
+
+.aside :deep(.el-menu-item.is-active),
+.nav-drawer :deep(.el-menu-item.is-active) {
+  background: rgba(180, 140, 60, 0.28) !important;
+  color: var(--oc-gold, #f5e6c8) !important;
+  font-weight: 600;
+}
+
 .brand {
   height: 56px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 600;
-  color: #fff;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--oc-gold, #f5e6c8);
+  border-bottom: 1px solid rgba(245, 230, 200, 0.12);
 }
 
 .drawer-brand {
-  color: #303133;
-  border-bottom: 1px solid #ebeef5;
+  background: var(--oc-sidebar, #292524);
+  color: var(--oc-gold, #f5e6c8);
+  border-bottom: 1px solid rgba(245, 230, 200, 0.12);
+}
+
+.content-wrap {
+  min-width: 0;
+  background: var(--oc-page, #faf8f3);
 }
 
 .header {
   display: flex;
   align-items: center;
-  background: #fff;
-  border-bottom: 1px solid #ebeef5;
+  background: var(--oc-card, #fffdf8);
+  border-bottom: 1px solid var(--oc-border, #e8e0d0);
   height: 56px;
+  padding: 0 12px;
+}
+
+.icon-btn {
+  color: var(--oc-ink, #44403c);
 }
 
 .spacer {
@@ -164,6 +213,14 @@ onUnmounted(() => window.removeEventListener('resize', checkMobile))
   align-items: center;
   gap: 8px;
   cursor: pointer;
+  color: var(--oc-ink, #44403c);
+}
+
+.user-avatar {
+  background: var(--oc-primary, #a16207);
+  color: #fffdf8;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .user-name {
@@ -171,7 +228,7 @@ onUnmounted(() => window.removeEventListener('resize', checkMobile))
 }
 
 .main {
-  padding: 16px;
+  padding: 18px 20px;
 }
 
 @media (max-width: 768px) {
@@ -182,5 +239,13 @@ onUnmounted(() => window.removeEventListener('resize', checkMobile))
   .main {
     padding: 12px;
   }
+}
+</style>
+
+<style>
+/* drawer teleports outside component — need non-scoped */
+.nav-drawer .el-drawer__body {
+  padding: 0;
+  background: #292524;
 }
 </style>

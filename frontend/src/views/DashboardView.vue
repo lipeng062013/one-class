@@ -34,9 +34,15 @@ onMounted(load)
 </script>
 
 <template>
-  <div>
-    <el-page-header content="工作台" />
-    <el-row :gutter="16" style="margin-top: 16px" v-loading="loading">
+  <div class="dashboard">
+    <div class="page-head">
+      <div>
+        <h1 class="page-title">工作台</h1>
+        <p class="page-sub">今日运营概览 · 快捷入口</p>
+      </div>
+    </div>
+
+    <el-row :gutter="16" v-loading="loading">
       <el-col :xs="24" :sm="8">
         <el-card shadow="hover" class="stat-card" @click="router.push('/materials')">
           <el-statistic title="待处理素材" :value="summary?.materials_new ?? 0" />
@@ -59,7 +65,7 @@ onMounted(load)
 
     <el-alert
       v-if="integrations"
-      style="margin-top: 16px"
+      class="ai-alert"
       :type="integrations.llm.configured || integrations.image.configured ? 'success' : 'info'"
       :closable="false"
       show-icon
@@ -73,13 +79,15 @@ onMounted(load)
       在 `.env` 填写 `LLM_*` / `IMAGE_*` 后重启后端即可；密钥不会出现在前端。
     </el-alert>
 
-    <el-row :gutter="16" style="margin-top: 16px">
+    <el-row :gutter="16" class="lower-row">
       <el-col :xs="24" :md="12">
-        <el-card>
+        <el-card class="panel-card">
           <template #header>
             <div class="card-head">
               <span>快捷入口</span>
-              <el-tag size="small">{{ auth.user?.display_name }} · {{ auth.user?.role }}</el-tag>
+              <el-tag size="small" effect="plain" class="role-tag">
+                {{ auth.user?.display_name }} · {{ auth.user?.role }}
+              </el-tag>
             </div>
           </template>
           <el-space wrap>
@@ -93,7 +101,7 @@ onMounted(load)
         </el-card>
       </el-col>
       <el-col :xs="24" :md="12">
-        <el-card>
+        <el-card class="panel-card">
           <template #header>
             <div class="card-head">
               <span>待处理素材（new）</span>
@@ -119,25 +127,68 @@ onMounted(load)
 </template>
 
 <style scoped>
+.page-head {
+  margin-bottom: 16px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--oc-ink, #44403c);
+  letter-spacing: 0.02em;
+}
+
+.page-sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--oc-muted, #78716c);
+}
+
 .card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  font-weight: 600;
+  color: var(--oc-ink, #44403c);
 }
 
 .stat-card {
   cursor: pointer;
   margin-bottom: 8px;
+  border-color: var(--oc-border, #e8e0d0);
+  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
 }
 
 .stat-card:hover {
   border-color: var(--el-color-primary-light-5);
+  transform: translateY(-1px);
+  box-shadow: var(--oc-shadow, 0 8px 24px rgba(41, 37, 36, 0.06));
 }
 
 .stat-hint {
   margin-top: 8px;
   font-size: 12px;
-  color: #909399;
+  color: var(--oc-muted, #78716c);
+}
+
+.ai-alert {
+  margin-top: 16px;
+  border-radius: 10px;
+}
+
+.lower-row {
+  margin-top: 16px;
+}
+
+.panel-card {
+  margin-bottom: 12px;
+}
+
+.role-tag {
+  border-color: var(--oc-border, #e8e0d0);
+  color: var(--oc-primary, #a16207);
+  background: #f2e8d6;
 }
 </style>
