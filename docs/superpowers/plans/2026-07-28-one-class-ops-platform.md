@@ -6,7 +6,7 @@
 
 **Architecture:** Monorepo with `frontend/` and `backend/`. Backend exposes versioned REST under `/api/v1` with JWT auth and role checks. SQLite via SQLAlchemy + Alembic; files via a `Storage` interface backed by a local directory. LLM and image keys live only in env vars; template generation works without them. Existing `one-class-operations-guide.html` stays untouched.
 
-**Tech Stack:** Vue 3, Vite, TypeScript, Vue Router, Pinia, FastAPI, SQLAlchemy 2, Alembic, Pydantic Settings, python-jose, passlib/bcrypt, Pillow, httpx, pytest, Docker Compose
+**Tech Stack:** Vue 3, Vite, TypeScript, Vue Router, Pinia, **Element Plus (Element UI for Vue 3)**, responsive layouts (desktop + mobile), FastAPI, SQLAlchemy 2, Alembic, Pydantic Settings, python-jose, passlib/bcrypt, Pillow, httpx, pytest, Docker Compose
 
 **Spec:** `docs/superpowers/specs/2026-07-28-one-class-ops-platform-design.md`
 
@@ -1170,10 +1170,11 @@ git commit -m "feat: add leads and dashboard summary APIs"
 
 ---
 
-### Task 10: Frontend scaffold + API client + auth
+### Task 10: Frontend scaffold + Element Plus + API client + auth
 
 **Files:**
 - Create: entire `frontend/` via Vite template then replace files listed in file map for auth
+- Wire **Element Plus** (Element UI for Vue 3) globally; layouts must be **responsive**
 
 - [ ] **Step 1: Scaffold**
 
@@ -1182,10 +1183,34 @@ cd "D:\one class"
 npm create vite@latest frontend -- --template vue-ts
 cd frontend
 npm install
-npm install vue-router@4 pinia axios
+npm install vue-router@4 pinia axios element-plus @element-plus/icons-vue
 ```
 
-- [ ] **Step 2: Implement API client and auth store**
+- [ ] **Step 2: Register Element Plus and responsive shell**
+
+```typescript
+// src/main.ts
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+import ElementPlus from 'element-plus'
+import 'element-plus/dist/index.css'
+import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+import App from './App.vue'
+import router from './router'
+
+const app = createApp(App)
+for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+  app.component(key, component)
+}
+app.use(createPinia())
+app.use(router)
+app.use(ElementPlus)
+app.mount('#app')
+```
+
+Use `el-container` / `el-aside` / `el-header` / `el-main` for desktop shell; collapse aside to drawer on narrow viewports. Prefer Element Plus form/table/button/upload/message components for all pages.
+
+- [ ] **Step 3: Implement API client and auth store**
 
 ```typescript
 // src/api/client.ts
@@ -1213,10 +1238,10 @@ export default client
 ```
 
 ```vue
-<!-- LoginView.vue: username/password form calling store.login -->
+<!-- LoginView.vue: el-form username/password calling store.login; works on mobile width -->
 ```
 
-- [ ] **Step 3: Manual check**
+- [ ] **Step 4: Manual check**
 
 ```powershell
 cd backend
@@ -1227,12 +1252,13 @@ npm run dev
 ```
 
 Login as admin/admin123 (after seed). Expect redirect to dashboard shell.
+Resize browser to phone width: login and shell remain usable (responsive).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```powershell
 git add frontend
-git commit -m "feat: scaffold vue app with login and route guards"
+git commit -m "feat: scaffold vue app with Element Plus, login and route guards"
 ```
 
 ---
@@ -1245,11 +1271,11 @@ git commit -m "feat: scaffold vue app with login and route guards"
 - Create: `frontend/src/layouts/MobileLayout.vue`
 - Create: `frontend/src/api/materials.ts`
 
-- [ ] **Step 1: Implement large-tap upload form** (title, grade, subject, pain_point, teacher_action, next_step, auth_status, multi file input)
+- [ ] **Step 1: Implement large-tap upload form with Element Plus** (`el-form`, `el-input`, `el-select`, `el-upload`, large buttons; title, grade, subject, pain_point, teacher_action, next_step, auth_status, multi file)
 
-- [ ] **Step 2: List own materials with status badges**
+- [ ] **Step 2: List own materials with status badges** (`el-tag` / card list on narrow screens)
 
-- [ ] **Step 3: Verify with teacher1 account on narrow viewport**
+- [ ] **Step 3: Verify with teacher1 account on narrow viewport** (responsive: phone width primary path)
 
 - [ ] **Step 4: Commit**
 
@@ -1259,11 +1285,13 @@ git commit -m "feat: add teacher mobile material upload views"
 
 ---
 
-### Task 12: Desktop materials, copies, posters, leads, knowledge, users
+### Task 12: Desktop materials, copies, posters, leads, knowledge, users (Element Plus + responsive)
 
 **Files:**
 - Create remaining views under `frontend/src/views/**`
-- Create `AppLayout.vue` sidebar per spec
+- Create `AppLayout.vue` sidebar per spec (Element Plus layout; responsive collapse)
+
+All views use Element Plus components (`el-table`, `el-form`, `el-dialog`, `el-card`, etc.). Tables scroll horizontally or switch to card/list on narrow screens; forms stack full-width on mobile.
 
 - [ ] **Step 1: Materials list/detail** — filter status; patch usable; link to generate copy/poster
 
@@ -1280,6 +1308,8 @@ git commit -m "feat: add teacher mobile material upload views"
 - [ ] **Step 7: Users** — admin create user form
 
 - [ ] **Step 8: Dashboard** — call `/dashboard/summary`
+
+- [ ] **Step 9: Responsive smoke check** — desktop (≥992px) and phone (<768px) for login, materials, leads, copy generate
 
 - [ ] **Step 9: Commit**
 
@@ -1382,6 +1412,7 @@ git commit -m "chore: add seed data and ops platform runbook"
 | Spec area | Tasks |
 |-----------|-------|
 | Vue+TS modular frontend | 10–12 |
+| Element Plus (Element UI) + responsive pages | 10–12 |
 | Python FastAPI modular backend | 1–9 |
 | Docker | 13 |
 | Auth + roles | 3, 10 |
