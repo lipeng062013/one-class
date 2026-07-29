@@ -97,3 +97,24 @@ def test_teacher_cannot_view_others_material(client):
     h_t = auth_header(client, "teacher1", "t123")
     res = client.get(f"/api/v1/materials/{mid}", headers=h_t)
     assert res.status_code == 403
+
+
+def test_download_material_file_content(client):
+    h = auth_header(client, "teacher1", "t123")
+    mid = client.post(
+        "/api/v1/materials",
+        headers=h,
+        json={"title": "with-file", "auth_status": "authorized"},
+    ).json()["data"]["id"]
+    from io import BytesIO
+
+    up = client.post(
+        f"/api/v1/materials/{mid}/files",
+        headers=h,
+        files={"file": ("a.png", BytesIO(b"\x89PNG\r\n\x1a\nfake"), "image/png")},
+    )
+    assert up.status_code == 201, up.text
+    fid = up.json()["data"]["id"]
+    dl = client.get(f"/api/v1/materials/files/{fid}/content", headers=h)
+    assert dl.status_code == 200
+    assert dl.content.startswith(b"\x89PNG")

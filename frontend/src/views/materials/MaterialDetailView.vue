@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getMaterialApi, patchMaterialApi, type Material } from '../../api/materials'
+import {
+  getMaterialApi,
+  materialFileObjectUrl,
+  patchMaterialApi,
+  type Material,
+} from '../../api/materials'
 import { useAuthStore } from '../../stores/auth'
 
 const route = useRoute()
@@ -10,6 +15,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const loading = ref(false)
 const item = ref<Material | null>(null)
+const previewUrls = ref<Record<number, string>>({})
 
 const statusLabel: Record<string, string> = {
   new: '新建',
@@ -24,10 +30,29 @@ const authLabel: Record<string, string> = {
   anonymized: '已脱敏',
 }
 
+function revokePreviews() {
+  Object.values(previewUrls.value).forEach((u) => URL.revokeObjectURL(u))
+  previewUrls.value = {}
+}
+
+async function loadPreviews(material: Material) {
+  revokePreviews()
+  const map: Record<number, string> = {}
+  for (const f of material.files || []) {
+    try {
+      map[f.id] = await materialFileObjectUrl(f.id)
+    } catch {
+      /* skip broken file */
+    }
+  }
+  previewUrls.value = map
+}
+
 async function load() {
   loading.value = true
   try {
     item.value = await getMaterialApi(Number(route.params.id))
+    if (item.value) await loadPreviews(item.value)
   } catch {
     ElMessage.error('加载失败')
     router.back()
@@ -48,7 +73,13 @@ async function setAuth(auth_status: string) {
   ElMessage.success('授权已更新')
 }
 
+watch(
+  () => route.params.id,
+  () => load(),
+)
+
 onMounted(load)
+onUnmounted(revokePreviews)
 </script>
 
 <template>
@@ -68,7 +99,6 @@ onMounted(load)
         <el-descriptions-item label="状态">
           {{ statusLabel[item.status] || item.status }}
         </el-descriptions-item>
-        <el-descriptions-item label="图片数">{{ item.files?.length || 0 }}</el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ item.created_at || '—' }}</el-descriptions-item>
       </el-descriptions>
 
@@ -79,16 +109,31 @@ onMounted(load)
           <el-button @click="setStatus('archived')">归档</el-button>
           <el-button type="primary" plain @click="setAuth('authorized')">确认授权</el-button>
           <el-button plain @click="setAuth('anonymized')">已脱敏</el-button>
+          <el-button type="primary" @click="router.push({ path: '/copies/generate', query: { material_id: String(item.id) } })">
+            生成文案
+          </el-button>
+          <el-button @click="router.push({ path: '/posters/generate', query: { material_id: String(item.id) } })">
+            生成海报
+          </el-button>
         </el-space>
       </div>
 
-      <el-divider>附件路径</el-divider>
+      <el-divider>图片预览</el-divider>
       <el-empty v-if="!item.files?.length" description="暂无图片" />
-      <el-table v-else :data="item.files" size="small">
-        <el-table-column prop="id" label="ID" width="70" />
-        <el-table-column prop="file_path" label="路径" min-width="200" />
-        <el-table-column prop="file_type" label="类型" width="120" />
-      </el-table>
+      <div v-else class="preview-grid">
+        <el-image
+          v-for="f in item.files"
+          :key="f.id"
+          :src="previewUrls[f.id]"
+          :preview-src-list="Object.values(previewUrls)"
+          fit="cover"
+          class="thumb"
+        >
+          <template #error>
+            <div class="thumb-error">无法预览<br />{{ f.file_path }}</div>
+          </template>
+        </el-image>
+      </div>
     </el-card>
   </div>
 </template>
@@ -96,5 +141,30 @@ onMounted(load)
 <style scoped>
 .actions {
   margin-top: 16px;
+}
+
+.preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.thumb {
+  width: 100%;
+  height: 140px;
+  border-radius: 6px;
+  border: 1px solid #ebeef5;
+  background: #f5f7fa;
+}
+
+.thumb-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 12px;
+  color: #909399;
+  text-align: center;
+  padding: 8px;
 }
 </style>

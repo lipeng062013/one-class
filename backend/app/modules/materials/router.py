@@ -1,10 +1,14 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.responses import fail, ok
 from app.core.storage import LocalStorage, get_storage
+from app.models.material import MaterialFile
 from app.models.user import User
 from app.modules.materials.schemas import MaterialCreate, MaterialUpdate
 from app.modules.materials.service import (
@@ -50,6 +54,38 @@ def post_material(
     if isinstance(result, str):
         return fail("MATERIAL_CREATE_FAILED", result, status_code=400)
     return ok(material_to_dict(result), status_code=201)
+
+
+@router.get("/files/{file_id}/content")
+def download_material_file(
+    file_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    storage: LocalStorage = Depends(get_storage),
+):
+    mf = db.get(MaterialFile, file_id)
+    if not mf:
+        return fail("NOT_FOUND", "文件不存在", status_code=404)
+    material = get_material(db, mf.material_id)
+    if not material or not can_view(user, material):
+        return fail("FORBIDDEN", "无权限", status_code=403)
+    try:
+        data = storage.read(mf.file_path)
+    except FileNotFoundError:
+        return fail("NOT_FOUND", "文件不存在", status_code=404)
+
+    media_type = mf.file_type or "application/octet-stream"
+    if not media_type.startswith("image/"):
+        suffix = Path(mf.file_path).suffix.lower()
+        media_type = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp",
+            ".gif": "image/gif",
+        }.get(suffix, media_type)
+
+    return StreamingResponse(iter([data]), media_type=media_type)
 
 
 @router.get("/{material_id}")

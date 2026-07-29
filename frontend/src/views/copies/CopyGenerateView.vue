@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { generateCopy, type CopyMode, type GeneratedCopy } from '../../api/copies'
 import { listMaterials, type Material } from '../../api/materials'
 import { listCopyTemplates, type CopyTemplate } from '../../api/templates'
+import { getIntegrationsStatus, type IntegrationsStatus } from '../../api/system'
 
+const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const materials = ref<Material[]>([])
 const templates = ref<CopyTemplate[]>([])
 const result = ref<GeneratedCopy | null>(null)
+const integrations = ref<IntegrationsStatus | null>(null)
 
 const form = reactive({
   material_id: undefined as number | undefined,
@@ -21,15 +24,29 @@ const form = reactive({
 })
 
 async function loadOptions() {
-  const [mats, tpls] = await Promise.all([listMaterials(), listCopyTemplates()])
+  const [mats, tpls, integ] = await Promise.all([
+    listMaterials(),
+    listCopyTemplates(),
+    getIntegrationsStatus().catch(() => null),
+  ])
   materials.value = mats
   templates.value = tpls
+  integrations.value = integ
   if (!form.template_id && tpls.length) {
     form.template_id = tpls.find((t) => t.is_system)?.id || tpls[0].id
+  }
+  const q = route.query.material_id
+  if (q && !form.material_id) {
+    const id = Number(q)
+    if (!Number.isNaN(id)) form.material_id = id
   }
 }
 
 async function submit() {
+  if (form.mode === 'llm' && integrations.value && !integrations.value.llm.configured) {
+    ElMessage.warning('未配置大模型。请改用「仅模板」或「模板+润色」（润色失败会回退模板），或在 .env 配置 LLM_*')
+    return
+  }
   loading.value = true
   result.value = null
   try {
@@ -40,7 +57,11 @@ async function submit() {
       platform: form.platform,
       extra_instruction: form.extra_instruction || null,
     })
-    ElMessage.success('生成成功')
+    if (result.value.llm_error) {
+      ElMessage.warning('大模型不可用，已回退模板结果')
+    } else {
+      ElMessage.success('生成成功')
+    }
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '生成失败')
   } finally {
@@ -60,6 +81,17 @@ onMounted(loadOptions)
 <template>
   <div>
     <el-page-header content="生成文案" @back="router.push('/copies')" />
+    <el-alert
+      style="margin-top: 12px"
+      :type="integrations?.llm.configured ? 'success' : 'info'"
+      :closable="false"
+      show-icon
+      :title="
+        integrations?.llm.configured
+          ? `大模型已配置：${integrations.llm.model}`
+          : '大模型未配置：可用「仅模板」；「模板+润色」失败会回退模板；「直接大模型」需配置 LLM_*'
+      "
+    />
     <el-row :gutter="16" style="margin-top: 16px">
       <el-col :xs="24" :md="10">
         <el-card>
@@ -115,7 +147,7 @@ onMounted(loadOptions)
               v-if="result.llm_error"
               type="info"
               :closable="false"
-              :title="`大模型提示：${result.llm_error}`"
+              :title="`已回退模板。大模型提示：${result.llm_error}`"
               style="margin-bottom: 12px"
             />
             <h3 style="margin-top: 0">{{ result.title || '（无标题）' }}</h3>

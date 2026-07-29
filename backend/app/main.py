@@ -23,6 +23,7 @@ from app.modules.knowledge.router import router as knowledge_router
 from app.modules.leads.router import router as leads_router
 from app.modules.materials.router import router as materials_router
 from app.modules.posters.router import router as posters_router
+from app.modules.system.router import router as system_router
 from app.modules.templates.router import router as templates_router
 from app.modules.users.router import router as users_router
 from app.seed import seed_all
@@ -59,6 +60,7 @@ app.include_router(content_router, prefix="/api/v1")
 app.include_router(posters_router, prefix="/api/v1")
 app.include_router(leads_router, prefix="/api/v1")
 app.include_router(dashboard_router, prefix="/api/v1")
+app.include_router(system_router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")

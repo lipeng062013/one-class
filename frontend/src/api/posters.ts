@@ -45,12 +45,16 @@ export async function generatePoster(payload: GeneratePosterInput): Promise<Gene
   return unwrap(res, 'Failed to generate poster')
 }
 
-/** Download poster image as blob (auth header via client). */
 export async function downloadPosterBlob(id: number): Promise<Blob> {
   const res = await client.get<Blob>(`/files/posters/${id}`, {
     responseType: 'blob',
   })
   return res.data
+}
+
+export async function posterObjectUrl(id: number): Promise<string> {
+  const blob = await downloadPosterBlob(id)
+  return URL.createObjectURL(blob)
 }
 
 export async function openPosterDownload(id: number, filename?: string): Promise<void> {

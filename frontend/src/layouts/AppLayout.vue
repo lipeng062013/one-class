@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
@@ -8,6 +8,8 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const collapsed = ref(false)
+const drawer = ref(false)
+const isMobile = ref(false)
 const changePwdVisible = ref(false)
 
 const active = computed(() => route.path)
@@ -28,36 +30,66 @@ const menus = computed(() => {
   return items
 })
 
+function checkMobile() {
+  isMobile.value = window.innerWidth < 768
+  if (!isMobile.value) drawer.value = false
+}
+
 function onSelect(index: string) {
   router.push(index)
+  if (isMobile.value) drawer.value = false
 }
 
 function logout() {
   auth.logout()
   router.replace('/login')
 }
+
+watch(
+  () => route.path,
+  () => {
+    if (isMobile.value) drawer.value = false
+  },
+)
+
+onMounted(() => {
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
+})
+onUnmounted(() => window.removeEventListener('resize', checkMobile))
 </script>
 
 <template>
   <el-container class="layout">
-    <el-aside :width="collapsed ? '64px' : '220px'" class="aside">
+    <el-aside v-if="!isMobile" :width="collapsed ? '64px' : '220px'" class="aside">
       <div class="brand">
         <span v-if="!collapsed">壹号教室</span>
         <span v-else>壹</span>
       </div>
       <el-menu :default-active="active" :collapse="collapsed" router @select="onSelect">
         <el-menu-item v-for="m in menus" :key="m.index" :index="m.index">
-          <el-icon>
-            <component :is="m.icon" />
-          </el-icon>
+          <el-icon><component :is="m.icon" /></el-icon>
           <span>{{ m.title }}</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
 
+    <el-drawer v-model="drawer" direction="ltr" size="220px" :with-header="false" class="nav-drawer">
+      <div class="brand drawer-brand">壹号教室</div>
+      <el-menu :default-active="active" router @select="onSelect">
+        <el-menu-item v-for="m in menus" :key="m.index" :index="m.index">
+          <el-icon><component :is="m.icon" /></el-icon>
+          <span>{{ m.title }}</span>
+        </el-menu-item>
+      </el-menu>
+    </el-drawer>
+
     <el-container>
       <el-header class="header">
-        <el-button text @click="collapsed = !collapsed">
+        <el-button v-if="isMobile" text @click="drawer = true">
+          <el-icon><Menu /></el-icon>
+        </el-button>
+        <el-button v-else text @click="collapsed = !collapsed">
           <el-icon><Fold v-if="!collapsed" /><Expand v-else /></el-icon>
         </el-button>
         <div class="spacer" />
@@ -94,7 +126,8 @@ function logout() {
   transition: width 0.2s;
 }
 
-.aside :deep(.el-menu) {
+.aside :deep(.el-menu),
+.nav-drawer :deep(.el-menu) {
   border-right: none;
   background: transparent;
 }
@@ -107,6 +140,11 @@ function logout() {
   font-weight: 600;
   color: #fff;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.drawer-brand {
+  color: #303133;
+  border-bottom: 1px solid #ebeef5;
 }
 
 .header {
@@ -137,12 +175,6 @@ function logout() {
 }
 
 @media (max-width: 768px) {
-  .aside {
-    position: fixed;
-    z-index: 20;
-    height: 100vh;
-  }
-
   .user-name {
     display: none;
   }

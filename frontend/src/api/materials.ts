@@ -66,3 +66,16 @@ export async function uploadMaterialFileApi(id: number, file: File): Promise<Mat
   })
   return res.data.data
 }
+
+export async function fetchMaterialFileBlob(fileId: number): Promise<Blob> {
+  const res = await client.get(`/materials/files/${fileId}/content`, {
+    responseType: 'blob',
+  })
+  return res.data
+}
+
+/** Load authenticated image into an object URL (caller should revoke). */
+export async function materialFileObjectUrl(fileId: number): Promise<string> {
+  const blob = await fetchMaterialFileBlob(fileId)
+  return URL.createObjectURL(blob)
+}

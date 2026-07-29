@@ -1,14 +1,24 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { generatePoster, openPosterDownload, type GeneratedPoster, type PosterMode } from '../../api/posters'
+import {
+  generatePoster,
+  openPosterDownload,
+  posterObjectUrl,
+  type GeneratedPoster,
+  type PosterMode,
+} from '../../api/posters'
 import { listPosterTemplates, type PosterTemplate } from '../../api/templates'
+import { getIntegrationsStatus, type IntegrationsStatus } from '../../api/system'
 
+const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const templates = ref<PosterTemplate[]>([])
 const result = ref<GeneratedPoster | null>(null)
+const previewUrl = ref('')
+const integrations = ref<IntegrationsStatus | null>(null)
 
 const form = reactive({
   template_id: undefined as number | undefined,
@@ -17,26 +27,51 @@ const form = reactive({
   subtitle: '',
   footer: '扫码预约沟通',
   prompt: '',
+  material_id: undefined as number | undefined,
 })
 
+function revokePreview() {
+  if (previewUrl.value) {
+    URL.revokeObjectURL(previewUrl.value)
+    previewUrl.value = ''
+  }
+}
+
 async function loadTemplates() {
-  templates.value = await listPosterTemplates()
+  const [tpls, integ] = await Promise.all([
+    listPosterTemplates(),
+    getIntegrationsStatus().catch(() => null),
+  ])
+  templates.value = tpls
+  integrations.value = integ
   if (!form.template_id && templates.value.length) {
     form.template_id = templates.value.find((t) => t.is_system)?.id || templates.value[0].id
+  }
+  const q = route.query.material_id
+  if (q) {
+    const id = Number(q)
+    if (!Number.isNaN(id)) form.material_id = id
   }
 }
 
 async function submit() {
+  if (form.mode === 'ai_image' && integrations.value && !integrations.value.image.configured) {
+    ElMessage.warning('未配置图片 API。请改用「版式导出」，或在 .env 配置 IMAGE_* 后重启后端')
+    return
+  }
   loading.value = true
   result.value = null
+  revokePreview()
   try {
     result.value = await generatePoster({
+      material_id: form.material_id ?? null,
       template_id: form.template_id ?? null,
       mode: form.mode,
       title: form.title,
       payload: { subtitle: form.subtitle, footer: form.footer },
       prompt: form.prompt || null,
     })
+    previewUrl.value = await posterObjectUrl(result.value.id)
     ElMessage.success('海报已生成')
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '生成失败')
@@ -50,12 +85,33 @@ async function download() {
   await openPosterDownload(result.value.id, `${result.value.title}-${result.value.id}.png`)
 }
 
+watch(
+  () => form.mode,
+  (mode) => {
+    if (mode === 'ai_image' && integrations.value && !integrations.value.image.configured) {
+      ElMessage.info('AI 生图需配置 IMAGE_API_BASE_URL 与 IMAGE_API_KEY')
+    }
+  },
+)
+
 onMounted(loadTemplates)
+onUnmounted(revokePreview)
 </script>
 
 <template>
   <div>
     <el-page-header content="生成海报" @back="router.push('/posters')" />
+    <el-alert
+      style="margin-top: 12px"
+      :type="integrations?.image.configured ? 'success' : 'info'"
+      :closable="false"
+      show-icon
+      :title="
+        integrations?.image.configured
+          ? `图片 API 已配置${integrations.image.model ? '：' + integrations.image.model : ''}`
+          : '图片 API 未配置：请用「版式导出」；AI 生图需配置 IMAGE_*'
+      "
+    />
     <el-row :gutter="16" style="margin-top: 16px">
       <el-col :xs="24" :md="12">
         <el-card>
@@ -94,10 +150,11 @@ onMounted(loadTemplates)
       </el-col>
       <el-col :xs="24" :md="12">
         <el-card>
-          <template #header>结果</template>
-          <el-empty v-if="!result" description="生成后可下载 PNG" />
+          <template #header>预览 / 下载</template>
+          <el-empty v-if="!result" description="生成后显示预览" />
           <div v-else>
             <p><strong>{{ result.title }}</strong>（{{ result.mode }}）</p>
+            <el-image v-if="previewUrl" :src="previewUrl" fit="contain" class="preview" :preview-src-list="[previewUrl]" />
             <p class="muted">{{ result.file_path }}</p>
             <el-button type="success" @click="download">下载海报</el-button>
           </div>
@@ -111,5 +168,13 @@ onMounted(loadTemplates)
 .muted {
   color: #909399;
   font-size: 13px;
+}
+
+.preview {
+  width: 100%;
+  max-height: 420px;
+  background: #f5f7fa;
+  border-radius: 6px;
+  margin: 8px 0;
 }
 </style>

@@ -23,7 +23,7 @@ const form = reactive({
   referrer_name: '',
   need: '',
   notes: '',
-  next_follow_at: '',
+  next_follow_at: null as Date | null,
 })
 
 const rules: FormRules = {
@@ -84,8 +84,15 @@ function openCreate() {
   form.referrer_name = ''
   form.need = ''
   form.notes = ''
-  form.next_follow_at = ''
+  form.next_follow_at = null
   createVisible.value = true
+}
+
+function toIso(value: Date | string | null | undefined): string | null {
+  if (!value) return null
+  const d = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(d.getTime())) return null
+  return d.toISOString()
 }
 
 async function submitCreate() {
@@ -94,9 +101,13 @@ async function submitCreate() {
   saving.value = true
   try {
     await createLead({
-      ...form,
-      next_follow_at: form.next_follow_at || null,
+      student_or_parent_name: form.student_or_parent_name,
       phone: form.phone || null,
+      source: form.source,
+      referrer_name: form.referrer_name || null,
+      need: form.need,
+      notes: form.notes,
+      next_follow_at: toIso(form.next_follow_at),
     })
     ElMessage.success('线索已创建')
     createVisible.value = false
@@ -111,6 +122,12 @@ async function submitCreate() {
 async function changeStatus(row: Lead, status: LeadStatus) {
   await patchLead(row.id, { status })
   ElMessage.success('状态已更新')
+  await load()
+}
+
+async function patchFollow(row: Lead, value: Date | null) {
+  await patchLead(row.id, { next_follow_at: toIso(value) })
+  ElMessage.success('跟进时间已更新')
   await load()
 }
 
@@ -144,10 +161,19 @@ onMounted(load)
             </el-select>
           </template>
         </el-table-column>
-        <el-table-column label="下次跟进" width="160">
+        <el-table-column label="下次跟进" min-width="200">
           <template #default="{ row }">
-            <el-tag v-if="isToday(row.next_follow_at)" type="danger" size="small">今日</el-tag>
-            <span v-else>{{ row.next_follow_at ? new Date(row.next_follow_at).toLocaleString('zh-CN') : '—' }}</span>
+            <div class="follow-cell">
+              <el-tag v-if="isToday(row.next_follow_at)" type="danger" size="small">今日</el-tag>
+              <el-date-picker
+                :model-value="row.next_follow_at ? new Date(row.next_follow_at) : null"
+                type="datetime"
+                size="small"
+                placeholder="设置跟进"
+                style="width: 170px"
+                @update:model-value="(v: Date | null) => patchFollow(row, v)"
+              />
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="notes" label="备注" min-width="120" show-overflow-tooltip />
@@ -174,7 +200,12 @@ onMounted(load)
           <el-input v-model="form.need" type="textarea" :rows="2" />
         </el-form-item>
         <el-form-item label="下次跟进时间">
-          <el-input v-model="form.next_follow_at" placeholder="可选，如 2026-07-30T10:00:00" />
+          <el-date-picker
+            v-model="form.next_follow_at"
+            type="datetime"
+            placeholder="选择日期时间"
+            style="width: 100%"
+          />
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="form.notes" type="textarea" :rows="2" />
@@ -194,6 +225,13 @@ onMounted(load)
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.follow-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex-wrap: wrap;
 }
 </style>

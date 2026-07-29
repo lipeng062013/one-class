@@ -1,24 +1,21 @@
 # 壹号教室运营工具平台 — 运行说明
 
-Vue 3 + **Element Plus** 前端，FastAPI 后端。当前 `master` 为统一入口；历史实现曾在 `.worktrees/feat-ops-platform` 分支，业务 API 已合入本仓库并用 Element Plus 重做页面。
+Vue 3 + **Element Plus** 前端，FastAPI 后端。当前以 **master** 为准。
 
 ## 已交付模块
 
 | 模块 | 说明 |
 |------|------|
 | 登录 / 用户 | 账号密码、演示账号、建号必填密码、管理员重置、改密 |
-| 工作台 | 待处理素材、今日线索、文案数量、快捷入口 |
-| 素材 | 老师手机上传；运营列表/详情/状态与授权 |
-| 文案 | 模板生成、可选 LLM 润色、列表复制 |
-| 海报 | 版式 PNG 导出、可选 AI 生图、下载 |
-| 线索 | 新建/状态跟进、今日跟进高亮 |
-| 知识库 | 分类条目；admin 可写，operator 只读 |
-| 模板 | 文案模板 / 海报模板管理 |
-| UI | 全站 **Element Plus**，桌面侧栏 + 老师端底栏，响应式 |
+| 工作台 | 可点统计卡片跳转；展示 AI 接入状态 |
+| 素材 | 老师手机上传；运营列表/详情；**图片预览**；跳转生成文案/海报 |
+| 文案 | 模板 / 模板+润色 / 大模型；未配置时提示与回退 |
+| 海报 | 版式 PNG **预览+下载**；AI 生图需配置 IMAGE_* |
+| 线索 | 新建；状态跟进；**日期时间选择器**设下次跟进 |
+| 知识库 / 模板 | 分类维护；系统模板 + 自定义 |
+| UI | Element Plus；桌面侧栏；**窄屏抽屉菜单** |
 
-运营手册 `one-class-operations-guide.html` 仍独立发布，不在本平台内。
-
-## 演示账号（开发默认）
+## 演示账号
 
 | 用户名 | 密码 | 角色 |
 |--------|------|------|
@@ -26,52 +23,58 @@ Vue 3 + **Element Plus** 前端，FastAPI 后端。当前 `master` 为统一入�
 | `ops` | `ops123` | 运营 |
 | `teacher1` | `t123` | 老师 |
 
-生产请修改密码或用环境变量覆盖（见 `.env.example`）。
-
-## 启动后端
+## 启动
 
 ```powershell
+# 后端
 cd backend
-python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
 uvicorn app.main:app --reload --port 8000
-```
 
-健康检查：`http://127.0.0.1:8000/api/v1/health`
-
-## 启动前端
-
-```powershell
+# 前端（另开终端）
 cd frontend
 npm install
 npm run dev
 ```
 
-浏览器打开 Vite 地址（默认 `http://127.0.0.1:5173`）。开发代理会把 `/api` 转到 `8000`。
+- 前端：http://127.0.0.1:5173  
+- 健康检查：http://127.0.0.1:8000/api/v1/health  
+- AI 状态：`GET /api/v1/system/integrations`（登录后）
+
+## 可选 AI（第 3 项）
+
+在项目根或 `backend` 工作目录的 `.env` 中配置（参考 `.env.example`，**不要提交真实 Key**）：
+
+```env
+LLM_BASE_URL=https://your-openai-compatible-host
+LLM_API_KEY=sk-...
+LLM_MODEL=gpt-4o-mini
+
+IMAGE_API_BASE_URL=https://your-openai-compatible-host
+IMAGE_API_KEY=sk-...
+IMAGE_MODEL=dall-e-3
+```
+
+行为约定：
+
+| 能力 | 未配置 / 上游失败 |
+|------|-------------------|
+| 文案「仅模板」 | 始终可用 |
+| 文案「模板+润色」 | 回退模板正文，并返回 `llm_error` |
+| 文案「直接大模型」 | 接口 503；前端会提示改模式 |
+| 海报「版式导出」 | 始终可用（Pillow） |
+| 海报「AI 生图」 | 前端拦截提示；需 IMAGE_* |
+
+改完 `.env` 后**重启后端**。工作台与生成页会显示是否已配置（不暴露密钥）。
 
 ## 使用要点
 
-1. **建号**：负责人 → 用户管理 → 新建 → **必填初始密码** → 弹窗只展示一次，请复制告知对方。  
-2. **忘记密码**：登录页说明；负责人「重置密码」，新密码只展示一次。  
-3. **改密**：顶栏头像 → 修改密码。  
-4. **老师交素材**：`teacher1` → 上传 → 我的素材。  
-5. **运营闭环**：`ops` → 素材标可用 → 生成文案/海报 → 登记线索 → 维护知识库（只读）/ 自定义模板。
-
-## 主要路由
-
-**电脑后台（admin / operator）**
-
-- `/` 工作台  
-- `/materials`、`/materials/:id`  
-- `/copies`、`/copies/generate`  
-- `/posters`、`/posters/generate`  
-- `/leads`、`/knowledge`、`/templates`  
-- `/users`（仅 admin）
-
-**老师手机**
-
-- `/m/upload`、`/m/materials`
+1. 建号：用户管理 → 必填初始密码 → 弹窗只展示一次。  
+2. 忘记密码：负责人重置密码。  
+3. 老师 `teacher1` 上传素材 → 运营在素材详情预览图 → 生成文案/海报。  
+4. 线索列表可直接改状态与下次跟进时间。  
+5. 窄屏点左上角菜单打开抽屉导航。
 
 ## 测试
 
@@ -79,23 +82,12 @@ npm run dev
 cd backend
 .\.venv\Scripts\Activate.ps1
 pytest -v
-```
 
-```powershell
-cd frontend
+cd ..\frontend
 npm run build
 ```
 
-## 目录说明
+## 仓库说明
 
-```text
-backend/     FastAPI API、模型、种子数据
-frontend/    Vue3 + Element Plus
-docs/        设计规格与实现计划
-.worktrees/  历史 worktree（可忽略；功能已合入 master）
-```
-
-## 与旧分支的关系
-
-- `feat/ops-platform` worktree：早期无 Element 的完整业务实现，**请以 master 为准**。  
-- 重复占位页（如老师端空壳 `MobileHomeView`）已删除，统一走 `MobileUploadView` / `MobileMaterialsView`。  
+- 历史 worktree `.worktrees/feat-ops-platform` 已移除；功能在 master。  
+- 运营手册 `one-class-operations-guide.html` 仍独立，不在本平台内。  
