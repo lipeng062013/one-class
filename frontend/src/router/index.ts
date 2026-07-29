@@ -20,6 +20,18 @@ const router = createRouter({
           component: () => import('../views/DashboardView.vue'),
         },
         {
+          path: 'materials',
+          name: 'materials',
+          component: () => import('../views/materials/MaterialListView.vue'),
+          meta: { roles: ['admin', 'operator'] },
+        },
+        {
+          path: 'materials/:id',
+          name: 'material-detail',
+          component: () => import('../views/materials/MaterialDetailView.vue'),
+          meta: { roles: ['admin', 'operator'] },
+        },
+        {
           path: 'users',
           name: 'users',
           component: () => import('../views/users/UserListView.vue'),
@@ -28,9 +40,20 @@ const router = createRouter({
       ],
     },
     {
-      path: '/m/upload',
-      name: 'mobile-upload',
-      component: () => import('../views/mobile/MobileHomeView.vue'),
+      path: '/m',
+      component: () => import('../layouts/MobileLayout.vue'),
+      children: [
+        {
+          path: 'upload',
+          name: 'mobile-upload',
+          component: () => import('../views/mobile/MobileUploadView.vue'),
+        },
+        {
+          path: 'materials',
+          name: 'mobile-materials',
+          component: () => import('../views/mobile/MobileMaterialsView.vue'),
+        },
+      ],
     },
   ],
 })
@@ -59,6 +82,10 @@ router.beforeEach(async (to) => {
 
   if (auth.isTeacher && !to.path.startsWith('/m/')) {
     return '/m/upload'
+  }
+
+  if (!auth.isTeacher && to.path.startsWith('/m/')) {
+    return '/'
   }
 
   const roles = to.meta.roles as string[] | undefined

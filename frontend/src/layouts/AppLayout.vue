@@ -13,7 +13,10 @@ const changePwdVisible = ref(false)
 const active = computed(() => route.path)
 
 const menus = computed(() => {
-  const items = [{ index: '/', title: '工作台', icon: 'Odometer' }]
+  const items = [
+    { index: '/', title: '工作台', icon: 'Odometer' },
+    { index: '/materials', title: '素材', icon: 'Picture' },
+  ]
   if (auth.isAdmin) {
     items.push({ index: '/users', title: '用户管理', icon: 'User' })
   }

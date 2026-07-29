@@ -1,3 +1,6 @@
+import tempfile
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -6,12 +9,13 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.db import Base, get_db
 from app.core.security import hash_password
+from app.core.storage import LocalStorage, get_storage
 from app.main import app
 from app.models.user import User
 
 
 @pytest.fixture()
-def client():
+def client(tmp_path: Path):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -20,6 +24,10 @@ def client():
     TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine)
 
+    storage_root = tmp_path / "uploads"
+    storage_root.mkdir(parents=True, exist_ok=True)
+    test_storage = LocalStorage(str(storage_root))
+
     def override_get_db():
         db = TestingSession()
         try:
@@ -27,7 +35,11 @@ def client():
         finally:
             db.close()
 
+    def override_get_storage():
+        return test_storage
+
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_storage] = override_get_storage
 
     db = TestingSession()
     db.add(

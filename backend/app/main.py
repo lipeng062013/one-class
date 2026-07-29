@@ -5,7 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.db import Base, SessionLocal, engine, ensure_data_dir
 from app.core.responses import ok
+from app.models import Material, MaterialFile, User  # noqa: F401 — register models
 from app.modules.auth.router import router as auth_router
+from app.modules.materials.router import router as materials_router
 from app.modules.users.router import router as users_router
 from app.seed import seed_demo_users
 
@@ -34,6 +36,7 @@ app.add_middleware(
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
+app.include_router(materials_router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")
