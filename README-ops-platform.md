@@ -23,7 +23,7 @@ Vue 3 + **Element Plus** 前端，FastAPI 后端。当前以 **master** 为准�
 | `ops` | `ops123` | 运营 |
 | `teacher1` | `t123` | 老师 |
 
-## 启动
+## 启动（开发：本机 Python + Node）
 
 ```powershell
 # 后端
@@ -42,6 +42,59 @@ npm run dev
 - 健康检查：http://127.0.0.1:8000/api/v1/health  
 - AI 状态：`GET /api/v1/system/integrations`（登录后）
 
+## 一键启动（Docker Compose，本机 / 服务器同一套）
+
+适合不想分别装 Python、Node 的场景。本机验证通过后，服务器用**同一命令**即可。
+
+### 前置
+
+1. 安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/)（Windows 需开启 WSL2 或 Hyper-V，按安装向导即可）
+2. 项目根目录有 `.env`（没有则从示例复制）：
+
+```powershell
+cd E:\one-class
+Copy-Item .env.example .env
+# 按需编辑 .env：JWT_SECRET、LLM_*、IMAGE_* 等
+```
+
+### 启动
+
+```powershell
+cd E:\one-class
+docker compose up --build
+```
+
+后台运行：
+
+```powershell
+docker compose up -d --build
+```
+
+| 入口 | 地址 |
+|------|------|
+| 网站（前端 + API 反代） | http://127.0.0.1:8080 |
+| 后端直连 / 接口文档 | http://127.0.0.1:8000/docs |
+| 健康检查 | http://127.0.0.1:8000/api/v1/health |
+
+数据（SQLite、上传文件）在项目 `data/` 目录，容器重启不丢。
+
+### 常用命令
+
+```powershell
+docker compose ps
+docker compose logs -f
+docker compose down          # 停掉容器（保留 data/）
+docker compose down --rmi local  # 可选：顺带删本地构建的镜像
+```
+
+### 以后放到服务器
+
+1. 服务器安装 Docker（Linux 用 Docker Engine 即可）
+2. `git clone` 本仓库，放入服务器自己的 `.env`（**不要**提交真实 Key）
+3. 同样执行：`docker compose up -d --build`
+4. 访问 `http://服务器IP:8080`；需要再绑域名与 HTTPS 时，在前面加反向代理即可
+
+本机与服务器共用：`docker-compose.yml`、`backend/Dockerfile`、`frontend/Dockerfile`、`frontend/nginx.conf`。
 ## 可选 AI：为什么报错、怎么真正用上大模型
 
 ### 报错原因（你截图里的 503）

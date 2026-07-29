@@ -1,0 +1,54 @@
+# 壹号教室运营工具平台 — 本机 / 服务器同一套一键启动
+#
+# 本机：
+#   1. 安装 Docker Desktop
+#   2. 项目根目录准备 .env（可参考 .env.example）
+#   3. docker compose up --build
+#   4. 浏览器打开 http://127.0.0.1:8080
+#
+# 服务器：
+#   git clone 后同样放 .env，再执行 docker compose up -d --build
+#   访问 http://服务器IP:8080 （可再绑域名 / HTTPS）
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: one-class-backend
+    env_file:
+      - .env
+    environment:
+      # Force container paths so host volume ./data works on any OS
+      DATABASE_URL: sqlite:////app/data/app.db
+      STORAGE_ROOT: /app/data/uploads
+    volumes:
+      - ./data:/app/data
+    ports:
+      # Optional direct API access (docs at :8000/docs). Frontend uses :8080 only.
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: one-class-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
