@@ -114,3 +114,25 @@ def test_teacher_cannot_generate(client):
         json={"material_id": mid, "template_id": tid, "mode": "template", "platform": "xhs"},
     )
     assert res.status_code == 403
+
+
+def test_llm_mode_without_config_falls_back(client):
+    """Direct LLM mode must not 503 when keys missing — return draft + llm_error."""
+    h = auth_header(client, "ops", "ops123")
+    mid = _create_material(client, h)
+    tid = _create_template(client, h)
+    res = client.post(
+        "/api/v1/copies/generate",
+        headers=h,
+        json={
+            "material_id": mid,
+            "template_id": tid,
+            "mode": "llm",
+            "platform": "xhs",
+        },
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()["data"]
+    assert data["body"]
+    assert data.get("llm_error")
+    assert "未配置" in data["llm_error"] or "LLM" in data["llm_error"] or "大模型" in data["llm_error"]

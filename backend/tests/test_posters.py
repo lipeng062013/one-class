@@ -63,6 +63,30 @@ def test_ai_image_mock(client, monkeypatch):
     assert data["file_path"].startswith("posters/")
 
 
+def test_ai_image_without_config_falls_back_to_layout(client):
+    h = auth_header(client, "ops", "ops123")
+    tid = _system_poster_template_id(client, h)
+    res = client.post(
+        "/api/v1/posters/generate",
+        headers=h,
+        json={
+            "template_id": tid,
+            "mode": "ai_image",
+            "title": "未配置AI时也应出图",
+            "payload": {"subtitle": "回退版式", "footer": "本地导出"},
+            "prompt": "should-fallback",
+        },
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()["data"]
+    assert data["file_path"]
+    assert data.get("image_error")
+    assert data["mode"] == "layout"
+    dl = client.get(f"/api/v1/files/posters/{data['id']}", headers=h)
+    assert dl.status_code == 200
+    assert dl.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+
 def test_teacher_cannot_generate_poster(client):
     h_ops = auth_header(client, "ops", "ops123")
     tid = _system_poster_template_id(client, h_ops)

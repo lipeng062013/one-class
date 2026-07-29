@@ -90,7 +90,11 @@ def render_layout_png(
     return buf.getvalue()
 
 
-def serialize_poster(poster: GeneratedPoster) -> dict[str, Any]:
+def serialize_poster(
+    poster: GeneratedPoster,
+    *,
+    image_error: str | None = None,
+) -> dict[str, Any]:
     return {
         "id": poster.id,
         "material_id": poster.material_id,
@@ -101,7 +105,18 @@ def serialize_poster(poster: GeneratedPoster) -> dict[str, Any]:
         "file_path": poster.file_path,
         "created_by": poster.created_by,
         "created_at": poster.created_at.isoformat() if poster.created_at else None,
+        "image_error": image_error,
     }
+
+
+def _friendly_image_error(exc: BaseException) -> str:
+    text = str(exc)
+    if "not configured" in text.lower():
+        return (
+            "图片大模型未配置：请在 .env 填写 IMAGE_API_BASE_URL、IMAGE_API_KEY "
+            "（可选 IMAGE_MODEL）后重启后端。本次已改用本地版式导出。"
+        )
+    return f"图片 API 调用失败，已改用本地版式导出。原因：{text}"
 
 
 def generate_poster(db: Session, user: User, body: GeneratePosterRequest) -> dict[str, Any]:
@@ -128,19 +143,24 @@ def generate_poster(db: Session, user: User, body: GeneratePosterRequest) -> dic
     title = body.title or ""
     payload = body.payload or {}
     payload_json = json.dumps(payload, ensure_ascii=False)
+    image_error: str | None = None
+    effective_mode = mode
 
-    if mode == "layout":
+    def _render_layout() -> bytes:
         if template is None:
-            raise HTTPException(status_code=400, detail="template_id is required for layout mode")
+            raise HTTPException(status_code=400, detail="版式模式需要选择海报模板（template_id）")
         try:
             layout = json.loads(template.layout_json or "{}")
         except json.JSONDecodeError as exc:
-            raise HTTPException(status_code=400, detail="Invalid template layout_json") from exc
+            raise HTTPException(status_code=400, detail="模板 layout_json 无效") from exc
         if not isinstance(layout, dict):
-            raise HTTPException(status_code=400, detail="Invalid template layout_json")
-        png_bytes = render_layout_png(layout, title, payload)
+            raise HTTPException(status_code=400, detail="模板 layout_json 无效")
+        return render_layout_png(layout, title, payload)
+
+    if mode == "layout":
+        png_bytes = _render_layout()
     else:
-        # ai_image
+        # ai_image — try remote API, fall back to local layout
         prompt = body.prompt or title or "poster"
         if payload:
             extra = "；".join(f"{k}: {v}" for k, v in payload.items() if v is not None)
@@ -149,10 +169,15 @@ def generate_poster(db: Session, user: User, body: GeneratePosterRequest) -> dic
         try:
             png_bytes = image_api.generate_image(prompt=prompt, title=title)
         except ImageApiUnavailable as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Image API unavailable: {exc}",
-            ) from exc
+            image_error = _friendly_image_error(exc)
+            if template is None:
+                # still need a template to fall back
+                raise HTTPException(
+                    status_code=400,
+                    detail=image_error + " 请先选择一个海报版式模板后再试。",
+                ) from exc
+            png_bytes = _render_layout()
+            effective_mode = "layout"
 
     storage = LocalStorage()
     relative_path = f"posters/{uuid.uuid4().hex}.png"
@@ -161,7 +186,7 @@ def generate_poster(db: Session, user: User, body: GeneratePosterRequest) -> dic
     poster = GeneratedPoster(
         material_id=body.material_id,
         template_id=body.template_id,
-        mode=mode,
+        mode=effective_mode,
         title=title,
         payload_json=payload_json,
         file_path=relative_path,
@@ -170,7 +195,7 @@ def generate_poster(db: Session, user: User, body: GeneratePosterRequest) -> dic
     db.add(poster)
     db.commit()
     db.refresh(poster)
-    return serialize_poster(poster)
+    return serialize_poster(poster, image_error=image_error)
 
 
 def list_posters(db: Session) -> list[GeneratedPoster]:

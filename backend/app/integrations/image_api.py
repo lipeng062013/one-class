@@ -19,7 +19,9 @@ def generate_image(**kwargs) -> bytes:
     """
     settings = get_settings()
     if not settings.image_api_key or not settings.image_api_base_url:
-        raise ImageApiUnavailable("IMAGE_API not configured")
+        raise ImageApiUnavailable(
+            "IMAGE_API not configured (set IMAGE_API_BASE_URL and IMAGE_API_KEY in .env, then restart backend)"
+        )
 
     prompt = kwargs.get("prompt") or kwargs.get("title") or ""
     model = kwargs.get("model") or settings.image_model or "dall-e-3"

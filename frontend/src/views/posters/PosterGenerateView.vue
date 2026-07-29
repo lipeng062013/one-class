@@ -55,9 +55,12 @@ async function loadTemplates() {
 }
 
 async function submit() {
-  if (form.mode === 'ai_image' && integrations.value && !integrations.value.image.configured) {
-    ElMessage.warning('未配置图片 API。请改用「版式导出」，或在 .env 配置 IMAGE_* 后重启后端')
+  if (form.mode === 'ai_image' && !form.template_id) {
+    ElMessage.warning('AI 生图在未配置或失败时会回退版式，请先选择海报模板')
     return
+  }
+  if (form.mode === 'ai_image' && integrations.value && !integrations.value.image.configured) {
+    ElMessage.info('当前未配置图片大模型，将使用本地版式导出；配置 IMAGE_* 并重启后端后可 AI 生图')
   }
   loading.value = true
   result.value = null
@@ -72,7 +75,11 @@ async function submit() {
       prompt: form.prompt || null,
     })
     previewUrl.value = await posterObjectUrl(result.value.id)
-    ElMessage.success('海报已生成')
+    if (result.value.image_error) {
+      ElMessage.warning(result.value.image_error)
+    } else {
+      ElMessage.success('海报已生成')
+    }
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '生成失败')
   } finally {
@@ -153,6 +160,14 @@ onUnmounted(revokePreview)
           <template #header>预览 / 下载</template>
           <el-empty v-if="!result" description="生成后显示预览" />
           <div v-else>
+            <el-alert
+              v-if="result.image_error"
+              type="warning"
+              :closable="false"
+              show-icon
+              :title="result.image_error"
+              style="margin-bottom: 12px"
+            />
             <p><strong>{{ result.title }}</strong>（{{ result.mode }}）</p>
             <el-image v-if="previewUrl" :src="previewUrl" fit="contain" class="preview" :preview-src-list="[previewUrl]" />
             <p class="muted">{{ result.file_path }}</p>

@@ -166,6 +166,30 @@ def _build_llm_messages(
     ]
 
 
+def _friendly_llm_error(exc: BaseException) -> str:
+    text = str(exc)
+    if "not configured" in text.lower() or "LLM not configured" in text:
+        return (
+            "大模型未配置：请在项目根目录或 backend 目录创建 .env，"
+            "填写 LLM_BASE_URL、LLM_API_KEY、LLM_MODEL 后重启后端。"
+            "详见 README-ops-platform.md「可选 AI」。"
+        )
+    return f"大模型调用失败，已回退模板结果。原因：{text}"
+
+
+def _fallback_copy_body(context: dict[str, Any], extra_instruction: str | None) -> str:
+    parts = [
+        f"【{context.get('title') or '壹号教室'}】",
+        f"痛点：{context.get('pain_point') or '—'}",
+        f"老师怎么做：{context.get('teacher_action') or '—'}",
+        f"下一步：{context.get('next_step') or '—'}",
+    ]
+    if extra_instruction:
+        parts.append(f"补充：{extra_instruction}")
+    parts.append("（当前未调用大模型，以上为本地草稿，配置 LLM 后可自动润色）")
+    return "\n".join(parts)
+
+
 def serialize_copy(
     copy: GeneratedCopy,
     *,
@@ -238,8 +262,8 @@ def generate_copy(db: Session, user: User, body: GenerateCopyRequest) -> dict[st
             final_body = llm.chat_completion(messages)
             model_name = settings.llm_model
         except LlmUnavailable as exc:
-            final_body = rendered
-            llm_error = str(exc)
+            final_body = rendered or _fallback_copy_body(context, body.extra_instruction)
+            llm_error = _friendly_llm_error(exc)
     elif mode == "llm":
         messages = _build_llm_messages(
             context=context,
@@ -253,10 +277,9 @@ def generate_copy(db: Session, user: User, body: GenerateCopyRequest) -> dict[st
             final_body = llm.chat_completion(messages)
             model_name = settings.llm_model
         except LlmUnavailable as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"LLM unavailable: {exc}",
-            ) from exc
+            # Graceful degrade: template / local draft instead of hard 503
+            final_body = rendered or _fallback_copy_body(context, body.extra_instruction)
+            llm_error = _friendly_llm_error(exc)
 
     banned = find_banned(f"{title}\n{final_body}", _banned_words(db))
 

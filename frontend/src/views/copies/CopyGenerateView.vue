@@ -43,9 +43,9 @@ async function loadOptions() {
 }
 
 async function submit() {
-  if (form.mode === 'llm' && integrations.value && !integrations.value.llm.configured) {
-    ElMessage.warning('未配置大模型。请改用「仅模板」或「模板+润色」（润色失败会回退模板），或在 .env 配置 LLM_*')
-    return
+  // Still call API: backend now falls back to template when LLM missing (no hard 503).
+  if ((form.mode === 'llm' || form.mode === 'template_then_llm') && integrations.value && !integrations.value.llm.configured) {
+    ElMessage.info('当前未配置大模型，将使用本地模板/草稿；配置 .env 中 LLM_* 并重启后端后可真正调用大模型')
   }
   loading.value = true
   result.value = null
@@ -58,7 +58,7 @@ async function submit() {
       extra_instruction: form.extra_instruction || null,
     })
     if (result.value.llm_error) {
-      ElMessage.warning('大模型不可用，已回退模板结果')
+      ElMessage.warning(result.value.llm_error)
     } else {
       ElMessage.success('生成成功')
     }

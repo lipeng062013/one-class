@@ -12,7 +12,9 @@ class LlmUnavailable(Exception):
 def chat_completion(messages: list[dict], **kwargs) -> str:
     settings = get_settings()
     if not settings.llm_api_key or not settings.llm_base_url:
-        raise LlmUnavailable("LLM not configured")
+        raise LlmUnavailable(
+            "LLM not configured (set LLM_BASE_URL and LLM_API_KEY in .env, then restart backend)"
+        )
 
     model = kwargs.get("model") or settings.llm_model
     timeout = kwargs.get("timeout", 60.0)

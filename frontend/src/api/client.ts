@@ -28,16 +28,27 @@ client.interceptors.response.use(
     return response
   },
   (error) => {
-    const message =
+    const raw =
       error.response?.data?.error?.message ||
       error.response?.data?.detail ||
       error.message ||
       '网络错误'
+    let message = typeof raw === 'string' ? raw : '请求失败'
+    // Friendlier Chinese for common AI config failures
+    if (/LLM not configured/i.test(message)) {
+      message =
+        '大模型未配置：请在项目 .env 填写 LLM_BASE_URL、LLM_API_KEY 后重启后端（见 README-ops-platform.md）'
+    } else if (/IMAGE_API not configured|Image API unavailable/i.test(message)) {
+      message =
+        '图片大模型未配置：请在 .env 填写 IMAGE_API_BASE_URL、IMAGE_API_KEY 后重启后端'
+    } else if (/status code 503/i.test(message)) {
+      message = 'AI 服务不可用（503）。请检查 .env 中的 LLM_/IMAGE_ 配置，或改用「仅模板 / 版式导出」。'
+    }
     if (error.response?.status === 401) {
       localStorage.removeItem('token')
     }
-    ElMessage.error(typeof message === 'string' ? message : '请求失败')
-    return Promise.reject(error)
+    ElMessage.error(message)
+    return Promise.reject(new Error(message))
   },
 )
 

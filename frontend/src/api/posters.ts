@@ -12,6 +12,7 @@ export interface GeneratedPoster {
   file_path: string
   created_by?: number | null
   created_at?: string | null
+  image_error?: string | null
 }
 
 export interface GeneratePosterInput {
