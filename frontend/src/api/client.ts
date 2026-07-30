@@ -27,10 +27,20 @@ client.interceptors.response.use(
     }
     return response
   },
-  (error) => {
+  async (error) => {
+    let data = error.response?.data
+    // Blob downloads (PDF/images) still get JSON error bodies as Blob — parse them.
+    if (typeof Blob !== 'undefined' && data instanceof Blob) {
+      try {
+        const text = await data.text()
+        data = JSON.parse(text)
+      } catch {
+        /* keep raw blob */
+      }
+    }
     const raw =
-      error.response?.data?.error?.message ||
-      error.response?.data?.detail ||
+      data?.error?.message ||
+      data?.detail ||
       error.message ||
       '网络错误'
     let message = typeof raw === 'string' ? raw : '请求失败'

@@ -126,12 +126,17 @@ def download_growth_report(
 ):
     from urllib.parse import quote
 
-    from app.modules.students.report import build_growth_report_pdf
+    from app.modules.students.report import GrowthReportFontError, build_growth_report_pdf
 
     s = svc.get_student(db, student_id)
     if not s:
         return fail("NOT_FOUND", "学生不存在", status_code=404)
-    data, filename = build_growth_report_pdf(db, s)
+    try:
+        data, filename = build_growth_report_pdf(db, s)
+    except GrowthReportFontError as e:
+        return fail("GROWTH_REPORT_FONT_MISSING", str(e), status_code=500)
+    except Exception as e:
+        return fail("GROWTH_REPORT_FAILED", f"生成学情报告失败：{e}", status_code=500)
     encoded = quote(filename)
     return StreamingResponse(
         iter([data]),

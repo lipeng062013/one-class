@@ -53,19 +53,48 @@ C_WHITE = (255, 255, 255)
 
 
 def _find_cjk_font() -> str | None:
+    """Locate a system CJK font for PDF Chinese text.
+
+    Docker image installs fonts-wqy-microhei; Windows/macOS use built-in fonts.
+    """
+    # Bundled fallback (optional): backend/app/assets/fonts/*.ttf|ttc|otf
+    assets_fonts = Path(__file__).resolve().parents[2] / "assets" / "fonts"
+    bundled: list[Path] = []
+    if assets_fonts.is_dir():
+        bundled = [
+            p
+            for p in sorted(assets_fonts.iterdir())
+            if p.is_file() and p.suffix.lower() in {".ttf", ".ttc", ".otf"}
+        ]
+
     candidates = [
+        *bundled,
+        # Linux (Docker / Debian)
+        Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
+        Path("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/truetype/arphic/uming.ttc"),
+        Path("/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"),
+        # Windows
         Path(r"C:\Windows\Fonts\msyh.ttc"),
         Path(r"C:\Windows\Fonts\msyh.ttf"),
         Path(r"C:\Windows\Fonts\simhei.ttf"),
         Path(r"C:\Windows\Fonts\simsun.ttc"),
-        Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
-        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        # macOS
         Path("/System/Library/Fonts/PingFang.ttc"),
+        Path("/System/Library/Fonts/STHeiti Light.ttc"),
+        Path("/Library/Fonts/Arial Unicode.ttf"),
     ]
     for p in candidates:
-        if p.exists():
+        if p.is_file():
             return str(p)
     return None
+
+
+class GrowthReportFontError(RuntimeError):
+    """Raised when no CJK-capable font is available for PDF generation."""
 
 
 def _prepare_image_for_pdf(raw: bytes, max_side: int = 1200) -> Path | None:
@@ -203,12 +232,17 @@ def build_growth_report_pdf(db: Session, student: Student) -> tuple[bytes, str]:
     )
 
     font_path = _find_cjk_font()
-    font_family = "CJK" if font_path else "Helvetica"
+    if not font_path:
+        raise GrowthReportFontError(
+            "未找到可用的中文字体，无法生成学情报告 PDF。"
+            "请在服务器安装 fonts-wqy-microhei，或将 .ttf/.ttc 放到 app/assets/fonts/。"
+        )
 
+    font_family = "CJK"
     pdf = GrowthReportPDF(student_name=student.name, font_family=font_family)
-    if font_path:
-        pdf.add_font("CJK", "", font_path)
-        pdf.add_font("CJK", "B", font_path)
+    # TTC (e.g. 微软雅黑 / 文泉驿) may emit subset warnings; still usable for CJK.
+    pdf.add_font("CJK", "", font_path)
+    pdf.add_font("CJK", "B", font_path)
 
     pdf.add_page()
     # 浅底（整页装饰感）
