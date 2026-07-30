@@ -1,8 +1,8 @@
-# 壹号教室运营工具平台 V1 Implementation Plan
+# 嘉壹启航运营工具平台 V1 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a modular Vue 3 + TypeScript frontend and FastAPI Python backend so 壹号教室 staff can log in, upload materials, generate Xiaohongshu copy and posters (template-first, optional LLM/image APIs), manage knowledge, and track referral leads—deployable with Docker Compose.
+**Goal:** Build a modular Vue 3 + TypeScript frontend and FastAPI Python backend so 嘉壹启航 staff can log in, upload materials, generate Xiaohongshu copy and posters (template-first, optional LLM/image APIs), manage knowledge, and track referral leads—deployable with Docker Compose.
 
 **Architecture:** Monorepo with `frontend/` and `backend/`. Backend exposes versioned REST under `/api/v1` with JWT auth and role checks. SQLite via SQLAlchemy + Alembic; files via a `Storage` interface backed by a local directory. LLM and image keys live only in env vars; template generation works without them. Existing `one-class-operations-guide.html` stays untouched.
 
@@ -1073,7 +1073,7 @@ def test_generate_layout_poster_png(client):
         json={
             "template_id": 1,
             "mode": "layout",
-            "title": "壹号教室试听",
+            "title": "嘉壹启航试听",
             "payload": {"subtitle": "嘉定新城", "footer": "扫码预约"},
         },
     )

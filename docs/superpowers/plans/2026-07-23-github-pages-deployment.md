@@ -161,7 +161,7 @@ gh api repos/lipeng062013/one-class/deployments --jq '.[] | select(.environment 
 $url = gh api repos/lipeng062013/one-class/pages --jq .html_url
 $response = Invoke-WebRequest -UseBasicParsing $url
 $response.StatusCode
-$response.Content -match '壹号教室全年运营与宣传执行方案'
+$response.Content -match '嘉壹启航全年运营与宣传执行方案'
 ```
 
 Expected: status `200` and content check `True`.

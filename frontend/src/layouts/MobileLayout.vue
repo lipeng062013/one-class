@@ -27,7 +27,10 @@ function logout() {
 <template>
   <div class="mobile-shell">
     <header class="top">
-      <span class="brand">壹号教室 · 老师端</span>
+      <div class="brand">
+        <img class="brand-logo" src="/brand-mark.png" alt="" width="28" height="28" />
+        <span class="brand-text">嘉壹启航 · 老师端</span>
+      </div>
       <el-button link class="logout" @click="logout">退出</el-button>
     </header>
     <main class="body">
@@ -75,10 +78,30 @@ function logout() {
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.brand-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(161, 98, 7, 0.15);
+}
+
+.brand-text {
   font-weight: 700;
   color: var(--oc-ink, #44403c);
   letter-spacing: 0.02em;
   font-size: 14px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .logout {

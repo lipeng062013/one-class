@@ -172,7 +172,7 @@ def seed_sample_knowledge(db: Session) -> None:
         (
             "script",
             "首次电话开场",
-            "您好，我是壹号教室的学管老师，看到您关注了我们的课程，方便耽误您两分钟介绍一下适合孩子的方案吗？",
+            "您好，我是嘉壹启航的学管老师，看到您关注了我们的课程，方便耽误您两分钟介绍一下适合孩子的方案吗？",
             "开场,电话",
         ),
         (
@@ -213,6 +213,10 @@ def seed_sample_knowledge(db: Session) -> None:
             .first()
         )
         if exists:
+            # Keep sample scripts in sync with current brand name
+            if exists.content != content or exists.tags != tags:
+                exists.content = content
+                exists.tags = tags
             continue
         db.add(
             KnowledgeEntry(
@@ -224,6 +228,36 @@ def seed_sample_knowledge(db: Session) -> None:
             )
         )
     db.commit()
+
+
+def migrate_brand_name(db: Session, old: str = "壹号教室", new: str = "嘉壹启航") -> None:
+    """Replace legacy brand string in stored text (knowledge, copies, posters, etc.)."""
+    from sqlalchemy import text
+
+    tables = db.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    changed = 0
+    for (table,) in tables:
+        if table.startswith("sqlite_"):
+            continue
+        cols = db.execute(text(f"PRAGMA table_info({table})")).fetchall()
+        for col in cols:
+            col_name = col[1]
+            # skip pure numeric / blob-ish columns by name heuristic
+            if col_name in {"id", "rowid"} or col_name.endswith("_id"):
+                continue
+            try:
+                result = db.execute(
+                    text(
+                        f"UPDATE {table} SET {col_name} = REPLACE(CAST({col_name} AS TEXT), :old, :new) "
+                        f"WHERE CAST({col_name} AS TEXT) LIKE :pat"
+                    ),
+                    {"old": old, "new": new, "pat": f"%{old}%"},
+                )
+                changed += result.rowcount or 0
+            except Exception:
+                continue
+    if changed:
+        db.commit()
 
 
 def seed_demo_leads(db: Session, target: int = 20) -> None:
@@ -250,7 +284,7 @@ def seed_demo_leads(db: Session, target: int = 20) -> None:
     db.commit()
 
 
-def seed_demo_students(db: Session, target: int = 30) -> None:
+def seed_demo_students(db: Session, target: int = 40) -> None:
     current = db.query(Student).count()
     if current >= target:
         return
@@ -285,4 +319,5 @@ def seed_all(db: Session) -> None:
     seed_system_templates(db)
     seed_sample_knowledge(db)
     seed_demo_leads(db, target=20)
-    seed_demo_students(db, target=30)
+    seed_demo_students(db, target=40)
+    migrate_brand_name(db)

@@ -19,7 +19,7 @@ test('delivers a standalone Chinese operations guide', async () => {
   const html = await loadHtml();
   assert.match(html, /<html lang="zh-CN">/);
   assert.match(html, /<meta name="viewport"/);
-  assert.match(html, /壹号教室全年运营/);
+  assert.match(html, /嘉壹启航全年运营/);
   assert.doesNotMatch(html, /<script[^>]+src=/i);
   assert.doesNotMatch(html, /<link[^>]+rel=["']stylesheet/i);
 });

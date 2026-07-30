@@ -128,7 +128,7 @@ def _prepare_image_for_pdf(raw: bytes, max_side: int = 1200) -> Path | None:
 
 
 class GrowthReportPDF(FPDF):
-    """壹号教室成长档案 PDF。"""
+    """嘉壹启航成长档案 PDF。"""
 
     def __init__(self, student_name: str, font_family: str) -> None:
         super().__init__(orientation="P", unit="mm", format="A4")
@@ -156,7 +156,7 @@ class GrowthReportPDF(FPDF):
         self.set_xy(16, 3)
         self.set_text_color(*C_GOLD)
         self.set_font(self.font_family, "", 9)
-        self.cell(0, 6, "壹号教室  ·  成长档案", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        self.cell(0, 6, "嘉壹启航  ·  成长档案", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.set_y(18)
         self.set_text_color(*C_INK)
 
@@ -264,7 +264,7 @@ def build_growth_report_pdf(db: Session, student: Student) -> tuple[bytes, str]:
     pdf.set_font(font_family, "", 9)
     pdf.set_muted()
     generated_at = datetime.now().strftime("%Y年%m月%d日 %H:%M")
-    pdf.cell(0, 6, f"生成时间  {generated_at}    ·    壹号教室内部成长档案", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, f"生成时间  {generated_at}    ·    嘉壹启航内部成长档案", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_y(title_y + 32)
     pdf.set_ink()
 
@@ -316,7 +316,7 @@ def build_growth_report_pdf(db: Session, student: Student) -> tuple[bytes, str]:
     pdf.ln(4)
     pdf.set_font(font_family, "", 9)
     pdf.set_muted()
-    pdf.cell(0, 6, "——  壹号教室 · 陪伴每一个孩子成长  ——", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, "——  嘉壹启航 · 陪伴每一个孩子成长  ——", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.cell(0, 5, "本报告仅供机构内部教学与家校沟通使用", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     try:

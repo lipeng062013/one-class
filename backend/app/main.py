@@ -47,7 +47,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="One Class Ops Platform", lifespan=lifespan)
+app = FastAPI(title="嘉壹启航运营工具平台", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

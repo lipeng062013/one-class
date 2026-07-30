@@ -108,18 +108,20 @@ onUnmounted(() => {
     <el-button type="primary" size="large" class="write-btn" @click="writeLearning">
       写学情
     </el-button>
-    <el-button
-      size="large"
-      class="write-btn"
-      plain
-      type="primary"
-      :loading="reportLoading"
-      @click="downloadReport"
-    >
-      生成学情报告
-    </el-button>
 
-    <h3>学情记录</h3>
+    <div class="section-row">
+      <h3 class="section-title">学情记录</h3>
+      <el-button
+        type="primary"
+        plain
+        size="small"
+        class="report-btn"
+        :loading="reportLoading"
+        @click="downloadReport"
+      >
+        生成学情报告
+      </el-button>
+    </div>
     <el-empty v-if="!records.length" description="暂无学情" />
     <el-card v-for="r in records" :key="r.id" class="rec" shadow="hover">
       <div class="rec-head">
@@ -158,13 +160,30 @@ onUnmounted(() => {
 }
 
 .write-btn {
+  display: block;
   width: 100%;
-  margin-bottom: 16px;
+  margin: 0 0 14px !important; /* 覆盖 .el-button + .el-button 的 margin-left */
 }
 
-h3 {
+.section-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin: 0 0 10px;
+}
+
+.section-title {
+  margin: 0;
   font-size: 1rem;
+  font-weight: 650;
+  color: var(--oc-ink, #44403c);
+  min-width: 0;
+}
+
+.report-btn {
+  flex-shrink: 0;
+  margin: 0 !important;
 }
 
 .rec {

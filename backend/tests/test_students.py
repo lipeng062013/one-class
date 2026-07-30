@@ -137,6 +137,50 @@ def test_operator_cannot_access_students(client):
     assert report.headers.get("content-type", "").startswith("application/pdf")
 
 
+def test_bulk_delete_students(client):
+    admin = auth_header(client, "admin", "admin123")
+    teacher = auth_header(client, "teacher1", "t123")
+    managers = client.get("/api/v1/students/managers", headers=admin).json()["data"]
+    teacher_id = next(m["id"] for m in managers if m["username"] == "teacher1")
+
+    ids = []
+    for name in ("批量删甲", "批量删乙"):
+        res = client.post(
+            "/api/v1/students",
+            headers=admin,
+            json={
+                "name": name,
+                "grade": "一年级",
+                "school": "实验小学",
+                "academic_manager_id": teacher_id,
+            },
+        )
+        assert res.status_code == 201
+        ids.append(res.json()["data"]["id"])
+
+    # teacher cannot bulk delete
+    assert (
+        client.post(
+            "/api/v1/students/bulk-delete",
+            headers=teacher,
+            json={"student_ids": ids},
+        ).status_code
+        == 403
+    )
+
+    res = client.post(
+        "/api/v1/students/bulk-delete",
+        headers=admin,
+        json={"student_ids": ids},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["data"]["deleted_count"] == 2
+    listed = client.get("/api/v1/students", headers=admin).json()["data"]
+    listed_ids = {s["id"] for s in listed}
+    assert ids[0] not in listed_ids
+    assert ids[1] not in listed_ids
+
+
 def test_bulk_reassign_academic_manager(client):
     admin = auth_header(client, "admin", "admin123")
     # create second teacher

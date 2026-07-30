@@ -86,6 +86,12 @@ const router = createRouter({
           meta: { roles: ['admin', 'operator'] },
         },
         {
+          path: 'office',
+          name: 'office',
+          component: () => import('../views/office/OfficeSheetsView.vue'),
+          meta: { roles: ['admin', 'operator'] },
+        },
+        {
           path: 'users',
           name: 'users',
           component: () => import('../views/users/UserListView.vue'),

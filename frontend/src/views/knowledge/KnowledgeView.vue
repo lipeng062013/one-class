@@ -10,10 +10,12 @@ import {
   type KnowledgeEntry,
 } from '../../api/knowledge'
 import { useAuthStore } from '../../stores/auth'
+import { useBreakpoint } from '../../composables/useBreakpoint'
 
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
+const { isCompact } = useBreakpoint()
 const loading = ref(false)
 const rows = ref<KnowledgeEntry[]>([])
 const dialogVisible = ref(false)
@@ -131,8 +133,8 @@ onMounted(load)
 
 <template>
   <div>
-    <div class="toolbar">
-      <div>
+    <div class="page-toolbar">
+      <div class="head-text">
         <el-page-header :content="`成长中心 · ${section.title}`" />
         <p class="desc">{{ section.desc }}</p>
       </div>
@@ -147,26 +149,48 @@ onMounted(load)
       title="运营可阅读成长中心内容；新建/编辑仅负责人可操作。"
     />
 
-    <el-card style="margin-top: 16px" v-loading="loading">
+    <div v-if="isCompact" v-loading="loading" class="m-card-list" style="margin-top: 12px">
+      <div v-if="!rows.length && !loading" class="m-card m-card-empty">暂无内容</div>
+      <div v-for="row in rows" :key="row.id" class="m-card">
+        <div class="m-card-head">
+          <div class="m-card-title">{{ row.title }}</div>
+          <el-tag :type="row.is_active ? 'success' : 'info'" size="small">
+            {{ row.is_active ? '启用' : '停用' }}
+          </el-tag>
+        </div>
+        <div class="know-body">{{ row.content }}</div>
+        <div v-if="row.tags" class="m-card-meta" style="margin-top: 8px">
+          <span><span class="k">标签</span> {{ row.tags }}</span>
+        </div>
+        <div v-if="auth.isAdmin" class="m-card-actions">
+          <el-button size="small" type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button size="small" type="danger" plain @click="remove(row)">删除</el-button>
+        </div>
+      </div>
+    </div>
+
+    <el-card v-else style="margin-top: 16px" v-loading="loading">
       <el-empty v-if="!rows.length" description="暂无内容" />
-      <el-table v-else :data="rows" stripe>
-        <el-table-column prop="title" label="标题" min-width="140" />
-        <el-table-column prop="content" label="内容" min-width="260" show-overflow-tooltip />
-        <el-table-column prop="tags" label="标签" width="120" />
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag :type="row.is_active ? 'success' : 'info'" size="small">
-              {{ row.is_active ? '启用' : '停用' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="auth.isAdmin" label="操作" width="140" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="remove(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <div v-else class="table-scroll">
+        <el-table :data="rows" stripe>
+          <el-table-column prop="title" label="标题" min-width="140" />
+          <el-table-column prop="content" label="内容" min-width="260" show-overflow-tooltip />
+          <el-table-column prop="tags" label="标签" width="120" />
+          <el-table-column label="状态" width="90">
+            <template #default="{ row }">
+              <el-tag :type="row.is_active ? 'success' : 'info'" size="small">
+                {{ row.is_active ? '启用' : '停用' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="auth.isAdmin" label="操作" width="140" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+              <el-button link type="danger" @click="remove(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
     </el-card>
 
     <el-dialog
@@ -199,17 +223,22 @@ onMounted(load)
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
+.head-text {
+  min-width: 0;
+  flex: 1;
 }
 
 .desc {
   margin: 6px 0 0;
   font-size: 13px;
   color: var(--oc-muted, #78716c);
+}
+
+.know-body {
+  font-size: 13px;
+  color: var(--oc-ink, #44403c);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

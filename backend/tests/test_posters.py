@@ -20,7 +20,7 @@ def test_generate_layout_poster_png(client):
         json={
             "template_id": tid,
             "mode": "layout",
-            "title": "壹号教室试听",
+            "title": "嘉壹启航试听",
             "payload": {"subtitle": "嘉定新城", "footer": "扫码预约"},
         },
     )
@@ -28,7 +28,7 @@ def test_generate_layout_poster_png(client):
     data = res.json()["data"]
     assert data["file_path"]
     assert data["mode"] == "layout"
-    assert data["title"] == "壹号教室试听"
+    assert data["title"] == "嘉壹启航试听"
     file_id = data["id"]
 
     dl = client.get(f"/api/v1/files/posters/{file_id}", headers=h)
@@ -63,7 +63,23 @@ def test_ai_image_mock(client, monkeypatch):
     assert data["file_path"].startswith("posters/")
 
 
-def test_ai_image_without_config_falls_back_to_layout(client):
+def test_ai_image_without_config_falls_back_to_layout(client, monkeypatch):
+    # Force "unconfigured" even if developer .env has IMAGE_* set.
+    monkeypatch.setenv("IMAGE_API_BASE_URL", "")
+    monkeypatch.setenv("IMAGE_API_KEY", "")
+    from app.core.config import clear_settings_cache
+
+    clear_settings_cache()
+
+    def boom(**kwargs):
+        from app.integrations.image_api import ImageApiUnavailable
+
+        raise ImageApiUnavailable(
+            "IMAGE_API not configured (set IMAGE_API_BASE_URL and IMAGE_API_KEY in .env, then restart backend)"
+        )
+
+    monkeypatch.setattr("app.integrations.image_api.generate_image", boom)
+
     h = auth_header(client, "ops", "ops123")
     tid = _system_poster_template_id(client, h)
     res = client.post(
@@ -85,6 +101,8 @@ def test_ai_image_without_config_falls_back_to_layout(client):
     dl = client.get(f"/api/v1/files/posters/{data['id']}", headers=h)
     assert dl.status_code == 200
     assert dl.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+    clear_settings_cache()
 
 
 def test_teacher_cannot_generate_poster(client):

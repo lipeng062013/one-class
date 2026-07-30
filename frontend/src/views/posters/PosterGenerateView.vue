@@ -23,7 +23,7 @@ const integrations = ref<IntegrationsStatus | null>(null)
 const form = reactive({
   template_id: undefined as number | undefined,
   mode: 'layout' as PosterMode,
-  title: '壹号教室',
+  title: '嘉壹启航',
   subtitle: '',
   footer: '扫码预约沟通',
   prompt: '',

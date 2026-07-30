@@ -14,6 +14,7 @@ from app.modules.students import service as svc
 from app.modules.students.schemas import (
     LearningRecordCreate,
     LearningRecordUpdate,
+    StudentBulkDelete,
     StudentCreate,
     StudentReassign,
     StudentUpdate,
@@ -103,6 +104,20 @@ def reassign_students(
     )
     if isinstance(result, str):
         return fail("REASSIGN_FAILED", result, status_code=400)
+    return ok(result)
+
+
+@router.post("/students/bulk-delete")
+def bulk_delete_students(
+    body: StudentBulkDelete,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("admin")),
+):
+    if not svc.can_delete_student(user):
+        return fail("FORBIDDEN", "仅负责人可删除学生", status_code=403)
+    result = svc.bulk_delete_students(db, body.student_ids)
+    if isinstance(result, str):
+        return fail("BULK_DELETE_FAILED", result, status_code=400)
     return ok(result)
 
 

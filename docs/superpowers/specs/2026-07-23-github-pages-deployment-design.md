@@ -1,4 +1,4 @@
-# 壹号教室 GitHub Pages 部署设计
+# 嘉壹启航 GitHub Pages 部署设计
 
 ## 目标
 
@@ -60,5 +60,5 @@ Pages 网站用于公开分享，不承诺仓库源码保持私密。仓库公�
 - Actions 工作流成功完成
 - Deployments 页面出现 `github-pages` 环境和成功部署
 - GitHub API 返回 Pages 公开 URL
-- 公开 URL 返回成功 HTTP 状态并显示“壹号教室全年运营与宣传执行方案”
+- 公开 URL 返回成功 HTTP 状态并显示“嘉壹启航全年运营与宣传执行方案”
 - 本地测试通过，工作区干净，本地 `master` 与 `origin/master` 一致

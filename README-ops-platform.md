@@ -1,4 +1,4 @@
-# 壹号教室运营工具平台 — 运行说明
+# 嘉壹启航运营工具平台 — 运行说明
 
 Vue 3 + **Element Plus** 前端，FastAPI 后端。当前以 **master** 为准。
 
@@ -145,10 +145,22 @@ IMAGE_API_KEY=sk-你的密钥
 IMAGE_MODEL=dall-e-3
 ```
 
+aihub 等中转站示例（文案/生图可共用同一主机，模型名以中转站列表为准）：
+
+```env
+LLM_BASE_URL=https://aihub.top
+LLM_API_KEY=sk-你的密钥
+LLM_MODEL=gpt-5.6-sol
+
+IMAGE_API_BASE_URL=https://aihub.top
+IMAGE_API_KEY=sk-你的图片密钥
+IMAGE_MODEL=gpt-image-2
+```
+
 注意：
 
-- `LLM_BASE_URL` **不要**写成带 `/v1/chat/completions` 的完整路径，只写主机根（代码会自动加 `/v1/...`）  
-- 若用国内中转，把主机换成中转文档里的 Base URL  
+- `LLM_BASE_URL` / `IMAGE_API_BASE_URL` **不要**写成带 `/v1/...` 的完整路径，只写主机根（代码会自动加路径）  
+- 若用国内中转，把主机换成中转文档里的 Base URL；**图片模型名**须是该站支持的 image 模型（如 `gpt-image-2`），不能照搬 `dall-e-3`  
 - **不要把真实 Key 提交到 Git**（`.env` 已在 `.gitignore`）
 
 3. **必须重启后端**（改 env 后不重启不会生效）：

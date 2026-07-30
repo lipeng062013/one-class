@@ -55,11 +55,8 @@ function fillDemo(username: string, password: string) {
     <el-card class="login-card" shadow="never">
       <template #header>
         <div class="card-header">
-          <div class="logo-mark">壹</div>
-          <div>
-            <h2>壹号教室运营工具</h2>
-            <p>账号密码登录 · 米金轻奢</p>
-          </div>
+          <img class="logo-mark" src="/brand-mark.png" alt="嘉壹启航" width="56" height="56" />
+          <h2>嘉壹启航管理后台</h2>
         </div>
       </template>
 
@@ -154,36 +151,30 @@ function fillDemo(username: string, password: string) {
 
 .card-header {
   display: flex;
+  flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 12px;
+  text-align: center;
+  padding: 8px 0 4px;
 }
 
 .logo-mark {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 18px;
-  color: #f5e6c8;
-  background: #292524;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  object-fit: cover;
   flex-shrink: 0;
-  box-shadow: inset 0 0 0 1px rgba(245, 230, 200, 0.25);
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(161, 98, 7, 0.18), 0 4px 12px rgba(41, 37, 36, 0.08);
 }
 
 .card-header h2 {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 1.25rem;
   color: var(--oc-ink, #44403c);
   font-weight: 700;
-}
-
-.card-header p {
-  margin: 0;
-  color: var(--oc-muted, #78716c);
-  font-size: 0.88rem;
+  letter-spacing: 0.04em;
 }
 
 .submit-btn {

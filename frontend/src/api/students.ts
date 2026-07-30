@@ -118,6 +118,13 @@ export async function deleteStudentApi(id: number): Promise<void> {
   await client.delete(`/students/${id}`)
 }
 
+export async function bulkDeleteStudentsApi(
+  studentIds: number[],
+): Promise<{ deleted_count: number; deleted_ids: number[] }> {
+  const res = await client.post('/students/bulk-delete', { student_ids: studentIds })
+  return res.data.data
+}
+
 export async function reassignStudentsApi(payload: {
   student_ids: number[]
   to_manager_id: number

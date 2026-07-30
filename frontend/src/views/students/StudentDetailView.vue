@@ -14,10 +14,13 @@ import {
   type Student,
 } from '../../api/students'
 import { useAuthStore } from '../../stores/auth'
+import { useBreakpoint } from '../../composables/useBreakpoint'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const { isMobile } = useBreakpoint()
+const descCols = computed(() => (isMobile.value ? 1 : 2))
 
 const loading = ref(false)
 const student = ref<Student | null>(null)
@@ -160,8 +163,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div v-loading="loading">
-    <div class="toolbar">
+  <div v-loading="loading" class="student-detail-page">
+    <div class="page-toolbar">
       <el-page-header @back="router.push('/students')">
         <template #content>
           <span>学生详情{{ student ? ` · ${student.name}` : '' }}</span>
@@ -171,7 +174,7 @@ onUnmounted(() => {
     </div>
 
     <el-card v-if="student" class="profile" shadow="never">
-      <el-descriptions :column="2" border>
+      <el-descriptions :column="descCols" border>
         <el-descriptions-item label="姓名">{{ student.name }}</el-descriptions-item>
         <el-descriptions-item label="年级">{{ student.grade }}</el-descriptions-item>
         <el-descriptions-item label="学校">{{ student.school || '—' }}</el-descriptions-item>
@@ -230,7 +233,7 @@ onUnmounted(() => {
           <el-date-picker v-model="form.class_date" type="datetime" style="width: 100%" />
         </el-form-item>
         <el-form-item label="上课状态" prop="class_status">
-          <el-radio-group v-model="form.class_status">
+          <el-radio-group v-model="form.class_status" class="status-group">
             <el-radio-button v-for="(label, key) in classLabels" :key="key" :value="key">
               {{ label }}
             </el-radio-button>
@@ -269,15 +272,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
-}
-
 .profile {
   margin-bottom: 20px;
   border: 1px solid var(--oc-border, #e8e0d0);
@@ -296,6 +290,27 @@ onUnmounted(() => {
   margin: 0;
   font-size: 1.05rem;
   color: var(--oc-ink, #44403c);
+}
+
+.status-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.status-group :deep(.el-radio-button) {
+  margin: 0;
+}
+
+@media (max-width: 767px) {
+  .section-row .el-button {
+    width: 100%;
+  }
+
+  .thumb {
+    width: 96px;
+    height: 96px;
+  }
 }
 
 .rec-card {

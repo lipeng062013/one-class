@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import {
+  bulkDeleteStudentsApi,
   createStudentApi,
   deleteStudentApi,
   listManagersApi,
@@ -14,13 +15,30 @@ import {
   type StudentStatus,
 } from '../../api/students'
 import { useAuthStore } from '../../stores/auth'
+import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useInfiniteScroll } from '../../composables/useInfiniteScroll'
+
+const LIST_STATE_KEY = 'oc-student-list-state'
+const PAGE_SIZES = [10, 20, 50, 100]
+const SCROLL_CHUNK = 10
 
 const router = useRouter()
 const auth = useAuthStore()
+const { isCompact } = useBreakpoint()
 const loading = ref(false)
 const rows = ref<Student[]>([])
 const managers = ref<ManagerOption[]>([])
 const selectedIds = ref<number[]>([])
+const page = ref(1)
+const pageSize = ref(20)
+
+const {
+  sentinelRef,
+  displayRows: infiniteRows,
+  hasMore: hasMoreInfinite,
+  loadingMore,
+  resetVisible: resetInfinite,
+} = useInfiniteScroll(rows, { chunk: SCROLL_CHUNK, enabled: isCompact })
 
 const filters = reactive({
   grade: '',
@@ -105,11 +123,87 @@ const studentsForReassign = computed(() => {
   })
 })
 
+function restoreListState() {
+  try {
+    const raw = sessionStorage.getItem(LIST_STATE_KEY)
+    if (!raw) return
+    const s = JSON.parse(raw) as {
+      filters?: Partial<typeof filters>
+      page?: number
+      pageSize?: number
+    }
+    if (s.filters) {
+      filters.grade = s.filters.grade ?? ''
+      filters.name = s.filters.name ?? ''
+      filters.phone = s.filters.phone ?? ''
+      filters.school = s.filters.school ?? ''
+      filters.status = s.filters.status ?? 'active'
+      filters.academic_manager_id = s.filters.academic_manager_id
+    }
+    if (typeof s.page === 'number' && s.page > 0) page.value = s.page
+    if (typeof s.pageSize === 'number' && PAGE_SIZES.includes(s.pageSize)) {
+      pageSize.value = s.pageSize
+    }
+  } catch {
+    /* ignore corrupt state */
+  }
+}
+
+function saveListState() {
+  try {
+    sessionStorage.setItem(
+      LIST_STATE_KEY,
+      JSON.stringify({
+        filters: { ...filters },
+        page: page.value,
+        pageSize: pageSize.value,
+      }),
+    )
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+const totalPages = computed(() => Math.max(1, Math.ceil(rows.value.length / pageSize.value) || 1))
+
+const pagedRows = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return rows.value.slice(start, start + pageSize.value)
+})
+
+function clampPage() {
+  if (page.value > totalPages.value) page.value = totalPages.value
+  if (page.value < 1) page.value = 1
+}
+
+function goFirstPage() {
+  page.value = 1
+  saveListState()
+}
+
+function goLastPage() {
+  page.value = totalPages.value
+  saveListState()
+}
+
+function onPageSizeChange() {
+  page.value = 1
+  saveListState()
+}
+
+function onPageChange() {
+  saveListState()
+}
+
 async function loadManagers() {
   managers.value = await listManagersApi(true)
 }
 
-async function load() {
+async function load(opts?: { resetPage?: boolean }) {
+  if (opts?.resetPage) {
+    page.value = 1
+    resetInfinite()
+  }
   loading.value = true
   try {
     const params: Record<string, string | number> = {}
@@ -122,10 +216,17 @@ async function load() {
       params.academic_manager_id = filters.academic_manager_id
     }
     rows.value = await listStudentsApi(params)
+    if (opts?.resetPage || isCompact.value) resetInfinite()
+    clampPage()
+    saveListState()
   } finally {
     loading.value = false
   }
 }
+
+watch(pageSize, () => {
+  clampPage()
+})
 
 function resetForm() {
   form.name = ''
@@ -198,6 +299,33 @@ async function onDelete(row: Student) {
     })
     await deleteStudentApi(row.id)
     ElMessage.success('已删除')
+    selectedIds.value = selectedIds.value.filter((id) => id !== row.id)
+    await load()
+    await loadManagers()
+  } catch {
+    /* cancel or error */
+  }
+}
+
+async function onBulkDelete() {
+  if (!selectedIds.value.length) {
+    ElMessage.warning('请先勾选要删除的学生')
+    return
+  }
+  const names = rows.value
+    .filter((s) => selectedIds.value.includes(s.id))
+    .map((s) => s.name)
+  const preview =
+    names.length <= 5 ? names.join('、') : `${names.slice(0, 5).join('、')} 等 ${names.length} 人`
+  try {
+    await ElMessageBox.confirm(
+      `确定批量删除 ${selectedIds.value.length} 名学生（${preview}）？学情记录将一并删除，且不可恢复。`,
+      '批量删除确认',
+      { type: 'warning', confirmButtonText: '确定删除', cancelButtonText: '取消' },
+    )
+    const result = await bulkDeleteStudentsApi(selectedIds.value)
+    ElMessage.success(`已删除 ${result.deleted_count} 名学生`)
+    selectedIds.value = []
     await load()
     await loadManagers()
   } catch {
@@ -252,6 +380,15 @@ function onSelectionChange(selection: Student[]) {
   selectedIds.value = selection.map((s) => s.id)
 }
 
+function toggleCardSelect(id: number, checked: boolean | string | number) {
+  const on = checked === true || checked === 'true'
+  if (on) {
+    if (!selectedIds.value.includes(id)) selectedIds.value = [...selectedIds.value, id]
+  } else {
+    selectedIds.value = selectedIds.value.filter((x) => x !== id)
+  }
+}
+
 function goDetail(row: Student) {
   router.push(`/students/${row.id}`)
 }
@@ -288,27 +425,43 @@ function resetFilters() {
   filters.school = ''
   filters.status = 'active'
   filters.academic_manager_id = undefined
-  load()
+  load({ resetPage: true })
+}
+
+function runQuery() {
+  load({ resetPage: true })
 }
 
 onMounted(async () => {
+  restoreListState()
   await loadManagers()
   await load()
 })
 </script>
 
 <template>
-  <div>
-    <div class="toolbar">
+  <div class="student-list-page">
+    <div class="page-toolbar">
       <el-page-header content="学生信息" />
-      <el-space wrap>
-        <el-button v-if="canReassign" @click="openReassign()">批量转交学管师</el-button>
+      <el-space wrap class="toolbar-actions">
+        <el-button
+          v-if="canDelete"
+          type="danger"
+          plain
+          :disabled="!selectedIds.length"
+          @click="onBulkDelete"
+        >
+          批量删除{{ selectedIds.length ? `（${selectedIds.length}）` : '' }}
+        </el-button>
+        <el-button v-if="canReassign" @click="openReassign()">
+          批量转交{{ selectedIds.length ? `（${selectedIds.length}）` : '' }}
+        </el-button>
         <el-button type="primary" @click="openCreate">新建学生</el-button>
       </el-space>
     </div>
 
     <el-card class="filters" shadow="never">
-      <el-form :inline="true" @submit.prevent="load">
+      <el-form class="filter-form" :inline="true" @submit.prevent="runQuery">
         <el-form-item label="年级">
           <el-select v-model="filters.grade" clearable placeholder="全部" style="width: 120px">
             <el-option v-for="g in gradeOptions" :key="g" :label="g" :value="g" />
@@ -343,51 +496,108 @@ onMounted(async () => {
         <el-form-item label="学校">
           <el-input v-model="filters.school" clearable placeholder="搜索学校" style="width: 140px" />
         </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="load">查询</el-button>
+        <el-form-item class="filter-actions">
+          <el-button type="primary" @click="runQuery">查询</el-button>
           <el-button @click="resetFilters">重置</el-button>
         </el-form-item>
       </el-form>
     </el-card>
 
-    <el-card v-loading="loading" style="margin-top: 12px">
-      <el-table :data="rows" stripe style="width: 100%" @selection-change="onSelectionChange">
-        <el-table-column v-if="canReassign" type="selection" width="48" />
-        <el-table-column prop="name" label="姓名" min-width="100" />
-        <el-table-column prop="grade" label="年级" width="90" />
-        <el-table-column prop="school" label="学校" min-width="120" show-overflow-tooltip />
-        <el-table-column prop="phone" label="电话" width="120" />
-        <el-table-column prop="parent_name" label="家长" width="90" />
-        <el-table-column label="学管师" min-width="110">
-          <template #default="{ row }">
-            {{ row.academic_manager_name || '—' }}
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag size="small">{{ statusLabels[row.status] || row.status }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="notes" label="备注" min-width="140" show-overflow-tooltip />
-        <el-table-column label="最近学情" min-width="150">
-          <template #default="{ row }">{{ formatTime(row.latest_learning_at) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="goDetail(row)">详情</el-button>
-            <el-button link @click="openEdit(row)">编辑</el-button>
-            <el-button
-              v-if="canReassign"
-              link
-              @click="openReassign([row.id])"
-            >
-              转交
-            </el-button>
-            <el-button v-if="canDelete" link type="danger" @click="onDelete(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+    <!-- 平板 / 手机：卡片 + 滚动加载（每 10 条） -->
+    <div v-if="isCompact" v-loading="loading" class="m-card-list" style="margin-top: 12px">
+      <div v-if="!rows.length && !loading" class="m-card m-card-empty">暂无学生，可点「新建学生」</div>
+      <div v-for="row in infiniteRows" :key="row.id" class="m-card">
+        <div v-if="canDelete || canReassign" class="m-select-row">
+          <el-checkbox
+            :model-value="selectedIds.includes(row.id)"
+            @change="(v: boolean | string | number) => toggleCardSelect(row.id, v)"
+          />
+          <span class="pick-hint">勾选后可批量删除 / 转交</span>
+        </div>
+        <div class="m-card-head">
+          <div class="m-card-title" @click="goDetail(row)">{{ row.name }}</div>
+          <el-tag size="small">{{ statusLabels[row.status] || row.status }}</el-tag>
+        </div>
+        <div class="m-card-meta">
+          <span><span class="k">年级</span> {{ row.grade || '—' }}</span>
+          <span><span class="k">学校</span> {{ row.school || '—' }}</span>
+          <span><span class="k">学管</span> {{ row.academic_manager_name || '—' }}</span>
+          <span v-if="row.phone"><span class="k">电话</span> {{ row.phone }}</span>
+          <span v-if="row.parent_name"><span class="k">家长</span> {{ row.parent_name }}</span>
+          <span v-if="row.latest_learning_at">
+            <span class="k">最近学情</span> {{ formatTime(row.latest_learning_at) }}
+          </span>
+        </div>
+        <div v-if="row.notes" class="m-card-notes">{{ row.notes }}</div>
+        <div class="m-card-actions">
+          <el-button type="primary" size="small" @click="goDetail(row)">详情</el-button>
+          <el-button size="small" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canReassign" size="small" @click="openReassign([row.id])">转交</el-button>
+          <el-button v-if="canDelete" size="small" type="danger" plain @click="onDelete(row)">
+            删除
+          </el-button>
+        </div>
+      </div>
+      <div v-if="rows.length" ref="sentinelRef" class="scroll-sentinel">
+        <span v-if="hasMoreInfinite || loadingMore" class="scroll-hint">
+          {{ loadingMore ? '加载中…' : '上拉加载更多' }}
+        </span>
+        <span v-else class="scroll-hint">已加载全部 {{ rows.length }} 条</span>
+      </div>
+    </div>
+
+    <!-- 桌面：表格 -->
+    <el-card v-else v-loading="loading" style="margin-top: 12px">
+      <div class="table-scroll">
+        <el-table :data="pagedRows" stripe style="width: 100%" @selection-change="onSelectionChange">
+          <el-table-column v-if="canDelete || canReassign" type="selection" width="48" />
+          <el-table-column prop="name" label="姓名" min-width="100" />
+          <el-table-column prop="grade" label="年级" width="90" />
+          <el-table-column prop="school" label="学校" min-width="120" show-overflow-tooltip />
+          <el-table-column prop="phone" label="电话" width="120" />
+          <el-table-column prop="parent_name" label="家长" width="90" />
+          <el-table-column label="学管师" min-width="110">
+            <template #default="{ row }">
+              {{ row.academic_manager_name || '—' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="90">
+            <template #default="{ row }">
+              <el-tag size="small">{{ statusLabels[row.status] || row.status }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="notes" label="备注" min-width="140" show-overflow-tooltip />
+          <el-table-column label="最近学情" min-width="150">
+            <template #default="{ row }">{{ formatTime(row.latest_learning_at) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="220" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="goDetail(row)">详情</el-button>
+              <el-button link @click="openEdit(row)">编辑</el-button>
+              <el-button v-if="canReassign" link @click="openReassign([row.id])">转交</el-button>
+              <el-button v-if="canDelete" link type="danger" @click="onDelete(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
     </el-card>
+
+    <!-- 仅 PC 显示底部分页；wap/pad 用滚动加载 -->
+    <div v-if="!isCompact && rows.length" class="pager-bar">
+      <el-button size="small" :disabled="page <= 1" @click="goFirstPage">首页</el-button>
+      <el-pagination
+        v-model:current-page="page"
+        v-model:page-size="pageSize"
+        :page-sizes="PAGE_SIZES"
+        :total="rows.length"
+        :pager-count="5"
+        background
+        layout="total, sizes, prev, pager, next, jumper"
+        @current-change="onPageChange"
+        @size-change="onPageSizeChange"
+      />
+      <el-button size="small" :disabled="page >= totalPages" @click="goLastPage">末页</el-button>
+    </div>
 
     <!-- 新建 / 编辑 -->
     <el-dialog
@@ -527,15 +737,6 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
-}
-
 .filters {
   background: var(--oc-card, #fffdf8);
   border: 1px solid var(--oc-border, #e8e0d0);
@@ -543,6 +744,62 @@ onMounted(async () => {
 
 .hint {
   margin-top: 6px;
+  font-size: 12px;
+  color: var(--oc-muted, #78716c);
+}
+
+.pick-hint {
+  font-size: 12px;
+  color: var(--oc-muted, #78716c);
+}
+
+.m-card-title {
+  cursor: pointer;
+}
+
+.m-card-notes {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--oc-muted, #78716c);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.m-card-actions .el-button {
+  min-height: 32px;
+}
+
+.pager-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 4px 0 8px;
+}
+
+.pager-bar :deep(.el-pagination) {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 8px;
+}
+
+@media (max-width: 767px) {
+  .pager-bar {
+    justify-content: center;
+  }
+}
+
+.scroll-sentinel {
+  padding: 16px 8px 28px;
+  text-align: center;
+}
+
+.scroll-hint {
   font-size: 12px;
   color: var(--oc-muted, #78716c);
 }

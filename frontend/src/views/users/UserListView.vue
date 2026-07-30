@@ -2,6 +2,9 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { createUserApi, listUsersApi, patchUserApi, resetPasswordApi, type UserRow } from '../../api/users'
+import { useBreakpoint } from '../../composables/useBreakpoint'
+
+const { isCompact } = useBreakpoint()
 
 const loading = ref(false)
 const rows = ref<UserRow[]>([])
@@ -167,13 +170,13 @@ onMounted(load)
 
 <template>
   <div>
-    <div class="toolbar">
+    <div class="page-toolbar">
       <el-page-header content="用户管理" />
       <el-button type="primary" @click="openCreate">新建用户</el-button>
     </div>
 
     <el-card class="filters" shadow="never" style="margin-top: 12px">
-      <el-form :inline="true" @submit.prevent="load">
+      <el-form class="filter-form" :inline="true" @submit.prevent="load">
         <el-form-item label="角色">
           <el-select v-model="filters.role" clearable placeholder="全部" style="width: 120px">
             <el-option label="负责人" value="admin" />
@@ -193,36 +196,60 @@ onMounted(load)
         <el-form-item label="显示名">
           <el-input v-model="filters.display_name" clearable placeholder="搜索" style="width: 120px" />
         </el-form-item>
-        <el-form-item>
+        <el-form-item class="filter-actions">
           <el-button type="primary" @click="load">查询</el-button>
           <el-button @click="resetFilters">重置</el-button>
         </el-form-item>
       </el-form>
     </el-card>
 
-    <el-card style="margin-top: 12px">
-      <el-table v-loading="loading" :data="rows" stripe style="width: 100%">
-        <el-table-column prop="username" label="用户名" min-width="120" />
-        <el-table-column prop="display_name" label="显示名" min-width="120" />
-        <el-table-column label="角色" min-width="100">
-          <template #default="{ row }">{{ roleLabel[row.role] || row.role }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.is_active ? 'success' : 'info'">
-              {{ row.is_active ? '启用' : '停用' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" min-width="220" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openReset(row)">重置密码</el-button>
-            <el-button link type="warning" @click="toggleActive(row)">
-              {{ row.is_active ? '停用' : '启用' }}
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+    <div v-if="isCompact" v-loading="loading" class="m-card-list" style="margin-top: 12px">
+      <div v-if="!rows.length && !loading" class="m-card m-card-empty">暂无用户</div>
+      <div v-for="row in rows" :key="row.id" class="m-card">
+        <div class="m-card-head">
+          <div class="m-card-title">{{ row.display_name || row.username }}</div>
+          <el-tag :type="row.is_active ? 'success' : 'info'" size="small">
+            {{ row.is_active ? '启用' : '停用' }}
+          </el-tag>
+        </div>
+        <div class="m-card-meta">
+          <span><span class="k">用户名</span> {{ row.username }}</span>
+          <span><span class="k">角色</span> {{ roleLabel[row.role] || row.role }}</span>
+        </div>
+        <div class="m-card-actions">
+          <el-button size="small" type="primary" @click="openReset(row)">重置密码</el-button>
+          <el-button size="small" type="warning" plain @click="toggleActive(row)">
+            {{ row.is_active ? '停用' : '启用' }}
+          </el-button>
+        </div>
+      </div>
+    </div>
+
+    <el-card v-else style="margin-top: 12px">
+      <div class="table-scroll">
+        <el-table v-loading="loading" :data="rows" stripe style="width: 100%">
+          <el-table-column prop="username" label="用户名" min-width="120" />
+          <el-table-column prop="display_name" label="显示名" min-width="120" />
+          <el-table-column label="角色" min-width="100">
+            <template #default="{ row }">{{ roleLabel[row.role] || row.role }}</template>
+          </el-table-column>
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag :type="row.is_active ? 'success' : 'info'">
+                {{ row.is_active ? '启用' : '停用' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" min-width="220" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openReset(row)">重置密码</el-button>
+              <el-button link type="warning" @click="toggleActive(row)">
+                {{ row.is_active ? '停用' : '启用' }}
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
     </el-card>
 
     <el-dialog v-model="createVisible" title="新建用户" width="90%" style="max-width: 480px" destroy-on-close>
@@ -286,14 +313,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
 .filters {
   border: 1px solid var(--oc-border, #e8e0d0);
   background: var(--oc-card, #fffdf8);

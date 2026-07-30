@@ -135,7 +135,7 @@ def _build_llm_messages(
     knowledge: str,
 ) -> list[dict[str, str]]:
     system = (
-        "你是壹号教室的小红书文案助手。输出可直接发布的中文文案，不要解释。"
+        "你是嘉壹启航的小红书文案助手。输出可直接发布的中文文案，不要解释。"
         "遵守品牌语气与禁用词约束。"
     )
     if knowledge:
@@ -180,7 +180,7 @@ def _friendly_llm_error(exc: BaseException) -> str:
 
 def _fallback_copy_body(context: dict[str, Any], extra_instruction: str | None) -> str:
     parts = [
-        f"【{context.get('title') or '壹号教室'}】",
+        f"【{context.get('title') or '嘉壹启航'}】",
         f"痛点：{context.get('pain_point') or '—'}",
         f"老师怎么做：{context.get('teacher_action') or '—'}",
         f"下一步：{context.get('next_step') or '—'}",

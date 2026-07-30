@@ -179,6 +179,23 @@ def delete_student(db: Session, student: Student) -> None:
     db.commit()
 
 
+def bulk_delete_students(db: Session, student_ids: list[int]) -> dict | str:
+    ids = list(dict.fromkeys(student_ids))  # preserve order, unique
+    if not ids:
+        return "请选择要删除的学生"
+    students = db.query(Student).filter(Student.id.in_(ids)).all()
+    if not students:
+        return "未找到要删除的学生"
+    found = {s.id for s in students}
+    missing = [i for i in ids if i not in found]
+    if missing:
+        return f"部分学生不存在: {missing}"
+    for s in students:
+        db.delete(s)
+    db.commit()
+    return {"deleted_count": len(students), "deleted_ids": sorted(found)}
+
+
 def reassign_students(
     db: Session,
     *,

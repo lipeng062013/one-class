@@ -1,8 +1,8 @@
-# 壹号教室运营指导互动网页 Implementation Plan
+# 嘉壹启航运营指导互动网页 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 创建一个可直接发送、离线打开、适配手机与桌面的单文件中文互动网页，完整呈现已确认的壹号教室全年运营指导。
+**Goal:** 创建一个可直接发送、离线打开、适配手机与桌面的单文件中文互动网页，完整呈现已确认的嘉壹启航全年运营指导。
 
 **Architecture:** 交付物是根目录下的一个自包含 HTML 文件，语义化 HTML 承载全部内容，内联 CSS 负责响应式与打印布局，内联 JavaScript 只负责目录、章节展开、打印和本地任务清单。使用 Node 内置测试做结构与内容回归检查，再用真实浏览器验证桌面、手机和打印行为。
 
@@ -45,7 +45,7 @@ test('delivers a standalone Chinese operations guide', async () => {
   const html = await loadHtml();
   assert.match(html, /<html lang="zh-CN">/);
   assert.match(html, /<meta name="viewport"/);
-  assert.match(html, /壹号教室全年运营/);
+  assert.match(html, /嘉壹启航全年运营/);
   assert.doesNotMatch(html, /<script[^>]+src=/i);
   assert.doesNotMatch(html, /<link[^>]+rel=["']stylesheet/i);
 });
@@ -111,7 +111,7 @@ git commit -m "test: define operations guide contract"
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>壹号教室全年运营指导</title>
+  <title>嘉壹启航全年运营指导</title>
   <style>
     :root { color-scheme: light; }
     * { box-sizing: border-box; }
@@ -119,7 +119,7 @@ git commit -m "test: define operations guide contract"
   </style>
 </head>
 <body>
-  <header class="topbar">壹号教室全年运营指导</header>
+  <header class="topbar">嘉壹启航全年运营指导</header>
   <div class="app-shell">
     <nav class="sidebar" aria-label="章节导航"></nav>
     <main id="main-content">

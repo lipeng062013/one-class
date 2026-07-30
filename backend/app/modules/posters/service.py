@@ -111,10 +111,34 @@ def serialize_poster(
 
 def _friendly_image_error(exc: BaseException) -> str:
     text = str(exc)
-    if "not configured" in text.lower():
+    lower = text.lower()
+    if "not configured" in lower:
         return (
             "图片大模型未配置：请在 .env 填写 IMAGE_API_BASE_URL、IMAGE_API_KEY "
             "（可选 IMAGE_MODEL）后重启后端。本次已改用本地版式导出。"
+        )
+    if any(
+        token in lower
+        for token in (
+            "connect failed",
+            "unexpected_eof",
+            "ssl",
+            "getaddrinfo",
+            "name or service not known",
+            "nodename nor servname",
+            "non-existent domain",
+        )
+    ):
+        return (
+            "图片 API 无法连接（域名/SSL/网络异常）。请确认 IMAGE_API_BASE_URL 可解析且可访问 "
+            "（aihub 中转请用 https://aihub.top，不要用不存在的 imgapi 子域），"
+            "并设置可用的 IMAGE_MODEL（如 gpt-image-2）后重启后端。本次已改用本地版式导出。"
+        )
+    if "http 400" in lower and "image model" in lower:
+        return (
+            "图片模型不正确：当前 IMAGE_MODEL 不是该中转站的图片模型。"
+            "请改为 gpt-image-2 / gpt-image-1 等（可在中转站模型列表查看）后重启后端。"
+            f" 原始原因：{text}"
         )
     return f"图片 API 调用失败，已改用本地版式导出。原因：{text}"
 

@@ -80,7 +80,6 @@ onMounted(load)
           ；海报生图
           {{ integrations.image.configured ? `已配置（${integrations.image.model || '默认'}）` : '未配置（可用版式）' }}
         </template>
-        在 `.env` 填写 `LLM_*` / `IMAGE_*` 后重启后端即可；密钥不会出现在前端。
       </el-alert>
 
       <el-row :gutter="16" class="lower-row">
@@ -100,6 +99,7 @@ onMounted(load)
               <el-button @click="router.push('/posters/generate')">生成海报</el-button>
               <el-button @click="router.push('/leads')">线索</el-button>
               <el-button @click="router.push('/knowledge/scripts')">成长中心</el-button>
+              <el-button @click="router.push('/office')">综合办公表</el-button>
               <el-button v-if="auth.isAdmin" @click="router.push('/users')">用户</el-button>
               <el-button v-if="auth.isAdmin" @click="router.push('/students')">学生</el-button>
             </el-space>
@@ -114,17 +114,20 @@ onMounted(load)
               </div>
             </template>
             <el-empty v-if="!pending.length" description="暂无待处理素材" />
-            <el-table
-              v-else
-              :data="pending"
-              size="small"
-              style="cursor: pointer"
-              @row-click="(row: Material) => router.push(`/materials/${row.id}`)"
-            >
-              <el-table-column prop="title" label="标题" />
-              <el-table-column prop="grade" label="年级" width="90" />
-              <el-table-column prop="auth_status" label="授权" width="100" />
-            </el-table>
+            <div v-else class="pending-list">
+              <div
+                v-for="row in pending"
+                :key="row.id"
+                class="pending-item"
+                @click="router.push(`/materials/${row.id}`)"
+              >
+                <div class="pending-title">{{ row.title }}</div>
+                <div class="pending-meta">
+                  <span>{{ row.grade || '—' }}</span>
+                  <span>{{ row.auth_status }}</span>
+                </div>
+              </div>
+            </div>
           </el-card>
         </el-col>
       </el-row>
@@ -198,6 +201,40 @@ onMounted(load)
 
 .panel-card {
   margin-bottom: 12px;
+}
+
+.pending-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pending-item {
+  padding: 10px 12px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 8px;
+  cursor: pointer;
+  background: #fff;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.pending-item:hover {
+  border-color: var(--el-color-primary-light-5);
+  background: #faf6ee;
+}
+
+.pending-title {
+  font-weight: 600;
+  color: var(--oc-ink, #44403c);
+  font-size: 14px;
+}
+
+.pending-meta {
+  margin-top: 4px;
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--oc-muted, #78716c);
 }
 
 .role-tag {

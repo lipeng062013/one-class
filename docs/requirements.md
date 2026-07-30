@@ -1,4 +1,4 @@
-# 壹号教室运营工具平台 · 需求清单
+# 嘉壹启航运营工具平台 · 需求清单
 
 > **文档用途：** 产品需求的「单一事实来源」。后续增删、改优先级、拆分/合并需求，直接改本文件即可。  
 > **关联规格：** [V1 设计规格](./superpowers/specs/2026-07-28-one-class-ops-platform-design.md) · [认证细化](./superpowers/specs/2026-07-29-auth-element-ui-rebuild-design.md) · [米金 UI](./superpowers/specs/2026-07-29-mijin-luxury-ui-polish-design.md) · [学生与学情](./superpowers/specs/2026-07-29-students-learning-records-design.md)  

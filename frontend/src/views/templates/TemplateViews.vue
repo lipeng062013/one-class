@@ -102,9 +102,9 @@ onMounted(load)
 
 <template>
   <div>
-    <div class="toolbar">
+    <div class="page-toolbar">
       <el-page-header content="模板管理" />
-      <el-space>
+      <el-space wrap>
         <el-button v-if="tab === 'copies'" type="primary" @click="copyDialog = true">新建文案模板</el-button>
         <el-button v-else type="primary" @click="posterDialog = true">新建海报模板</el-button>
       </el-space>
@@ -113,32 +113,36 @@ onMounted(load)
     <el-card style="margin-top: 16px" v-loading="loading">
       <el-tabs v-model="tab">
         <el-tab-pane label="文案模板" name="copies">
-          <el-table :data="copies" stripe>
-            <el-table-column prop="name" label="名称" min-width="140" />
-            <el-table-column prop="scene" label="场景" width="120" />
-            <el-table-column label="系统" width="90">
-              <template #default="{ row }">
-                <el-tag :type="row.is_system ? 'warning' : 'info'" size="small">
-                  {{ row.is_system ? '系统' : '自定义' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="body" label="正文" min-width="220" show-overflow-tooltip />
-          </el-table>
+          <div class="table-scroll">
+            <el-table :data="copies" stripe>
+              <el-table-column prop="name" label="名称" min-width="140" />
+              <el-table-column prop="scene" label="场景" width="120" />
+              <el-table-column label="系统" width="90">
+                <template #default="{ row }">
+                  <el-tag :type="row.is_system ? 'warning' : 'info'" size="small">
+                    {{ row.is_system ? '系统' : '自定义' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="body" label="正文" min-width="220" show-overflow-tooltip />
+            </el-table>
+          </div>
         </el-tab-pane>
         <el-tab-pane label="海报模板" name="posters">
-          <el-table :data="posters" stripe>
-            <el-table-column prop="name" label="名称" min-width="140" />
-            <el-table-column prop="scene" label="场景" width="120" />
-            <el-table-column label="系统" width="90">
-              <template #default="{ row }">
-                <el-tag :type="row.is_system ? 'warning' : 'info'" size="small">
-                  {{ row.is_system ? '系统' : '自定义' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="layout_json" label="版式 JSON" min-width="220" show-overflow-tooltip />
-          </el-table>
+          <div class="table-scroll">
+            <el-table :data="posters" stripe>
+              <el-table-column prop="name" label="名称" min-width="140" />
+              <el-table-column prop="scene" label="场景" width="120" />
+              <el-table-column label="系统" width="90">
+                <template #default="{ row }">
+                  <el-tag :type="row.is_system ? 'warning' : 'info'" size="small">
+                    {{ row.is_system ? '系统' : '自定义' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="layout_json" label="版式 JSON" min-width="220" show-overflow-tooltip />
+            </el-table>
+          </div>
         </el-tab-pane>
       </el-tabs>
     </el-card>
@@ -173,12 +177,4 @@ onMounted(load)
   </div>
 </template>
 
-<style scoped>
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-</style>
+

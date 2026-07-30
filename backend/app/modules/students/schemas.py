@@ -36,6 +36,12 @@ class StudentReassign(BaseModel):
     from_manager_id: Optional[int] = None  # 可选校验：仅转交该学管师名下
 
 
+class StudentBulkDelete(BaseModel):
+    """批量删除学生（学情记录一并删除）。"""
+
+    student_ids: list[int] = Field(min_length=1)
+
+
 class StudentOut(BaseModel):
     id: int
     name: str
