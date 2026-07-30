@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session, joinedload
 
-from app.core.storage import LocalStorage
+from app.core.storage import Storage
 from app.models.material import Material, MaterialFile
 from app.models.user import User
 from app.modules.materials.schemas import AUTH_STATUSES, STATUSES
@@ -126,7 +126,7 @@ def delete_material(db: Session, material: Material) -> None:
 
 def add_file(
     db: Session,
-    storage: LocalStorage,
+    storage: Storage,
     material: Material,
     *,
     filename: str,

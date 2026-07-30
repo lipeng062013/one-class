@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7
     storage_root: str = "./data/uploads"
+    # local = disk under storage_root; oss = Aliyun OSS (private, API-proxied)
+    storage_backend: str = "local"
+
+    # Aliyun OSS (shared with backup scripts; upload prefix for business files)
+    oss_endpoint: str = ""
+    oss_access_key_id: str = ""
+    oss_access_key_secret: str = ""
+    oss_bucket: str = ""
+    oss_upload_prefix: str = "one-class/uploads/"
 
     # OpenAI-compatible chat API (many 中转站 / 国内兼容接口)
     # Client calls: {LLM_BASE_URL}/v1/chat/completions

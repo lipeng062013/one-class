@@ -9,7 +9,7 @@ from fastapi import HTTPException, status
 from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy.orm import Session
 
-from app.core.storage import LocalStorage
+from app.core.storage import get_storage
 from app.integrations import image_api
 from app.integrations.image_api import ImageApiUnavailable
 from app.models.material import Material
@@ -179,7 +179,7 @@ def generate_poster(db: Session, user: User, body: GeneratePosterRequest) -> dic
             png_bytes = _render_layout()
             effective_mode = "layout"
 
-    storage = LocalStorage()
+    storage = get_storage()
     relative_path = f"posters/{uuid.uuid4().hex}.png"
     storage.save(relative_path, png_bytes)
 

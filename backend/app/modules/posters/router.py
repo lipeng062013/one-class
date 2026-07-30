@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.deps import get_current_user, require_roles
 from app.core.responses import ok
-from app.core.storage import LocalStorage
+from app.core.storage import get_storage
 from app.models.user import User
 from app.modules.posters import service
 from app.modules.posters.schemas import GeneratePosterRequest
@@ -55,7 +55,7 @@ def stream_poster_file(
     if not poster.file_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Poster file not found")
 
-    storage = LocalStorage()
+    storage = get_storage()
     try:
         data = storage.read(poster.file_path)
     except FileNotFoundError as exc:

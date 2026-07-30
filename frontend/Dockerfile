@@ -4,7 +4,8 @@ FROM node:22-alpine AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci
+# npmmirror 降低国内构建时 npm 超时概率
+RUN npm ci --registry=https://registry.npmmirror.com
 
 COPY . .
 

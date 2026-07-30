@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from app.core.storage import LocalStorage
+from app.core.storage import Storage
 from app.models.student import LearningRecord, LearningRecordFile, Student
 from app.models.user import User
 from app.modules.students.schemas import CLASS_STATUSES, STUDENT_STATUSES
@@ -362,7 +362,7 @@ def delete_learning_record(db: Session, user: User, record: LearningRecord) -> s
 
 def add_learning_file(
     db: Session,
-    storage: LocalStorage,
+    storage: Storage,
     record: LearningRecord,
     *,
     filename: str,

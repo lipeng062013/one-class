@@ -2,9 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install deps first for better layer cache
+# Install deps first for better layer cache.
+# Use Aliyun PyPI mirror (Docker Hub Hub 已加速时，pip 仍常卡在 pypi.org).
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir \
+    -i https://mirrors.aliyun.com/pypi/simple/ \
+    --trusted-host mirrors.aliyun.com \
+    -r requirements.txt
 
 COPY app ./app
 

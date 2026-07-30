@@ -12,7 +12,7 @@ from fpdf.enums import XPos, YPos
 from PIL import Image
 from sqlalchemy.orm import Session, joinedload
 
-from app.core.storage import LocalStorage
+from app.core.storage import Storage, get_storage
 from app.models.student import LearningRecord, LearningRecordFile, Student
 from app.models.user import User
 
@@ -187,7 +187,7 @@ class GrowthReportPDF(FPDF):
 
 def build_growth_report_pdf(db: Session, student: Student) -> tuple[bytes, str]:
     """Return (pdf_bytes, download_filename)."""
-    storage = LocalStorage()
+    storage = get_storage()
     manager_name = "—"
     if student.academic_manager_id:
         u = db.get(User, student.academic_manager_id)
@@ -301,7 +301,7 @@ def build_growth_report_pdf(db: Session, student: Student) -> tuple[bytes, str]:
 def _render_record_card(
     pdf: GrowthReportPDF,
     db: Session,
-    storage: LocalStorage,
+    storage: Storage,
     record: LearningRecord,
     index: int,
     font_family: str,
@@ -420,7 +420,7 @@ def _render_record_card(
 
 def _embed_images(
     pdf: GrowthReportPDF,
-    storage: LocalStorage,
+    storage: Storage,
     files: list[LearningRecordFile],
     x0: float,
     max_w: float,

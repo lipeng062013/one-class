@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.responses import fail, ok
-from app.core.storage import LocalStorage, get_storage
+from app.core.storage import Storage, get_storage
 from app.models.material import MaterialFile
 from app.models.user import User
 from app.modules.materials.schemas import MaterialCreate, MaterialUpdate
@@ -63,7 +63,7 @@ def download_material_file(
     file_id: int,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-    storage: LocalStorage = Depends(get_storage),
+    storage: Storage = Depends(get_storage),
 ):
     mf = db.get(MaterialFile, file_id)
     if not mf:
@@ -144,7 +144,7 @@ async def upload_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-    storage: LocalStorage = Depends(get_storage),
+    storage: Storage = Depends(get_storage),
 ):
     m = get_material(db, material_id)
     if not m:

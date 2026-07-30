@@ -95,6 +95,14 @@ docker compose down --rmi local  # 可选：顺带删本地构建的镜像
 4. 访问 `http://服务器IP:8080`；需要再绑域名与 HTTPS 时，在前面加反向代理即可
 
 本机与服务器共用：`docker-compose.yml`、`backend/Dockerfile`、`frontend/Dockerfile`、`frontend/nginx.conf`。
+
+### 自动部署（GitHub push → 阿里云）+ OSS 备份
+
+- **操作手册（小白逐步）：** [docs/ops-auto-deploy.md](docs/ops-auto-deploy.md)
+- **待办日志：** [docs/ops-backlog.md](docs/ops-backlog.md)
+- **Workflow：** `.github/workflows/deploy-server.yml`（`master` push 经 **SSH** 执行远程部署）
+- **脚本：** `scripts/deploy/remote-deploy.sh`、`scripts/backup/backup-to-oss.sh`
+- **注意：** Linux 登录用户（如 `admin@服务器`）≠ 网站登录账号 `admin`；`.env` 只放服务器/本机，不进 Git
 ## 可选 AI：为什么报错、怎么真正用上大模型
 
 ### 报错原因（你截图里的 503）
