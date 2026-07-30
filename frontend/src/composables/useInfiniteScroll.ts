@@ -12,12 +12,14 @@ export function useInfiniteScroll<T>(
     chunk?: number
     /** 仅在 enabled 为 true 时观察（如 isCompact） */
     enabled?: Ref<boolean>
+    /** 可选：由页面声明并在模板 ref 绑定，避免解构后被 noUnusedLocals 误报 */
+    sentinelRef?: Ref<HTMLElement | null>
   },
 ) {
   const chunk = options?.chunk ?? DEFAULT_CHUNK
   const enabled = options?.enabled
   const visibleCount = ref(chunk)
-  const sentinelRef = ref<HTMLElement | null>(null)
+  const sentinelRef = options?.sentinelRef ?? ref<HTMLElement | null>(null)
   const loadingMore = ref(false)
   let observer: IntersectionObserver | null = null
 

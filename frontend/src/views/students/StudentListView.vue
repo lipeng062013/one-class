@@ -32,13 +32,13 @@ const selectedIds = ref<number[]>([])
 const page = ref(1)
 const pageSize = ref(20)
 
+const sentinelRef = ref<HTMLElement | null>(null)
 const {
-  sentinelRef,
   displayRows: infiniteRows,
   hasMore: hasMoreInfinite,
   loadingMore,
   resetVisible: resetInfinite,
-} = useInfiniteScroll(rows, { chunk: SCROLL_CHUNK, enabled: isCompact })
+} = useInfiniteScroll(rows, { chunk: SCROLL_CHUNK, enabled: isCompact, sentinelRef })
 
 const filters = reactive({
   grade: '',

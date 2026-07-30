@@ -85,13 +85,13 @@ const sorted = computed(() =>
   }),
 )
 
+const sentinelRef = ref<HTMLElement | null>(null)
 const {
-  sentinelRef,
   displayRows: infiniteRows,
   hasMore: hasMoreInfinite,
   loadingMore,
   resetVisible: resetInfinite,
-} = useInfiniteScroll(sorted, { chunk: SCROLL_CHUNK, enabled: isCompact })
+} = useInfiniteScroll(sorted, { chunk: SCROLL_CHUNK, enabled: isCompact, sentinelRef })
 
 const totalPages = computed(() => Math.max(1, Math.ceil(sorted.value.length / pageSize.value) || 1))
 
