@@ -194,7 +194,14 @@ async function onUploadMore(options: UploadRequestOptions) {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : '上传失败'
     ElMessage.error(msg)
-    options.onError?.(e as Error)
+    // el-upload http-request 的 onError 需要 UploadAjaxError 形态（status/method/url）
+    options.onError?.(
+      Object.assign(new Error(msg), {
+        status: 500,
+        method: 'POST',
+        url: '',
+      }) as Parameters<UploadRequestOptions['onError']>[0],
+    )
   } finally {
     uploading.value = false
   }

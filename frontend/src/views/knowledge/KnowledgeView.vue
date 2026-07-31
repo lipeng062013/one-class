@@ -160,14 +160,14 @@ const {
   loadingMore,
   visibleCount,
   resetVisible: resetInfinite,
-  ensureVisible,
 } = useInfiniteScroll(filtered, {
   chunk: SCROLL_CHUNK,
   enabled: isCompact,
   sentinelRef,
 })
 
-const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('knowledge', {
+// 知识库无独立详情页，不恢复滚动；仅用 finishListEnter 回顶
+const { finishListEnter, clearSnapshot } = useListScrollRestore('knowledge', {
   visibleCount,
   enabled: isCompact,
 })
