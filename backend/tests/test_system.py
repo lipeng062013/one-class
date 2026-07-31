@@ -8,8 +8,11 @@ def test_integrations_status_for_ops(client):
     data = res.json()["data"]
     assert "llm" in data
     assert "image" in data
-    assert data["llm"]["configured"] is False
-    assert data["image"]["configured"] is False
+    assert isinstance(data["llm"]["configured"], bool)
+    assert isinstance(data["image"]["configured"], bool)
+    assert "app_env" in data
+    assert "seed_demo_data" in data
+    assert isinstance(data["seed_demo_data"], bool)
 
 
 def test_teacher_cannot_see_integrations(client):

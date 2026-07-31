@@ -1,18 +1,74 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { ElMessageBox } from 'element-plus'
-import { deleteMaterialApi, listMaterialsApi, patchMaterialApi, type Material } from '../../api/materials'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import {
+  ElMessage,
+  ElMessageBox,
+  type FormInstance,
+  type FormRules,
+  type UploadUserFile,
+} from 'element-plus'
+import {
+  createMaterialApi,
+  deleteMaterialApi,
+  listMaterialsApi,
+  patchMaterialApi,
+  uploadMaterialFileApi,
+  type Material,
+} from '../../api/materials'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useInfiniteScroll } from '../../composables/useInfiniteScroll'
+import { useListScrollRestore } from '../../composables/useListScrollRestore'
 
+const LIST_STATE_KEY = 'oc-material-list-state'
+const PAGE_SIZES = [10, 20, 50, 100]
+const SCROLL_CHUNK = 10
+
+const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const { isCompact } = useBreakpoint()
+
+const pcHeaderStyle = {
+  background: '#f5f0e6',
+  color: '#44403c',
+  fontWeight: '600',
+  borderBottomColor: '#e8e0d0',
+}
+
 const loading = ref(false)
 const rows = ref<Material[]>([])
-const statusFilter = ref('')
+const page = ref(1)
+const pageSize = ref(20)
+const filterExpanded = ref(false)
+
+const filters = reactive({
+  status: '',
+  q: '',
+  grade: '',
+  subject: '',
+})
+
+const uploadDialog = ref(false)
+const uploadFormRef = ref<FormInstance>()
+const saving = ref(false)
+const fileList = ref<UploadUserFile[]>([])
+
+const uploadForm = reactive({
+  title: '',
+  grade: '',
+  subject: '',
+  pain_point: '',
+  teacher_action: '',
+  next_step: '',
+  auth_status: 'authorized',
+})
+
+const uploadRules: FormRules = {
+  title: [{ required: true, message: '请填写场景标题', trigger: 'blur' }],
+  auth_status: [{ required: true, message: '请选择授权状态', trigger: 'change' }],
+}
 
 const statusLabel: Record<string, string> = {
   new: '新建',
@@ -27,17 +83,212 @@ const authLabel: Record<string, string> = {
   anonymized: '已脱敏',
 }
 
-const filtered = computed(() => {
-  if (!statusFilter.value) return rows.value
-  return rows.value.filter((r) => r.status === statusFilter.value)
+function statusTagType(status: string): 'success' | 'warning' | 'info' | 'danger' | 'primary' {
+  if (status === 'usable') return 'success'
+  if (status === 'new') return 'primary'
+  if (status === 'used') return 'warning'
+  return 'info'
+}
+
+function authTagType(auth: string): 'success' | 'warning' | 'info' | 'danger' {
+  if (auth === 'authorized') return 'success'
+  if (auth === 'pending') return 'warning'
+  if (auth === 'denied') return 'danger'
+  return 'info'
+}
+
+const activeFilterCount = computed(() => {
+  let n = 0
+  if (filters.status) n += 1
+  if (filters.q.trim()) n += 1
+  if (filters.grade.trim()) n += 1
+  if (filters.subject.trim()) n += 1
+  return n
 })
 
-async function load() {
+const filtered = computed(() => {
+  const q = filters.q.trim().toLowerCase()
+  return rows.value.filter((r) => {
+    if (filters.status && r.status !== filters.status) return false
+    if (filters.grade.trim() && !(r.grade || '').includes(filters.grade.trim())) return false
+    if (filters.subject.trim() && !(r.subject || '').includes(filters.subject.trim())) return false
+    if (!q) return true
+    const hay = `${r.title} ${r.grade || ''} ${r.subject || ''} ${r.pain_point || ''}`.toLowerCase()
+    return hay.includes(q)
+  })
+})
+
+const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize.value) || 1))
+
+const pagedRows = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return filtered.value.slice(start, start + pageSize.value)
+})
+
+const sentinelRef = ref<HTMLElement | null>(null)
+const {
+  displayRows: infiniteRows,
+  hasMore: hasMoreInfinite,
+  loadingMore,
+  visibleCount,
+  resetVisible: resetInfinite,
+  ensureVisible,
+} = useInfiniteScroll(filtered, {
+  chunk: SCROLL_CHUNK,
+  enabled: isCompact,
+  sentinelRef,
+})
+
+const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('materials', {
+  visibleCount,
+  enabled: isCompact,
+})
+
+function clampPage() {
+  if (page.value > totalPages.value) page.value = totalPages.value
+  if (page.value < 1) page.value = 1
+}
+
+function goFirstPage() {
+  page.value = 1
+  saveListState()
+}
+
+function goLastPage() {
+  page.value = totalPages.value
+  saveListState()
+}
+
+function onPageChange() {
+  saveListState()
+}
+
+function onPageSizeChange() {
+  page.value = 1
+  saveListState()
+}
+
+function restoreListState() {
+  try {
+    const raw = sessionStorage.getItem(LIST_STATE_KEY)
+    if (!raw) return
+    const s = JSON.parse(raw) as {
+      filters?: Partial<typeof filters>
+      page?: number
+      pageSize?: number
+    }
+    if (s.filters) {
+      filters.status = s.filters.status ?? ''
+      filters.q = s.filters.q ?? ''
+      filters.grade = s.filters.grade ?? ''
+      filters.subject = s.filters.subject ?? ''
+    }
+    if (typeof s.page === 'number' && s.page > 0) page.value = s.page
+    if (typeof s.pageSize === 'number' && PAGE_SIZES.includes(s.pageSize)) {
+      pageSize.value = s.pageSize
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function saveListState() {
+  try {
+    sessionStorage.setItem(
+      LIST_STATE_KEY,
+      JSON.stringify({
+        filters: { ...filters },
+        page: page.value,
+        pageSize: pageSize.value,
+      }),
+    )
+  } catch {
+    /* ignore */
+  }
+}
+
+function runQuery() {
+  clearSnapshot()
+  page.value = 1
+  filterExpanded.value = false
+  resetInfinite()
+  clampPage()
+  saveListState()
+}
+
+function resetFilters() {
+  clearSnapshot()
+  filters.status = ''
+  filters.q = ''
+  filters.grade = ''
+  filters.subject = ''
+  page.value = 1
+  filterExpanded.value = false
+  resetInfinite()
+  saveListState()
+}
+
+function toggleFilterExpand() {
+  filterExpanded.value = !filterExpanded.value
+}
+
+function resetUploadForm() {
+  uploadForm.title = ''
+  uploadForm.grade = ''
+  uploadForm.subject = ''
+  uploadForm.pain_point = ''
+  uploadForm.teacher_action = ''
+  uploadForm.next_step = ''
+  uploadForm.auth_status = 'authorized'
+  fileList.value = []
+}
+
+async function openUpload() {
+  resetUploadForm()
+  uploadDialog.value = true
+  await nextTick()
+  uploadFormRef.value?.clearValidate()
+}
+
+async function load(opts?: { fromQuery?: boolean }) {
+  const snap = opts?.fromQuery ? null : takeSnapshotForLoad(route.path)
+  if (opts?.fromQuery) clearSnapshot()
+
   loading.value = true
   try {
     rows.value = await listMaterialsApi()
+    if (snap?.visibleCount != null && isCompact.value) {
+      ensureVisible(snap.visibleCount)
+    } else {
+      resetInfinite()
+    }
+    clampPage()
+    saveListState()
   } finally {
     loading.value = false
+  }
+  void finishListEnter({ snap, forceTop: !!opts?.fromQuery })
+}
+
+async function submitUpload() {
+  const ok = await uploadFormRef.value?.validate().catch(() => false)
+  if (!ok) return
+  saving.value = true
+  try {
+    const material = await createMaterialApi({ ...uploadForm })
+    for (const item of fileList.value) {
+      const raw = item.raw
+      if (raw) {
+        await uploadMaterialFileApi(material.id, raw as File)
+      }
+    }
+    ElMessage.success('素材已上传')
+    uploadDialog.value = false
+    await load()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '上传失败')
+  } finally {
+    saving.value = false
   }
 }
 
@@ -58,35 +309,134 @@ async function onDelete(row: Material) {
   }
 }
 
-onMounted(load)
+watch(filtered, () => clampPage())
+watch(pageSize, () => clampPage())
+
+onMounted(() => {
+  restoreListState()
+  load()
+})
 </script>
 
 <template>
-  <div>
-    <div class="page-toolbar">
+  <div class="material-page">
+    <div class="page-toolbar" :class="{ 'is-compact': isCompact }">
       <el-page-header content="素材管理" />
-      <el-space wrap class="toolbar-actions">
-        <el-select v-model="statusFilter" clearable placeholder="状态筛选" style="width: 140px">
-          <el-option v-for="(label, key) in statusLabel" :key="key" :label="label" :value="key" />
-        </el-select>
-        <el-button @click="load">刷新</el-button>
-      </el-space>
+      <el-button class="tb-btn tb-btn--primary" type="primary" @click="openUpload">
+        <el-icon><Plus /></el-icon>
+        上传素材
+      </el-button>
     </div>
 
-    <div v-if="isCompact" v-loading="loading" class="m-card-list" style="margin-top: 12px">
-      <div v-if="!filtered.length && !loading" class="m-card m-card-empty">暂无素材</div>
-      <div v-for="row in filtered" :key="row.id" class="m-card">
-        <div class="m-card-head">
-          <div class="m-card-title" @click="router.push(`/materials/${row.id}`)">{{ row.title }}</div>
-          <el-tag size="small" type="success">{{ statusLabel[row.status] || row.status }}</el-tag>
+    <!-- PC 筛选 -->
+    <div class="mat-pc">
+      <el-card class="filters pc-filters" shadow="never">
+        <div class="pc-filters-head">
+          <div class="pc-filters-head-main">
+            <span class="pc-filters-title">筛选条件</span>
+            <span v-if="activeFilterCount" class="pc-filters-badge">{{ activeFilterCount }} 项生效</span>
+          </div>
+          <div class="pc-list-summary">
+            <span class="pc-list-summary__label">教学素材</span>
+            <span class="pc-list-summary__count">
+              共 <strong>{{ filtered.length }}</strong> 条
+            </span>
+          </div>
         </div>
-        <div class="m-card-meta">
-          <span v-if="row.grade"><span class="k">年级</span> {{ row.grade }}</span>
-          <span v-if="row.subject"><span class="k">科目</span> {{ row.subject }}</span>
-          <span><span class="k">授权</span> {{ authLabel[row.auth_status] || row.auth_status }}</span>
-          <span><span class="k">图片</span> {{ row.files?.length || 0 }}</span>
+        <el-form class="filter-form pc-filter-form" :inline="true" @submit.prevent="runQuery">
+          <el-form-item label="状态">
+            <el-select v-model="filters.status" clearable placeholder="全部" style="width: 110px">
+              <el-option v-for="(label, key) in statusLabel" :key="key" :label="label" :value="key" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="关键词">
+            <el-input
+              v-model="filters.q"
+              clearable
+              placeholder="标题 / 痛点"
+              style="width: 160px"
+              @keyup.enter="runQuery"
+            />
+          </el-form-item>
+          <el-form-item label="年级">
+            <el-input v-model="filters.grade" clearable placeholder="年级" style="width: 110px" />
+          </el-form-item>
+          <el-form-item label="科目">
+            <el-input v-model="filters.subject" clearable placeholder="科目" style="width: 110px" />
+          </el-form-item>
+          <el-form-item class="filter-actions">
+            <el-button type="primary" @click="runQuery">查询</el-button>
+            <el-button @click="resetFilters">重置</el-button>
+          </el-form-item>
+        </el-form>
+      </el-card>
+    </div>
+
+    <!-- wap 筛选 -->
+    <div class="mat-m m-filter">
+      <div class="m-filter-search">
+        <el-icon class="m-filter-search__icon"><Search /></el-icon>
+        <input
+          v-model="filters.q"
+          class="m-filter-search__input"
+          type="search"
+          enterkeyhint="search"
+          placeholder="搜索标题"
+          @keyup.enter="runQuery"
+        />
+        <button type="button" class="m-filter-search__btn" @click="runQuery">查询</button>
+      </div>
+      <div class="m-filter-row">
+        <el-select
+          v-model="filters.status"
+          class="m-filter-select"
+          clearable
+          placeholder="状态"
+          teleported
+          :popper-options="{ strategy: 'fixed' }"
+          popper-class="mat-m-select-popper"
+        >
+          <el-option v-for="(label, key) in statusLabel" :key="key" :label="label" :value="key" />
+        </el-select>
+        <button
+          type="button"
+          class="m-filter-more"
+          :class="{ 'is-active': filterExpanded || activeFilterCount > 0 }"
+          @click="toggleFilterExpand"
+        >
+          更多{{ activeFilterCount ? ` · ${activeFilterCount}` : '' }}
+          <el-icon :class="{ 'is-open': filterExpanded }"><ArrowDown /></el-icon>
+        </button>
+      </div>
+      <div v-show="filterExpanded" class="m-filter-panel">
+        <el-input v-model="filters.grade" clearable placeholder="年级" />
+        <el-input v-model="filters.subject" clearable placeholder="科目" />
+        <div class="m-filter-panel__actions">
+          <button type="button" class="m-filter-link" @click="resetFilters">重置</button>
+          <button type="button" class="m-filter-apply" @click="runQuery">完成</button>
         </div>
-        <div class="m-card-actions">
+      </div>
+    </div>
+
+    <!-- 移动卡片 -->
+    <div v-loading="loading" class="mat-m mat-card-list">
+      <div v-if="!filtered.length && !loading" class="mat-card mat-card--empty">暂无素材</div>
+      <div v-for="row in infiniteRows" :key="row.id" class="mat-card">
+        <div class="mat-card__top">
+          <div class="mat-card__title" @click="router.push(`/materials/${row.id}`)">
+            {{ row.title }}
+          </div>
+          <el-tag :type="statusTagType(row.status)" size="small" effect="plain" round>
+            {{ statusLabel[row.status] || row.status }}
+          </el-tag>
+        </div>
+        <div class="mat-card__meta">
+          <span v-if="row.grade"><span class="k">年级</span>{{ row.grade }}</span>
+          <span v-if="row.subject"><span class="k">科目</span>{{ row.subject }}</span>
+          <span><span class="k">授权</span>{{ authLabel[row.auth_status] || row.auth_status }}</span>
+          <span><span class="k">图片</span>{{ row.files?.length || 0 }}</span>
+        </div>
+        <div class="mat-card__actions">
           <el-button type="primary" size="small" @click="router.push(`/materials/${row.id}`)">
             详情
           </el-button>
@@ -102,50 +452,423 @@ onMounted(load)
           <el-button size="small" type="danger" plain @click="onDelete(row)">删除</el-button>
         </div>
       </div>
+      <div v-if="filtered.length" ref="sentinelRef" class="scroll-sentinel">
+        <span v-if="hasMoreInfinite || loadingMore" class="scroll-hint">
+          {{ loadingMore ? '加载中…' : '上拉加载更多' }}
+        </span>
+        <span v-else class="scroll-hint">已加载全部 {{ filtered.length }} 条</span>
+      </div>
     </div>
 
-    <el-card v-else style="margin-top: 16px">
-      <div class="table-scroll">
-        <el-table v-loading="loading" :data="filtered" stripe style="width: 100%">
-          <el-table-column prop="id" label="ID" width="70" />
-          <el-table-column prop="title" label="标题" min-width="140" />
-          <el-table-column prop="grade" label="年级" width="100" />
-          <el-table-column prop="subject" label="科目" width="100" />
-          <el-table-column label="授权" width="100">
-            <template #default="{ row }">
-              <el-tag size="small">{{ authLabel[row.auth_status] || row.auth_status }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="100">
-            <template #default="{ row }">
-              <el-tag size="small" type="success">{{ statusLabel[row.status] || row.status }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="图片" width="80">
-            <template #default="{ row }">{{ row.files?.length || 0 }}</template>
-          </el-table-column>
-          <el-table-column label="操作" min-width="180" fixed="right">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="router.push(`/materials/${row.id}`)">详情</el-button>
-              <el-button
-                v-if="!auth.isTeacher && row.status === 'new'"
-                link
-                type="success"
-                @click="markUsable(row)"
-              >
-                标为可用
-              </el-button>
-              <el-button link type="danger" @click="onDelete(row)">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+    <!-- PC 表格 -->
+    <div class="mat-pc">
+      <el-card class="pc-table-card" v-loading="loading" shadow="never">
+        <div class="table-scroll">
+          <el-table
+            :data="pagedRows"
+            stripe
+            class="pc-mat-table"
+            style="width: 100%"
+            empty-text="暂无素材"
+            :header-cell-style="pcHeaderStyle"
+          >
+            <el-table-column prop="id" label="ID" width="70" />
+            <el-table-column prop="title" label="标题" min-width="160" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="pc-title-text">{{ row.title }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="grade" label="年级" width="100">
+              <template #default="{ row }">
+                <span class="pc-muted">{{ row.grade || '—' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="subject" label="科目" width="100">
+              <template #default="{ row }">
+                <span class="pc-muted">{{ row.subject || '—' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="授权" width="100">
+              <template #default="{ row }">
+                <el-tag :type="authTagType(row.auth_status)" size="small" effect="plain" round>
+                  {{ authLabel[row.auth_status] || row.auth_status }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="92" align="center">
+              <template #default="{ row }">
+                <el-tag :type="statusTagType(row.status)" size="small" effect="plain" round>
+                  {{ statusLabel[row.status] || row.status }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="图片" width="72" align="center">
+              <template #default="{ row }">
+                <span class="pc-mono">{{ row.files?.length || 0 }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="200" fixed="right" align="right">
+              <template #default="{ row }">
+                <div class="pc-ops">
+                  <el-button link type="primary" @click="router.push(`/materials/${row.id}`)">
+                    详情
+                  </el-button>
+                  <el-button
+                    v-if="!auth.isTeacher && row.status === 'new'"
+                    link
+                    type="success"
+                    @click="markUsable(row)"
+                  >
+                    标为可用
+                  </el-button>
+                  <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <div v-if="!filtered.length && !loading" class="pc-table-empty">暂无素材，可点右上角「上传」</div>
+      </el-card>
+
+      <div v-if="filtered.length" class="pager-bar pc-pager">
+        <el-button size="small" plain :disabled="page <= 1" @click="goFirstPage">首页</el-button>
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :page-sizes="PAGE_SIZES"
+          :total="filtered.length"
+          :pager-count="5"
+          background
+          layout="total, sizes, prev, pager, next, jumper"
+          @current-change="onPageChange"
+          @size-change="onPageSizeChange"
+        />
+        <el-button size="small" plain :disabled="page >= totalPages" @click="goLastPage">末页</el-button>
       </div>
-    </el-card>
+    </div>
+
+    <el-dialog
+      v-model="uploadDialog"
+      title="上传素材"
+      width="90%"
+      style="max-width: 560px"
+      destroy-on-close
+    >
+      <el-form ref="uploadFormRef" :model="uploadForm" :rules="uploadRules" label-position="top">
+        <el-form-item label="场景标题" prop="title">
+          <el-input v-model="uploadForm.title" placeholder="例如：课堂进步 / 试听反馈" />
+        </el-form-item>
+        <el-form-item label="年级">
+          <el-input v-model="uploadForm.grade" placeholder="如 四年级" />
+        </el-form-item>
+        <el-form-item label="科目">
+          <el-input v-model="uploadForm.subject" placeholder="如 数学" />
+        </el-form-item>
+        <el-form-item label="家长痛点">
+          <el-input v-model="uploadForm.pain_point" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item label="老师处理">
+          <el-input v-model="uploadForm.teacher_action" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item label="下一步行动">
+          <el-input v-model="uploadForm.next_step" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item label="家长授权" prop="auth_status">
+          <el-select v-model="uploadForm.auth_status" style="width: 100%">
+            <el-option label="已授权可发" value="authorized" />
+            <el-option label="待确认" value="pending" />
+            <el-option label="已脱敏" value="anonymized" />
+            <el-option label="不可用" value="denied" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="图片（可多选）">
+          <el-upload
+            v-model:file-list="fileList"
+            list-type="picture-card"
+            :auto-upload="false"
+            accept="image/*"
+            multiple
+          >
+            <el-icon><Plus /></el-icon>
+          </el-upload>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="uploadDialog = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="submitUpload">提交素材</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
-.m-card-title {
+.material-page {
+  min-width: 0;
+}
+
+.mat-pc {
+  display: none;
+}
+
+.mat-m {
+  display: block;
+}
+
+@media (min-width: 992px) {
+  .mat-pc {
+    display: block;
+  }
+
+  .mat-m {
+    display: none !important;
+  }
+}
+
+.page-toolbar.is-compact {
+  gap: 10px;
+}
+
+/* wap 筛选 */
+.m-filter {
+  position: relative;
+  z-index: 20;
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--oc-card, #fffdf8);
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 12px;
+  overflow: visible;
+}
+
+.m-filter-search {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 4px 0 12px;
+  background: #f5f0e6;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 10px;
+}
+
+.m-filter-search__icon {
+  color: #a8a29e;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.m-filter-search__input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  margin: 0 8px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 14px;
+  color: var(--oc-ink, #44403c);
+  appearance: none;
+}
+
+.m-filter-search__input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+.m-filter-search__input::placeholder {
+  color: #a8a29e;
+}
+
+.m-filter-search__btn {
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--oc-primary, #a16207);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+}
+
+.m-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.m-filter-select {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.m-filter-select :deep(.el-select__wrapper) {
+  min-height: 34px;
+  border-radius: 8px;
+  background: #faf6ef !important;
+  box-shadow: 0 0 0 1px var(--oc-border, #e8e0d0) inset !important;
+}
+
+.m-filter-more {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 8px;
+  background: #fffdf8;
+  color: var(--oc-ink, #44403c);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.m-filter-more.is-active {
+  border-color: #d4b483;
+  color: var(--oc-primary, #a16207);
+  background: #faf3e6;
+}
+
+.m-filter-more .el-icon.is-open {
+  transform: rotate(180deg);
+}
+
+.m-filter-panel {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--oc-border, #e8e0d0);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.m-filter-panel__actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+}
+
+.m-filter-link {
+  border: none;
+  background: transparent;
+  color: var(--oc-muted, #78716c);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.m-filter-apply {
+  height: 32px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--oc-primary, #a16207);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mat-card-list {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mat-card {
+  padding: 14px;
+  border-radius: 14px;
+  border: 2px solid var(--oc-border, #e8e0d0);
+  background: var(--oc-card, #fffdf8);
+}
+
+.mat-card--empty {
+  text-align: center;
+  color: var(--oc-muted, #78716c);
+  font-size: 13px;
+  padding: 28px 14px;
+  border-style: dashed;
+}
+
+.mat-card__top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.mat-card__title {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--oc-ink, #44403c);
+  cursor: pointer;
+  word-break: break-word;
+}
+
+.mat-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #faf6ee;
+  font-size: 13px;
+  color: var(--oc-ink, #44403c);
+}
+
+.mat-card__meta .k {
+  color: var(--oc-muted, #78716c);
+  margin-right: 4px;
+  font-size: 12px;
+}
+
+.mat-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.mat-card__actions .el-button {
+  margin: 0;
+  flex: 1 1 calc(33% - 6px);
+  min-width: 0;
+}
+
+.scroll-sentinel {
+  padding: 12px 0 4px;
+  text-align: center;
+}
+
+.scroll-hint {
+  font-size: 12px;
+  color: var(--oc-muted, #78716c);
+}
+
+.pc-mat-table :deep(.el-table__row:hover > td.el-table__cell) {
+  background: #faf6ee !important;
+}
+
+@media (max-width: 991px) {
+  .page-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .tb-btn--primary {
+    width: 100%;
+    height: 40px;
+  }
+}
+</style>
+
+<style>
+.mat-m-select-popper {
+  z-index: 5000 !important;
 }
 </style>

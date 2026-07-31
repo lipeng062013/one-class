@@ -15,6 +15,7 @@ import {
 } from '../../api/students'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { asyncPool } from '../../utils/asyncPool'
 
 const route = useRoute()
 const router = useRouter()
@@ -42,13 +43,79 @@ const form = reactive({
 
 const canWrite = computed(() => auth.user?.role === 'admin' || auth.user?.role === 'teacher')
 const reportLoading = ref(false)
+const reportVisible = ref(false)
+/** all | range | records */
+const reportMode = ref<'all' | 'range' | 'records'>('all')
+/** 学情报告区间 YYYY-MM-DD */
+const reportRange = ref<[string, string] | null>(null)
+/** 指定学情记录 id */
+const reportRecordIds = ref<number[]>([])
 
-async function downloadReport() {
+function openReportDialog() {
+  reportMode.value = 'all'
+  reportRange.value = null
+  reportRecordIds.value = []
+  reportVisible.value = true
+}
+
+function toDateParam(v: string | Date | null | undefined): string | undefined {
+  if (v == null || v === '') return undefined
+  if (typeof v === 'string') {
+    const m = v.match(/^(\d{4}-\d{2}-\d{2})/)
+    return m ? m[1] : undefined
+  }
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    const y = v.getFullYear()
+    const mo = String(v.getMonth() + 1).padStart(2, '0')
+    const day = String(v.getDate()).padStart(2, '0')
+    return `${y}-${mo}-${day}`
+  }
+  return undefined
+}
+
+function recordOptionLabel(r: LearningRecord): string {
+  const when = r.class_date ? new Date(r.class_date).toLocaleString() : `#${r.id}`
+  const st = classLabels[r.class_status] || r.class_status || ''
+  const sub = r.subject ? ` · ${r.subject}` : ''
+  const summary = (r.learning_summary || '').replace(/\s+/g, ' ').slice(0, 24)
+  const tail = summary ? ` · ${summary}${summary.length >= 24 ? '…' : ''}` : ''
+  return `${when}  ${st}${sub}${tail}`
+}
+
+async function submitReport() {
   if (!student.value) return
+  if (reportMode.value === 'records' && !reportRecordIds.value.length) {
+    ElMessage.warning('请至少勾选一条学情记录')
+    return
+  }
+  if (reportMode.value === 'range' && !reportRange.value?.[0] && !reportRange.value?.[1]) {
+    ElMessage.warning('请选择学情时间区间，或改选「全部学情」')
+    return
+  }
   reportLoading.value = true
   try {
-    await downloadGrowthReportApi(student.value.id, student.value.name)
-    ElMessage.success('成长档案已开始下载')
+    if (reportMode.value === 'records') {
+      await downloadGrowthReportApi(student.value.id, student.value.name, {
+        record_ids: [...reportRecordIds.value],
+      })
+      ElMessage.success(
+        reportRecordIds.value.length === 1
+          ? '成长档案已开始下载（指定 1 条学情）'
+          : `成长档案已开始下载（指定 ${reportRecordIds.value.length} 条学情）`,
+      )
+    } else if (reportMode.value === 'range') {
+      const from = toDateParam(reportRange.value?.[0])
+      const to = toDateParam(reportRange.value?.[1])
+      await downloadGrowthReportApi(student.value.id, student.value.name, {
+        date_from: from,
+        date_to: to,
+      })
+      ElMessage.success('成长档案已开始下载（按时间区间）')
+    } else {
+      await downloadGrowthReportApi(student.value.id, student.value.name)
+      ElMessage.success('成长档案已开始下载（全部学情）')
+    }
+    reportVisible.value = false
   } catch {
     /* interceptor */
   } finally {
@@ -70,6 +137,14 @@ const classLabels: Record<string, string> = {
   makeup: '补课',
 }
 
+const classTagType: Record<string, 'success' | 'danger' | 'warning' | 'info' | 'primary'> = {
+  attended: 'success',
+  absent: 'danger',
+  late: 'warning',
+  leave: 'info',
+  makeup: 'primary',
+}
+
 const rules: FormRules = {
   learning_summary: [{ required: true, message: '请填写学习情况', trigger: 'blur' }],
   class_status: [{ required: true, message: '请选择上课状态', trigger: 'change' }],
@@ -77,20 +152,35 @@ const rules: FormRules = {
 
 const studentId = computed(() => Number(route.params.id))
 
+/** 学情附件预览列表（仅已加载成功的 URL，保持与文件顺序一致） */
+function recordPreviewList(rec: LearningRecord): string[] {
+  return (rec.files || []).map((f) => imageUrls.value[f.id]).filter(Boolean) as string[]
+}
+
+/** 点击某张缩略图时，大图从该张开始（而不是总从第一张） */
+function recordPreviewIndex(rec: LearningRecord, fileId: number): number {
+  const list = recordPreviewList(rec)
+  const url = imageUrls.value[fileId]
+  if (!url) return 0
+  const idx = list.indexOf(url)
+  return idx >= 0 ? idx : 0
+}
+
+const IMAGE_CONCURRENCY = 4
+
 async function loadImages(list: LearningRecord[]) {
   for (const key of Object.keys(imageUrls.value)) {
     URL.revokeObjectURL(imageUrls.value[Number(key)])
   }
   imageUrls.value = {}
-  for (const rec of list) {
-    for (const f of rec.files || []) {
-      try {
-        imageUrls.value[f.id] = await learningFileObjectUrl(f.id)
-      } catch {
-        /* ignore */
-      }
+  const files = list.flatMap((rec) => rec.files || [])
+  await asyncPool(files, IMAGE_CONCURRENCY, async (f) => {
+    try {
+      imageUrls.value[f.id] = await learningFileObjectUrl(f.id, { thumb: true })
+    } catch {
+      /* ignore */
     }
-  }
+  })
 }
 
 async function load() {
@@ -98,10 +188,11 @@ async function load() {
   try {
     student.value = await getStudentApi(studentId.value)
     records.value = await listLearningApi({ student_id: studentId.value })
-    await loadImages(records.value)
   } finally {
     loading.value = false
   }
+  // 正文先出来，缩略图后台并发加载
+  void loadImages(records.value)
 }
 
 function openWrite() {
@@ -163,14 +254,14 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div v-loading="loading" class="student-detail-page">
+  <div v-loading="loading" class="student-detail-page oc-page-shell">
     <div class="page-toolbar">
       <el-page-header @back="router.push('/students')">
         <template #content>
           <span>学生详情{{ student ? ` · ${student.name}` : '' }}</span>
         </template>
       </el-page-header>
-      <el-button v-if="canWrite" type="primary" @click="openWrite">写学情</el-button>
+      <el-button type="primary" plain @click="openReportDialog">生成学情报告</el-button>
     </div>
 
     <el-card v-if="student" class="profile" shadow="never">
@@ -192,12 +283,10 @@ onUnmounted(() => {
 
     <div class="section-row">
       <h3 class="section-title">学情时间线</h3>
-      <el-button type="primary" plain :loading="reportLoading" @click="downloadReport">
-        生成学情报告
-      </el-button>
+      <el-button v-if="canWrite" type="primary" @click="openWrite">编写学情</el-button>
     </div>
-    <el-empty v-if="!records.length" description="暂无学情，点击右上角「写学情」开始记录" />
-    <el-timeline v-else>
+    <el-empty v-if="!records.length" description="暂无学情，点击「编写学情」开始记录" />
+    <el-timeline v-else class="learning-timeline">
       <el-timeline-item
         v-for="r in records"
         :key="r.id"
@@ -206,28 +295,119 @@ onUnmounted(() => {
       >
         <el-card shadow="hover" class="rec-card">
           <div class="rec-head">
-            <el-tag size="small">{{ classLabels[r.class_status] || r.class_status }}</el-tag>
-            <span v-if="r.subject" class="meta">{{ r.subject }}</span>
-            <span class="meta">{{ r.teacher_name }}</span>
+            <el-tag
+              size="small"
+              effect="dark"
+              :type="classTagType[r.class_status] || 'info'"
+              class="tag-status"
+            >
+              {{ classLabels[r.class_status] || r.class_status }}
+            </el-tag>
+            <el-tag v-if="r.subject" size="small" effect="plain" type="warning" class="tag-subject">
+              {{ r.subject }}
+            </el-tag>
+            <el-tag v-if="r.teacher_name" size="small" effect="plain" type="info" class="tag-author">
+              填写人 · {{ r.teacher_name }}
+            </el-tag>
           </div>
-          <p class="summary">{{ r.learning_summary }}</p>
-          <p v-if="r.homework_note" class="sub">作业/下次：{{ r.homework_note }}</p>
-          <p v-if="r.notes" class="sub">备注：{{ r.notes }}</p>
-          <div v-if="r.files?.length" class="imgs">
-            <el-image
-              v-for="f in r.files"
-              :key="f.id"
-              :src="imageUrls[f.id]"
-              :preview-src-list="r.files.map((x) => imageUrls[x.id]).filter(Boolean)"
-              fit="cover"
-              class="thumb"
-            />
+
+          <div class="rec-fields">
+            <div class="rec-field">
+              <div class="rec-field-title">学习情况</div>
+              <div class="rec-field-content">{{ r.learning_summary || '—' }}</div>
+            </div>
+
+            <div v-if="r.homework_note" class="rec-field">
+              <div class="rec-field-title">作业 / 下次</div>
+              <div class="rec-field-content">{{ r.homework_note }}</div>
+            </div>
+
+            <div v-if="r.notes" class="rec-field">
+              <div class="rec-field-title">内部备注</div>
+              <div class="rec-field-content">{{ r.notes }}</div>
+            </div>
+
+            <div v-if="r.files?.length" class="rec-field rec-field-imgs">
+              <div class="rec-field-title">
+                附件图片
+                <span class="rec-field-count">{{ r.files.length }}</span>
+              </div>
+              <div class="imgs">
+                <el-image
+                  v-for="f in r.files"
+                  :key="f.id"
+                  :src="imageUrls[f.id]"
+                  :preview-src-list="recordPreviewList(r)"
+                  :initial-index="recordPreviewIndex(r, f.id)"
+                  preview-teleported
+                  lazy
+                  fit="cover"
+                  class="thumb"
+                />
+              </div>
+            </div>
           </div>
         </el-card>
       </el-timeline-item>
     </el-timeline>
 
-    <el-dialog v-model="writeVisible" title="写学情" width="90%" style="max-width: 560px" destroy-on-close>
+    <el-dialog
+      v-model="reportVisible"
+      title="生成学情报告"
+      width="90%"
+      style="max-width: 520px"
+      destroy-on-close
+    >
+      <p class="report-hint">
+        可导出全部学情、按上课日期区间，或勾选指定的某一次/几次学情。PDF 正文不展示筛选条件。
+      </p>
+      <el-form label-position="top">
+        <el-form-item label="导出范围">
+          <el-radio-group v-model="reportMode" class="report-mode">
+            <el-radio-button value="all">全部学情</el-radio-button>
+            <el-radio-button value="range">时间区间</el-radio-button>
+            <el-radio-button value="records">指定学情</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+
+        <el-form-item v-if="reportMode === 'range'" label="学情上课日期">
+          <el-date-picker
+            v-model="reportRange"
+            type="daterange"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            value-format="YYYY-MM-DD"
+            format="YYYY-MM-DD"
+            style="width: 100%"
+            clearable
+          />
+        </el-form-item>
+
+        <el-form-item v-if="reportMode === 'records'" label="选择学情记录">
+          <el-empty v-if="!records.length" description="暂无学情可选" :image-size="64" />
+          <el-checkbox-group v-else v-model="reportRecordIds" class="report-record-list">
+            <el-checkbox
+              v-for="r in records"
+              :key="r.id"
+              :value="r.id"
+              :label="r.id"
+              class="report-record-item"
+            >
+              {{ recordOptionLabel(r) }}
+            </el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="reportVisible = false">取消</el-button>
+        <el-button type="primary" :loading="reportLoading" @click="submitReport">
+          生成 PDF
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="writeVisible" title="编写学情" width="90%" style="max-width: 560px" destroy-on-close>
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
         <el-form-item label="上课日期">
           <el-date-picker v-model="form.class_date" type="datetime" style="width: 100%" />
@@ -315,42 +495,234 @@ onUnmounted(() => {
 
 .rec-card {
   background: var(--oc-card, #fffdf8);
+  border: 1px solid var(--oc-border, #e8e0d0);
 }
 
+.rec-card :deep(.el-card__body) {
+  padding: 14px 16px 16px;
+}
+
+/* 顶部：上课状态 / 科目 / 填写人 — 不同色标签 */
 .rec-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--oc-border, #f0e9dc);
+}
+
+.tag-status {
+  font-weight: 650;
+}
+
+.tag-subject {
+  --el-tag-border-color: #e8c98a;
+  --el-tag-text-color: #92400e;
+  --el-tag-bg-color: #fff7ed;
+  font-weight: 600;
+}
+
+.tag-author {
+  --el-tag-border-color: #c4b5a0;
+  --el-tag-text-color: #57534e;
+  --el-tag-bg-color: #f5f0e6;
+}
+
+/* 字段区：左标题右内容，一眼区分 */
+.rec-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.rec-field {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 10px 14px;
+  padding: 12px 0;
+  border-bottom: 1px dashed #efe8db;
+  align-items: start;
+}
+
+.rec-field:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.rec-field:first-child {
+  padding-top: 0;
+}
+
+.rec-field-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--oc-ink, #44403c);
+  line-height: 1.5;
+  padding-top: 1px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* 左侧色条强调「这是标题」 */
+  border-left: 3px solid var(--oc-primary, #a16207);
+  padding-left: 8px;
+}
+
+.rec-field-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  background: #f5e6c8;
+  color: var(--oc-primary, #a16207);
+}
+
+.rec-field-content {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.6;
+  color: #57534e;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-width: 0;
+}
+
+.rec-field-imgs .rec-field-content,
+.rec-field-imgs .imgs {
+  grid-column: 2;
+}
+
+.report-hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--oc-muted, #78716c);
+  line-height: 1.5;
+}
+
+.report-mode {
+  display: flex;
   flex-wrap: wrap;
 }
 
-.meta {
-  font-size: 12px;
-  color: var(--oc-muted, #78716c);
+.report-record-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+  width: 100%;
+  padding: 4px 0;
 }
 
-.summary {
-  margin: 0 0 6px;
-  white-space: pre-wrap;
+.report-record-item {
+  margin: 0 !important;
+  height: auto;
+  align-items: flex-start;
+  white-space: normal;
+  line-height: 1.45;
+  padding: 8px 10px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 8px;
+  background: #fffdf8;
 }
 
-.sub {
-  margin: 0 0 4px;
+.report-record-item :deep(.el-checkbox__label) {
+  white-space: normal;
   font-size: 13px;
-  color: var(--oc-muted, #78716c);
+  color: var(--oc-ink, #44403c);
 }
 
 .imgs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 8px;
 }
 
 .thumb {
   width: 72px;
   height: 72px;
   border-radius: 8px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+}
+
+/* 窄屏：标题在上、内容在下，仍保持标题加粗 + 色条 */
+@media (max-width: 767px) {
+  .rec-field {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .rec-field-imgs .imgs {
+    grid-column: 1;
+  }
+
+  .thumb {
+    width: 88px;
+    height: 88px;
+  }
+}
+
+/*
+ * EP 默认 is-start 左内边距 40px + wrapper 28px，PC 也偏宽。
+ * 统一收紧：节点/竖线左移，内容区更贴左。
+ */
+.learning-timeline {
+  padding-left: 12px !important;
+  padding-right: 0 !important;
+}
+
+.learning-timeline :deep(.el-timeline-item__wrapper) {
+  padding-left: 16px !important;
+}
+
+.learning-timeline :deep(.el-timeline-item__tail) {
+  left: 2px;
+}
+
+.learning-timeline :deep(.el-timeline-item__node) {
+  left: 0;
+}
+
+.learning-timeline :deep(.el-timeline-item__timestamp) {
+  font-size: 12px;
+}
+
+.learning-timeline :deep(.el-timeline-item__timestamp.is-top) {
+  margin-bottom: 6px;
+}
+
+@media (max-width: 991px) {
+  .learning-timeline {
+    padding-left: 10px !important;
+  }
+
+  .learning-timeline :deep(.el-timeline-item__wrapper) {
+    padding-left: 14px !important;
+  }
+
+  .rec-card :deep(.el-card__body) {
+    padding: 12px;
+  }
+}
+
+@media (max-width: 767px) {
+  .learning-timeline {
+    padding-left: 8px !important;
+  }
+
+  .learning-timeline :deep(.el-timeline-item__wrapper) {
+    padding-left: 12px !important;
+  }
+
+  .learning-timeline :deep(.el-timeline-item) {
+    padding-bottom: 14px;
+  }
 }
 </style>

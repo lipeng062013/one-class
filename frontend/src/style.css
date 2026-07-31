@@ -1,17 +1,34 @@
 /* 嘉壹启航 · 米金轻奢 design tokens */
 :root {
-  --oc-sidebar: #292524;
+  --oc-sidebar: #1f1c1a;
+  --oc-sidebar-mid: #2a2522;
   --oc-sidebar-text: #e7e5e4;
   --oc-gold: #f5e6c8;
   --oc-primary: #a16207;
   --oc-primary-hover: #86530a;
   --oc-page: #faf8f3;
+  --oc-page-soft: #f7f1e6;
   --oc-card: #fffdf8;
   --oc-border: #e8e0d0;
   --oc-ink: #44403c;
   --oc-muted: #78716c;
   --oc-radius: 10px;
   --oc-shadow: 0 8px 24px rgba(41, 37, 36, 0.06);
+  /*
+   * 内容区最大宽度（与工作台一致）
+   * 工作台 / 详情页 / 内容型页面根节点统一用 .oc-page-shell
+   * 规范：docs/ui-detail-page-pattern.md 、docs/ui-list-page-pattern.md §内容宽度
+   */
+  --oc-content-max: 1680px;
+  --oc-content-max-wide: 1760px; /* ≥1720 视口略放宽 */
+  /* 全站暖金氛围背景 */
+  --oc-page-gradient: linear-gradient(
+    165deg,
+    #fffdf9 0%,
+    #faf6ee 38%,
+    #f5efe3 72%,
+    #f2e8d6 100%
+  );
 
   /* Element Plus primary → 琥珀金 */
   --el-color-primary: #a16207;
@@ -40,14 +57,38 @@
   box-sizing: border-box;
 }
 
+html {
+  /* 预留滚动条槽，避免 el-image 预览锁滚动时页面左右闪动 */
+  scrollbar-gutter: stable;
+  overflow-y: scroll;
+}
+
 html,
-body,
-#app {
+body {
   margin: 0;
   min-height: 100%;
   font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
-  background: var(--oc-page);
+  background: var(--oc-page-gradient);
+  background-attachment: fixed;
   color: var(--oc-ink);
+}
+
+#app {
+  margin: 0;
+  min-height: 100%;
+  /* 透明，让 body 渐变与圆环装饰透上来 */
+  background: transparent;
+  position: relative;
+  z-index: 1;
+  color: var(--oc-ink);
+}
+
+/* 右上角圆环已去掉；装饰圆统一放在右下角（见 AppLayout .content-wrap） */
+
+/* Element Plus 预览/弹层给 body 加的补偿，与 stable gutter 叠用时易再闪一下 */
+body.el-popup-parent--hidden {
+  padding-right: 0 !important;
+  width: auto !important;
 }
 
 a {
@@ -103,6 +144,271 @@ a {
   max-height: 100px !important;
   resize: none !important;
   overflow-y: auto;
+}
+
+/*
+ * 内容区外壳：工作台 / 详情页统一宽度
+ * 详见 docs/ui-detail-page-pattern.md
+ */
+.oc-page-shell {
+  width: 100%;
+  max-width: var(--oc-content-max, 1680px);
+  margin-left: auto;
+  margin-right: auto;
+  box-sizing: border-box;
+}
+
+@media (min-width: 1720px) {
+  .oc-page-shell {
+    max-width: var(--oc-content-max-wide, 1760px);
+  }
+}
+
+/*
+ * 业务列表页共用样式（以学生信息列表为模板）
+ * 详见 docs/ui-list-page-pattern.md
+ */
+
+/* 主操作按钮 */
+.tb-btn {
+  height: 36px;
+  margin: 0 !important;
+  border-radius: 9px;
+  font-weight: 500;
+}
+
+.tb-btn--primary {
+  height: 36px;
+  border-radius: 9px;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(161, 98, 7, 0.22);
+}
+
+.tb-btn--primary :is(span) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* PC 筛选卡 */
+.pc-filters {
+  margin-top: 12px;
+  border-radius: 12px;
+  border-color: var(--oc-border, #e8e0d0);
+  background: linear-gradient(180deg, #fffdfb 0%, #faf6ee 100%);
+}
+
+.pc-filters > .el-card__body {
+  padding: 14px 16px 8px;
+}
+
+.pc-filters-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 10px;
+}
+
+.pc-filters-head-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pc-filters-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--oc-ink, #44403c);
+}
+
+.pc-filters-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(161, 98, 7, 0.1);
+  color: var(--oc-primary, #a16207);
+  font-weight: 600;
+}
+
+.pc-list-summary {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(255, 253, 248, 0.9);
+  border: 1px solid var(--oc-border, #e8e0d0);
+  font-size: 12px;
+  color: var(--oc-muted, #78716c);
+  line-height: 1.4;
+}
+
+.pc-list-summary__label {
+  font-weight: 600;
+  color: var(--oc-ink, #44403c);
+}
+
+.pc-list-summary strong {
+  color: var(--oc-primary, #a16207);
+  font-weight: 700;
+}
+
+.pc-list-summary__sel strong {
+  color: var(--oc-primary, #a16207);
+}
+
+.pc-filter-form.el-form--inline .el-form-item {
+  margin-bottom: 10px;
+  margin-right: 14px;
+}
+
+.pc-filter-form .el-form-item__label {
+  color: var(--oc-muted, #78716c);
+  font-weight: 500;
+}
+
+/* PC 表格卡 */
+.pc-table-card {
+  margin-top: 14px;
+  border-radius: 12px;
+  border-color: var(--oc-border, #e8e0d0);
+  overflow: hidden;
+  background: var(--oc-card, #fffdf8);
+}
+
+.pc-table-card > .el-card__body {
+  padding: 0;
+}
+
+.pc-selection-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px;
+  background: linear-gradient(90deg, #faf3e6, #f5f0e6);
+  border-bottom: 1px solid var(--oc-border, #e8e0d0);
+  font-size: 13px;
+  color: var(--oc-ink, #44403c);
+}
+
+.pc-selection-bar strong {
+  color: var(--oc-primary, #a16207);
+  font-weight: 700;
+  margin: 0 2px;
+}
+
+.pc-selection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pc-table-empty {
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--oc-muted, #78716c);
+  font-size: 14px;
+}
+
+.pc-ops {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding-right: 8px;
+}
+
+.pc-title-text {
+  font-weight: 600;
+  color: var(--oc-ink, #44403c);
+}
+
+.pc-muted {
+  color: var(--oc-muted, #78716c);
+}
+
+.pc-mono {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--oc-ink, #44403c);
+}
+
+/* 人物类列表：姓名首字头像（学生 / 线索 / 用户）；内容类列表不要用 */
+.pc-avatar {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(145deg, #e8d5b0, #c9a066);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(161, 98, 7, 0.18);
+}
+
+.pc-name-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.pc-name-text {
+  font-weight: 600;
+  color: var(--oc-ink, #44403c);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* PC 分页条 */
+.pager-bar.pc-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--oc-card, #fffdf8);
+  border: 1px solid var(--oc-border, #e8e0d0);
+}
+
+.pager-bar.pc-pager .el-pagination {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 8px;
+}
+
+.pager-bar.pc-pager > .el-button {
+  flex-shrink: 0;
+}
+
+.pager-bar.pc-pager .el-pagination.is-background .el-pager li.is-active {
+  background-color: var(--oc-primary, #a16207);
+}
+
+.pager-bar.pc-pager .el-pagination.is-background .btn-next,
+.pager-bar.pc-pager .el-pagination.is-background .btn-prev,
+.pager-bar.pc-pager .el-pagination.is-background .el-pager li {
+  border-radius: 8px;
+}
+
+@media (max-width: 767px) {
+  .pager-bar.pc-pager {
+    justify-content: center;
+  }
 }
 
 /* ── PC 业务页 · wap / pad 通用适配 ── */
@@ -251,6 +557,42 @@ a {
   .page-toolbar .el-space .el-button {
     flex: 1;
   }
+
+  /*
+   * wap / pad · Dialog：不超过视口高度；过高时 body 内滚动；弹窗本身保持居中固定。
+   * EP 默认 margin-top + overlay 滚动会在内容超高时把弹窗顶走，这里统一改为 flex 居中 + 内部滚动。
+   */
+  .el-overlay-dialog {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    /* 禁止遮罩层自身滚动，避免弹窗随滚动位移 */
+    overflow: hidden !important;
+  }
+
+  .el-dialog {
+    display: flex;
+    flex-direction: column;
+    margin: 0 !important;
+    /* 上下留白，兼容地址栏/安全区；dvh 优先，vh 回退 */
+    max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
+    overflow: hidden;
+  }
+
+  .el-dialog__header,
+  .el-dialog__footer {
+    flex-shrink: 0;
+  }
+
+  .el-dialog__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
 }
 
 @media (max-width: 767px) {
@@ -262,11 +604,26 @@ a {
     font-size: 15px;
   }
 
-  .el-dialog {
-    margin: 8vh auto !important;
-  }
-
   .el-dialog__body {
     padding: 12px 14px;
   }
+}
+
+/*
+ * 海报/素材全屏预览
+ * Element Plus CONTAIN 模式会给 img 设 maxWidth/maxHeight=100% + transform:scale。
+ * 不要强改 width/height/object-fit，否则会和 scale 叠在一起导致裁切。
+ * 只通过 canvas 内边距缩小「100%」可用区域，并封顶 max 尺寸，完整显示、不会顶满整屏。
+ */
+.el-image-viewer__wrapper .el-image-viewer__canvas {
+  box-sizing: border-box;
+  /* 上下给关闭按钮、底部工具条留空 */
+  padding: 56px 48px 100px;
+  overflow: visible;
+}
+
+.el-image-viewer__wrapper .el-image-viewer__img {
+  /* 覆盖 EP 的 100%，用视口比例封顶；保持 auto 尺寸由浏览器按比例缩放 */
+  max-width: min(88vw, 860px) !important;
+  max-height: min(78vh, 920px) !important;
 }

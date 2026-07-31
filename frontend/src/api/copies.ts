@@ -48,8 +48,16 @@ export async function listCopies(): Promise<GeneratedCopy[]> {
   return unwrap(res, 'Failed to list copies')
 }
 
+export async function getCopy(id: number): Promise<GeneratedCopy> {
+  const res = await client.get<ApiResponse<GeneratedCopy>>(`/copies/${id}`)
+  return unwrap(res, 'Failed to load copy')
+}
+
 export async function generateCopy(payload: GenerateCopyInput): Promise<GeneratedCopy> {
-  const res = await client.post<ApiResponse<GeneratedCopy>>('/copies/generate', payload)
+  // 大模型润色可能较慢，单独放宽超时（默认 15s）
+  const res = await client.post<ApiResponse<GeneratedCopy>>('/copies/generate', payload, {
+    timeout: 120_000,
+  })
   return unwrap(res, 'Failed to generate copy')
 }
 
@@ -60,4 +68,12 @@ export async function patchCopy(id: number, payload: PatchCopyInput): Promise<Ge
 
 export async function deleteCopy(id: number): Promise<void> {
   await client.delete(`/copies/${id}`)
+}
+
+export async function bulkDeleteCopies(ids: number[]): Promise<{ deleted_count: number; deleted_ids: number[] }> {
+  const res = await client.post<ApiResponse<{ deleted_count: number; deleted_ids: number[] }>>(
+    '/copies/bulk-delete',
+    { ids },
+  )
+  return unwrap(res, 'Failed to bulk delete copies')
 }

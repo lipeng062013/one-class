@@ -1,11 +1,10 @@
-from pathlib import Path
-
-from fastapi import APIRouter, Depends, File, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.deps import get_current_user
+from app.core.image_thumb import DEFAULT_THUMB_EDGE, read_image_variant
 from app.core.responses import fail, ok
 from app.core.storage import Storage, get_storage
 from app.models.material import MaterialFile
@@ -64,6 +63,8 @@ def download_material_file(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
     storage: Storage = Depends(get_storage),
+    thumb: bool = Query(False, description="返回列表/网格用缩略图"),
+    w: int | None = Query(None, ge=64, le=1280, description="缩略图最长边，默认 640"),
 ):
     mf = db.get(MaterialFile, file_id)
     if not mf:
@@ -72,22 +73,18 @@ def download_material_file(
     if not material or not can_view(user, material):
         return fail("FORBIDDEN", "无权限", status_code=403)
     try:
-        data = storage.read(mf.file_path)
+        data, media_type = read_image_variant(
+            storage,
+            mf.file_path,
+            thumb=thumb,
+            max_edge=w or DEFAULT_THUMB_EDGE,
+            original_media_type=mf.file_type or None,
+        )
     except FileNotFoundError:
         return fail("NOT_FOUND", "文件不存在", status_code=404)
 
-    media_type = mf.file_type or "application/octet-stream"
-    if not media_type.startswith("image/"):
-        suffix = Path(mf.file_path).suffix.lower()
-        media_type = {
-            ".png": "image/png",
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".webp": "image/webp",
-            ".gif": "image/gif",
-        }.get(suffix, media_type)
-
-    return StreamingResponse(iter([data]), media_type=media_type)
+    headers = {"Cache-Control": "private, max-age=86400"} if thumb else {}
+    return Response(content=data, media_type=media_type, headers=headers)
 
 
 @router.get("/{material_id}")

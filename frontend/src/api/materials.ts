@@ -71,15 +71,34 @@ export async function uploadMaterialFileApi(id: number, file: File): Promise<Mat
   return res.data.data
 }
 
-export async function fetchMaterialFileBlob(fileId: number): Promise<Blob> {
+export type MaterialFileOpts = {
+  /** 列表/网格缩略图，体积远小于原图 */
+  thumb?: boolean
+  /** 缩略图最长边（仅 thumb 时生效） */
+  w?: number
+}
+
+export async function fetchMaterialFileBlob(
+  fileId: number,
+  opts?: MaterialFileOpts,
+): Promise<Blob> {
+  const params: Record<string, string | number | boolean> = {}
+  if (opts?.thumb) {
+    params.thumb = true
+    if (opts.w != null) params.w = opts.w
+  }
   const res = await client.get(`/materials/files/${fileId}/content`, {
     responseType: 'blob',
+    params,
   })
   return res.data
 }
 
 /** Load authenticated image into an object URL (caller should revoke). */
-export async function materialFileObjectUrl(fileId: number): Promise<string> {
-  const blob = await fetchMaterialFileBlob(fileId)
+export async function materialFileObjectUrl(
+  fileId: number,
+  opts?: MaterialFileOpts,
+): Promise<string> {
+  const blob = await fetchMaterialFileBlob(fileId, opts)
   return URL.createObjectURL(blob)
 }

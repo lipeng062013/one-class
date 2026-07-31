@@ -6,7 +6,7 @@ from app.core.deps import require_roles
 from app.core.responses import fail, ok
 from app.models.user import User
 from app.modules.users.schemas import ResetPasswordRequest, UserCreate, UserPublic, UserUpdate
-from app.modules.users.service import create_user, list_users, reset_password, update_user
+from app.modules.users.service import create_user, delete_user, list_users, reset_password, update_user
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -93,3 +93,18 @@ def post_reset_password(
         return fail("NOT_FOUND", "用户不存在", status_code=404)
     reset_password(db, user, body.new_password)
     return ok({"reset": True})
+
+
+@router.delete("/{user_id}")
+def remove_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles("admin")),
+):
+    user = db.get(User, user_id)
+    if not user:
+        return fail("NOT_FOUND", "用户不存在", status_code=404)
+    err = delete_user(db, user, actor=actor)
+    if err:
+        return fail("USER_DELETE_FAILED", err, status_code=400)
+    return ok({"deleted": True, "id": user_id})

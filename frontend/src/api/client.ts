@@ -1,5 +1,10 @@
-import axios from 'axios'
+import axios, { type AxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
+
+/** Extra flag: skip global ElMessage on error (e.g. bulk poster preview 404). */
+export type AppAxiosRequestConfig = AxiosRequestConfig & {
+  skipErrorToast?: boolean
+}
 
 const client = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
@@ -53,11 +58,17 @@ client.interceptors.response.use(
         '图片大模型未配置：请在 .env 填写 IMAGE_API_BASE_URL、IMAGE_API_KEY 后重启后端'
     } else if (/status code 503/i.test(message)) {
       message = 'AI 服务不可用（503）。请检查 .env 中的 LLM_/IMAGE_ 配置，或改用「仅模板 / 版式导出」。'
+    } else if (/timeout of \d+ms exceeded/i.test(message) || error.code === 'ECONNABORTED') {
+      message =
+        '请求超时：AI 生图/文案可能需要 1–3 分钟，请稍后重试；若仍失败请检查图片 API 是否可用。'
     }
     if (error.response?.status === 401) {
       localStorage.removeItem('token')
     }
-    ElMessage.error(message)
+    const cfg = error.config as AppAxiosRequestConfig | undefined
+    if (!cfg?.skipErrorToast) {
+      ElMessage.error(message)
+    }
     return Promise.reject(new Error(message))
   },
 )

@@ -19,9 +19,11 @@ services:
     env_file:
       - .env
     environment:
-      # Force container paths so host volume ./data works on any OS
-      DATABASE_URL: sqlite:////app/data/app.db
-      STORAGE_ROOT: /app/data/uploads
+      # 与 .env 的 APP_ENV / APP_DATA_DIR 对齐：dev=测试数据，prod=生产数据
+      APP_ENV: ${APP_ENV:-production}
+      # 容器内绝对路径；宿主机 ./data/{dev|prod} 通过卷挂载
+      DATABASE_URL: sqlite:////app/data/${APP_DATA_DIR:-prod}/app.db
+      STORAGE_ROOT: /app/data/${APP_DATA_DIR:-prod}/uploads
     volumes:
       - ./data:/app/data
     ports:
@@ -51,4 +53,20 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    restart: unless-stopped
+
+  # 可选：独立部署 GPT Image Playground（与 TokenShop「Gpt生图」同源项目）
+  # 日常已内嵌在前端 /gpt-image-playground + 后端 /api/v1/image-playground 代理，一般不必再启。
+  # 需要单独调试官方镜像时：
+  #   docker compose --profile playground up -d gpt-image-playground
+  gpt-image-playground:
+    profiles: ["playground"]
+    image: ghcr.io/cooksleep/gpt_image_playground:latest
+    container_name: one-class-gpt-image-playground
+    environment:
+      # 仅作独立试验；正式业务请用站内「GPT 生图」页（经后端代理，不暴露 Key）
+      DEFAULT_API_URL: ${IMAGE_API_BASE_URL:-https://api.openai.com}/v1
+      ENABLE_API_PROXY: "false"
+    ports:
+      - "8090:80"
     restart: unless-stopped

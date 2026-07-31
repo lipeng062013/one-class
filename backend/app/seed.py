@@ -164,8 +164,9 @@ def seed_system_templates(db: Session) -> None:
 
 
 def seed_sample_knowledge(db: Session) -> None:
-    # 清理旧「语气」分类
-    for old in db.query(KnowledgeEntry).filter(KnowledgeEntry.category == "tone").all():
+    # 清理已废弃分类（tone / course / faq 等）
+    obsolete = {"tone", "course", "faq", "staff", "process"}
+    for old in db.query(KnowledgeEntry).filter(KnowledgeEntry.category.in_(obsolete)).all():
         db.delete(old)
 
     samples = [
@@ -313,11 +314,28 @@ def seed_demo_students(db: Session, target: int = 40) -> None:
     db.commit()
 
 
-def seed_all(db: Session) -> None:
+def seed_essentials(db: Session) -> None:
+    """Always: login accounts, system templates, sample knowledge, brand fix."""
     seed_demo_users(db)
-    seed_extra_teachers(db, count=10)
     seed_system_templates(db)
     seed_sample_knowledge(db)
+    migrate_brand_name(db)
+
+
+def seed_demo_business(db: Session) -> None:
+    """Development/test only: fake teachers, leads, students for UI 联调."""
+    seed_extra_teachers(db, count=10)
     seed_demo_leads(db, target=20)
     seed_demo_students(db, target=40)
-    migrate_brand_name(db)
+
+
+def seed_all(db: Session) -> None:
+    """
+    Seed by environment:
+    - essentials: every env (accounts + system templates + knowledge)
+    - demo business data: only when APP_ENV=development (or SEED_DEMO_DATA=true)
+    """
+    settings = get_settings()
+    seed_essentials(db)
+    if settings.should_seed_demo_data:
+        seed_demo_business(db)

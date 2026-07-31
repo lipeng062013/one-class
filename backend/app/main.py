@@ -28,6 +28,10 @@ from app.modules.leads.router import router as leads_router
 from app.modules.materials.router import router as materials_router
 from app.modules.posters.router import router as posters_router
 from app.modules.students.router import router as students_router
+from app.modules.image_playground.router import (
+    config_router as image_playground_config_router,
+    proxy_router as image_playground_proxy_router,
+)
 from app.modules.system.router import router as system_router
 from app.modules.templates.router import router as templates_router
 from app.modules.todos.router import router as todos_router
@@ -69,6 +73,9 @@ app.include_router(students_router, prefix="/api/v1")
 app.include_router(todos_router, prefix="/api/v1")
 app.include_router(dashboard_router, prefix="/api/v1")
 app.include_router(system_router, prefix="/api/v1")
+# Config under /api/v1; proxy at /image-api/v1 (must not sit under /api/v1 — see router docstring)
+app.include_router(image_playground_config_router, prefix="/api/v1")
+app.include_router(image_playground_proxy_router)
 
 
 @app.get("/api/v1/health")

@@ -60,6 +60,18 @@ def create_copy_template(
     return ok(_serialize_copy(tpl))
 
 
+@router.get("/copies/{template_id}")
+def get_copy_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(_ops),
+):
+    tpl = db.get(CopyTemplate, template_id)
+    if not tpl:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Copy template not found")
+    return ok(_serialize_copy(tpl))
+
+
 @router.patch("/copies/{template_id}")
 def patch_copy_template(
     template_id: int,
@@ -125,6 +137,18 @@ def create_poster_template(
     db.add(tpl)
     db.commit()
     db.refresh(tpl)
+    return ok(_serialize_poster(tpl))
+
+
+@router.get("/posters/{template_id}")
+def get_poster_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(_ops),
+):
+    tpl = db.get(PosterTemplate, template_id)
+    if not tpl:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Poster template not found")
     return ok(_serialize_poster(tpl))
 
 

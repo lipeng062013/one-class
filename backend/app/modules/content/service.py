@@ -55,7 +55,6 @@ def _build_context(db: Session, material: Material | None) -> dict[str, Any]:
         "teacher_action": "",
         "next_step": "",
         "tone": "",
-        "course": "",
     }
     if material is not None:
         context.update(
@@ -69,26 +68,16 @@ def _build_context(db: Session, material: Material | None) -> dict[str, Any]:
             }
         )
 
-    # 成长中心话术作为品牌表达参考（替代已删除的 tone 分类）
+    # 成长中心话术作为品牌表达参考（替代已删除的 tone / course 分类）
     script_entries = (
         db.query(KnowledgeEntry)
         .filter(KnowledgeEntry.category == "script", KnowledgeEntry.is_active.is_(True))
         .order_by(KnowledgeEntry.id.asc())
         .all()
     )
-    course_entries = (
-        db.query(KnowledgeEntry)
-        .filter(KnowledgeEntry.category == "course", KnowledgeEntry.is_active.is_(True))
-        .order_by(KnowledgeEntry.id.asc())
-        .all()
-    )
     if script_entries:
         context["tone"] = "；".join(
             e.content or e.title for e in script_entries if (e.content or e.title)
-        )
-    if course_entries:
-        context["course"] = "；".join(
-            e.title or e.content for e in course_entries if (e.title or e.content)
         )
     return context
 
@@ -111,7 +100,7 @@ def _banned_words(db: Session) -> list[str]:
 
 def _knowledge_snippets(db: Session) -> str:
     parts: list[str] = []
-    for category in ("script", "objection", "banned", "course"):
+    for category in ("script", "objection", "banned"):
         entries = (
             db.query(KnowledgeEntry)
             .filter(KnowledgeEntry.category == category, KnowledgeEntry.is_active.is_(True))
@@ -305,10 +294,21 @@ def list_copies(db: Session) -> list[GeneratedCopy]:
     return db.query(GeneratedCopy).order_by(GeneratedCopy.id.desc()).all()
 
 
-def update_copy(db: Session, copy_id: int, body: GeneratedCopyUpdate) -> GeneratedCopy:
+def get_copy(db: Session, copy_id: int) -> GeneratedCopy:
     copy = db.get(GeneratedCopy, copy_id)
     if not copy:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Generated copy not found")
+    return copy
+
+
+def serialize_copy_detail(db: Session, copy: GeneratedCopy) -> dict[str, Any]:
+    """Serialize one copy and recompute banned-word hits from current knowledge base."""
+    banned = find_banned(f"{copy.title or ''}\n{copy.body or ''}", _banned_words(db))
+    return serialize_copy(copy, banned_hits=banned)
+
+
+def update_copy(db: Session, copy_id: int, body: GeneratedCopyUpdate) -> GeneratedCopy:
+    copy = get_copy(db, copy_id)
 
     data = body.model_dump(exclude_unset=True)
     for key, value in data.items():
@@ -326,3 +326,15 @@ def delete_copy(db: Session, copy_id: int) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Generated copy not found")
     db.delete(copy)
     db.commit()
+
+
+def bulk_delete_copies(db: Session, copy_ids: list[int]) -> dict:
+    ids = list(dict.fromkeys(copy_ids))
+    if not ids:
+        return {"deleted_count": 0, "deleted_ids": []}
+    items = db.query(GeneratedCopy).filter(GeneratedCopy.id.in_(ids)).all()
+    found = {c.id for c in items}
+    for c in items:
+        db.delete(c)
+    db.commit()
+    return {"deleted_count": len(items), "deleted_ids": sorted(found)}

@@ -41,6 +41,11 @@ scp "D:\one class\.env" admin@8.133.179.238:/opt/one-class/.env
 cd /opt/one-class
 ls -la .env
 # 按需编辑（JWT、密码、OSS 等）
+# 生产务必设置：
+#   APP_ENV=production
+#   APP_DATA_DIR=prod
+#   SEED_DEMO_DATA=false
+# 正式数据在 data/prod/，与本机 data/dev/ 测试数据隔离
 nano .env
 docker compose up -d
 ```

@@ -174,23 +174,61 @@ export async function uploadLearningFileApi(id: number, file: File): Promise<Lea
   return res.data.data
 }
 
-export async function learningFileObjectUrl(fileId: number): Promise<string> {
+export type LearningFileOpts = {
+  /** 列表/网格缩略图，体积远小于原图 */
+  thumb?: boolean
+  /** 缩略图最长边（仅 thumb 时生效） */
+  w?: number
+}
+
+export async function learningFileObjectUrl(
+  fileId: number,
+  opts?: LearningFileOpts,
+): Promise<string> {
+  const params: Record<string, string | number | boolean> = {}
+  if (opts?.thumb) {
+    params.thumb = true
+    if (opts.w != null) params.w = opts.w
+  }
   const res = await client.get(`/learning-records/files/${fileId}/content`, {
     responseType: 'blob',
+    params,
   })
   return URL.createObjectURL(res.data)
 }
 
-/** 下载学情成长档案 PDF，文件名：{姓名}的成长档案.pdf */
-export async function downloadGrowthReportApi(studentId: number, studentName: string): Promise<void> {
+export interface GrowthReportOptions {
+  /** YYYY-MM-DD，可选；与 record_ids 二选一（有 record_ids 时优先） */
+  date_from?: string | null
+  date_to?: string | null
+  /** 指定学情记录 id 列表 */
+  record_ids?: number[] | null
+}
+
+/** 下载学情成长档案 PDF：全部 / 按区间 / 按指定学情记录（文件名统一为 XXX的成长档案.pdf） */
+export async function downloadGrowthReportApi(
+  studentId: number,
+  studentName: string,
+  opts?: GrowthReportOptions,
+): Promise<void> {
+  const params: Record<string, string> = {}
+  if (opts?.record_ids?.length) {
+    params.record_ids = opts.record_ids.join(',')
+  } else {
+    if (opts?.date_from) params.date_from = opts.date_from
+    if (opts?.date_to) params.date_to = opts.date_to
+  }
   const res = await client.get(`/students/${studentId}/growth-report`, {
     responseType: 'blob',
+    params,
+    timeout: 120_000,
   })
   const blob = res.data as Blob
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${studentName}的成长档案.pdf`
+  const safe = (studentName || '学员').replace(/[\\/:*?"<>|]/g, '-').trim() || '学员'
+  a.download = `${safe}的成长档案.pdf`
   document.body.appendChild(a)
   a.click()
   a.remove()

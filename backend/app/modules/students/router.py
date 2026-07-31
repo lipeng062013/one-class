@@ -1,11 +1,10 @@
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, File, Query, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.deps import get_current_user, require_roles
+from app.core.image_thumb import DEFAULT_THUMB_EDGE, read_image_variant
 from app.core.responses import fail, ok
 from app.core.storage import Storage, get_storage
 from app.models.student import LearningRecordFile
@@ -136,9 +135,20 @@ def get_student(
 @router.get("/students/{student_id}/growth-report")
 def download_growth_report(
     student_id: int,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    record_ids: str | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(_student_roles),
 ):
+    """生成学情 PDF。
+
+    - record_ids: 逗号分隔的学情记录 id，优先；只导出这些记录
+    - date_from / date_to: 按上课日期区间过滤（无 record_ids 时生效）
+    - 都不传：全部学情
+    PDF 正文不展示区间文案。
+    """
+    from datetime import datetime
     from urllib.parse import quote
 
     from app.modules.students.report import GrowthReportFontError, build_growth_report_pdf
@@ -146,8 +156,51 @@ def download_growth_report(
     s = svc.get_student(db, student_id)
     if not s:
         return fail("NOT_FOUND", "学生不存在", status_code=404)
+
+    def _parse_dt(raw: str | None, *, end_of_day: bool = False) -> datetime | None:
+        if not raw or not str(raw).strip():
+            return None
+        text = str(raw).strip().replace("Z", "+00:00")
+        try:
+            if len(text) == 10 and text[4] == "-" and text[7] == "-":
+                dt = datetime.strptime(text, "%Y-%m-%d")
+                if end_of_day:
+                    return dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+                return dt
+            return datetime.fromisoformat(text).replace(tzinfo=None)
+        except ValueError:
+            return None
+
+    parsed_ids: list[int] = []
+    if record_ids and str(record_ids).strip():
+        for part in str(record_ids).replace(" ", "").split(","):
+            if not part:
+                continue
+            try:
+                parsed_ids.append(int(part))
+            except ValueError:
+                return fail("INVALID_RECORD_IDS", "record_ids 须为逗号分隔的数字 id", status_code=400)
+        if not parsed_ids:
+            return fail("INVALID_RECORD_IDS", "请至少选择一条学情记录", status_code=400)
+
+    df = _parse_dt(date_from)
+    dt = _parse_dt(date_to, end_of_day=True)
+    if not parsed_ids:
+        if date_from and df is None:
+            return fail("INVALID_DATE", "date_from 格式无效，请用 YYYY-MM-DD", status_code=400)
+        if date_to and dt is None:
+            return fail("INVALID_DATE", "date_to 格式无效，请用 YYYY-MM-DD", status_code=400)
+        if df is not None and dt is not None and df > dt:
+            return fail("INVALID_DATE", "开始日期不能晚于结束日期", status_code=400)
+
     try:
-        data, filename = build_growth_report_pdf(db, s)
+        data, filename = build_growth_report_pdf(
+            db,
+            s,
+            date_from=None if parsed_ids else df,
+            date_to=None if parsed_ids else dt,
+            record_ids=parsed_ids or None,
+        )
     except GrowthReportFontError as e:
         return fail("GROWTH_REPORT_FONT_MISSING", str(e), status_code=500)
     except Exception as e:
@@ -233,6 +286,8 @@ def download_learning_file(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
     storage: Storage = Depends(get_storage),
+    thumb: bool = Query(False, description="返回列表/网格用缩略图"),
+    w: int | None = Query(None, ge=64, le=1280, description="缩略图最长边，默认 640"),
 ):
     mf = db.get(LearningRecordFile, file_id)
     if not mf:
@@ -243,21 +298,18 @@ def download_learning_file(
     if user.role not in {"admin", "operator", "teacher"}:
         return fail("FORBIDDEN", "无权限", status_code=403)
     try:
-        data = storage.read(mf.file_path)
+        data, media_type = read_image_variant(
+            storage,
+            mf.file_path,
+            thumb=thumb,
+            max_edge=w or DEFAULT_THUMB_EDGE,
+            original_media_type=mf.file_type or None,
+        )
     except FileNotFoundError:
         return fail("NOT_FOUND", "文件不存在", status_code=404)
 
-    media_type = mf.file_type or "application/octet-stream"
-    if not media_type.startswith("image/"):
-        suffix = Path(mf.file_path).suffix.lower()
-        media_type = {
-            ".png": "image/png",
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".webp": "image/webp",
-            ".gif": "image/gif",
-        }.get(suffix, media_type)
-    return StreamingResponse(iter([data]), media_type=media_type)
+    headers = {"Cache-Control": "private, max-age=86400"} if thumb else {}
+    return Response(content=data, media_type=media_type, headers=headers)
 
 
 @router.get("/learning-records/{record_id}")

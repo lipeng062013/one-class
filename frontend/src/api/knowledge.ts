@@ -1,6 +1,6 @@
 import client from './client'
 
-export type KnowledgeCategory = 'course' | 'faq' | 'tone' | 'banned' | 'staff' | 'process'
+export type KnowledgeCategory = 'script' | 'objection' | 'banned'
 
 export interface KnowledgeEntry {
   id: number

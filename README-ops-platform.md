@@ -78,6 +78,32 @@ docker compose up -d --build
 
 数据（SQLite、上传文件）在项目 `data/` 目录，容器重启不丢。
 
+### 测试数据 vs 生产数据
+
+两套数据物理隔离，互不影响：
+
+| 环境 | `.env` 关键项 | 数据目录 | 启动时是否灌假线索/学员 |
+|------|----------------|----------|-------------------------|
+| 本机开发 | `APP_ENV=development`、`APP_DATA_DIR=dev` | `data/dev/` | 是 |
+| 服务器 | `APP_ENV=production`、`APP_DATA_DIR=prod` | `data/prod/` | 否（只建登录账号与系统模板） |
+
+服务器 `.env` 示例片段：
+
+```env
+APP_ENV=production
+APP_DATA_DIR=prod
+SEED_DEMO_DATA=false
+# 务必改掉默认密码与 JWT_SECRET
+```
+
+旧数据若在 `data/app.db` 或 `backend/data/app.db`，可手动拷到对应目录，例如：
+
+```powershell
+# 本机旧库迁到测试目录
+New-Item -ItemType Directory -Force data\dev | Out-Null
+Copy-Item backend\data\app.db data\dev\app.db -ErrorAction SilentlyContinue
+```
+
 ### 常用命令
 
 ```powershell
@@ -175,6 +201,11 @@ uvicorn app.main:app --reload --port 8000
    `GET /api/v1/system/integrations`
 
 5. 文案选「模板+润色」或「直接大模型」；海报选「AI 生图」。
+6. **GPT 生图（与 TokenShop 相同工作台）：** 侧栏 **「GPT 生图」** → 内嵌 [CookSleep/gpt_image_playground](https://github.com/CookSleep/gpt_image_playground)。  
+   - 支持上传参考图 + 提示词改图（卡通化等）  
+   - 请求走后端 `/api/v1/image-playground/v1/*` 代理，浏览器不接触 `IMAGE_API_KEY`  
+   - 静态资源在 `frontend/public/gpt-image-playground/`；升级官方 UI 时运行：  
+     `powershell -File scripts/build-gpt-image-playground.ps1`
 
 ### 未配置时的行为（已修复，不再硬 503）
 

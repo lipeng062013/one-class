@@ -9,7 +9,6 @@ import {
   type ClassStatus,
   type Student,
 } from '../../api/students'
-
 const route = useRoute()
 const router = useRouter()
 const formRef = ref<FormInstance>()
@@ -84,7 +83,7 @@ onMounted(loadStudents)
 
 <template>
   <div class="page">
-    <el-page-header content="写学情" @back="router.back()" />
+    <el-page-header content="编写学情" @back="router.back()" />
 
     <el-card class="form-card" shadow="never">
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top" size="large">

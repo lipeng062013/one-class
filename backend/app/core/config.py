@@ -20,13 +20,28 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    database_url: str = "sqlite:///./data/app.db"
+    # development = 本地/测试数据；production = 服务器正式数据
+    app_env: str = "development"
+    # 是否写入演示线索/学员/额外老师。未设置时：development=开，production=关
+    seed_demo_data: bool | None = None
+
+    database_url: str = "sqlite:///./data/dev/app.db"
     jwt_secret: str = "dev-secret-change-me"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7
-    storage_root: str = "./data/uploads"
+    storage_root: str = "./data/dev/uploads"
     # local = disk under storage_root; oss = Aliyun OSS (private, API-proxied)
     storage_backend: str = "local"
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.strip().lower() in {"production", "prod"}
+
+    @property
+    def should_seed_demo_data(self) -> bool:
+        if self.seed_demo_data is not None:
+            return self.seed_demo_data
+        return not self.is_production
 
     # Aliyun OSS (shared with backup scripts; upload prefix for business files)
     oss_endpoint: str = ""

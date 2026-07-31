@@ -19,13 +19,14 @@ const router = createRouter({
           path: 'materials',
           name: 'materials',
           component: () => import('../views/materials/MaterialListView.vue'),
-          meta: { roles: ['admin', 'operator'] },
+          // 负责人 / 运营 / 老师均可上传与查看素材
+          meta: { roles: ['admin', 'operator', 'teacher'] },
         },
         {
           path: 'materials/:id',
           name: 'material-detail',
           component: () => import('../views/materials/MaterialDetailView.vue'),
-          meta: { roles: ['admin', 'operator'] },
+          meta: { roles: ['admin', 'operator', 'teacher'] },
         },
         {
           path: 'copies',
@@ -40,6 +41,12 @@ const router = createRouter({
           meta: { roles: ['admin', 'operator'] },
         },
         {
+          path: 'copies/:id',
+          name: 'copy-detail',
+          component: () => import('../views/copies/CopyDetailView.vue'),
+          meta: { roles: ['admin', 'operator'] },
+        },
+        {
           path: 'posters',
           name: 'posters',
           component: () => import('../views/posters/PosterListView.vue'),
@@ -49,6 +56,12 @@ const router = createRouter({
           path: 'posters/generate',
           name: 'posters-generate',
           component: () => import('../views/posters/PosterGenerateView.vue'),
+          meta: { roles: ['admin', 'operator'] },
+        },
+        {
+          path: 'ai-image',
+          name: 'ai-image',
+          component: () => import('../views/ai/GptImagePlaygroundView.vue'),
           meta: { roles: ['admin', 'operator'] },
         },
         {
@@ -84,6 +97,18 @@ const router = createRouter({
           name: 'templates',
           component: () => import('../views/templates/TemplateViews.vue'),
           meta: { roles: ['admin', 'operator'] },
+        },
+        {
+          path: 'templates/copies/:id',
+          name: 'copy-template-detail',
+          component: () => import('../views/templates/TemplateDetailView.vue'),
+          meta: { roles: ['admin', 'operator'], templateKind: 'copies' },
+        },
+        {
+          path: 'templates/posters/:id',
+          name: 'poster-template-detail',
+          component: () => import('../views/templates/TemplateDetailView.vue'),
+          meta: { roles: ['admin', 'operator'], templateKind: 'posters' },
         },
         {
           path: 'office',
@@ -160,13 +185,23 @@ router.beforeEach(async (to) => {
     }
   }
 
-  // 老师默认手机端；工作台（含今日待办）允许访问桌面 /
-  if (auth.isTeacher && !to.path.startsWith('/m/') && to.path !== '/') {
+  // 老师默认手机端；工作台与素材（上传/管理）允许访问桌面
+  const teacherDesktopAllowed =
+    to.path === '/' || to.path === '/materials' || to.path.startsWith('/materials/')
+  if (auth.isTeacher && !to.path.startsWith('/m/') && !teacherDesktopAllowed) {
     return '/m/upload'
   }
 
+  // 负责人、运营也可使用手机端「上传素材」
+  // （仅拦截老师以外用户进入除 upload/materials 外的手机页）
   if (!auth.isTeacher && to.path.startsWith('/m/')) {
-    return '/'
+    const opsMobileAllowed =
+      to.path === '/m/upload' ||
+      to.path === '/m/materials' ||
+      to.path.startsWith('/m/materials/')
+    if (!opsMobileAllowed) {
+      return '/'
+    }
   }
 
   const roles = to.meta.roles as string[] | undefined

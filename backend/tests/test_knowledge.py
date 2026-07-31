@@ -16,14 +16,14 @@ def test_operator_read_only_knowledge(client):
     client.post(
         "/api/v1/knowledge",
         headers=h_admin,
-        json={"category": "tone", "title": "语气", "content": "温暖专业", "tags": ""},
+        json={"category": "script", "title": "开场", "content": "温暖专业", "tags": ""},
     )
     h_ops = auth_header(client, "ops", "ops123")
     assert client.get("/api/v1/knowledge", headers=h_ops).status_code == 200
     assert client.post(
         "/api/v1/knowledge",
         headers=h_ops,
-        json={"category": "faq", "title": "x", "content": "y"},
+        json={"category": "script", "title": "x", "content": "y"},
     ).status_code == 403
 
 

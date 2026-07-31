@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import {
   createLead,
@@ -11,12 +12,21 @@ import {
 } from '../../api/leads'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useInfiniteScroll } from '../../composables/useInfiniteScroll'
+import { useListScrollRestore } from '../../composables/useListScrollRestore'
 
 const LIST_STATE_KEY = 'oc-lead-list-state'
 const PAGE_SIZES = [10, 20, 50, 100]
 const SCROLL_CHUNK = 10
 
+const route = useRoute()
 const { isCompact } = useBreakpoint()
+
+const pcHeaderStyle = {
+  background: '#f5f0e6',
+  color: '#44403c',
+  fontWeight: '600',
+  borderBottomColor: '#e8e0d0',
+}
 
 const loading = ref(false)
 const rows = ref<Lead[]>([])
@@ -25,6 +35,7 @@ const formRef = ref<FormInstance>()
 const saving = ref(false)
 const page = ref(1)
 const pageSize = ref(20)
+const filterExpanded = ref(false)
 
 const filters = reactive({
   source: '',
@@ -64,6 +75,22 @@ const statusLabels: Record<string, string> = {
 }
 const statusOptions: LeadStatus[] = ['new', 'contacted', 'visited', 'enrolled', 'lost']
 
+function statusTagType(status: string): 'success' | 'warning' | 'info' | 'danger' | 'primary' {
+  switch (status) {
+    case 'enrolled':
+      return 'success'
+    case 'visited':
+      return 'warning'
+    case 'contacted':
+      return 'primary'
+    case 'lost':
+      return 'info'
+    case 'new':
+    default:
+      return 'danger'
+  }
+}
+
 function isToday(value?: string | null) {
   if (!value) return false
   const d = new Date(value)
@@ -75,6 +102,15 @@ function isToday(value?: string | null) {
     d.getDate() === now.getDate()
   )
 }
+
+const activeFilterCount = computed(() => {
+  let n = 0
+  if (filters.source) n += 1
+  if (filters.status) n += 1
+  if (filters.name.trim()) n += 1
+  if (filters.phone.trim()) n += 1
+  return n
+})
 
 const sorted = computed(() =>
   [...rows.value].sort((a, b) => {
@@ -90,8 +126,20 @@ const {
   displayRows: infiniteRows,
   hasMore: hasMoreInfinite,
   loadingMore,
+  visibleCount,
   resetVisible: resetInfinite,
-} = useInfiniteScroll(sorted, { chunk: SCROLL_CHUNK, enabled: isCompact, sentinelRef })
+  ensureVisible,
+} = useInfiniteScroll(sorted, {
+  chunk: SCROLL_CHUNK,
+  // 与 CSS 断点一致：≤991 启用滚动加载（不依赖首帧 isCompact 误判）
+  enabled: isCompact,
+  sentinelRef,
+})
+
+const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('leads', {
+  visibleCount,
+  enabled: isCompact,
+})
 
 const totalPages = computed(() => Math.max(1, Math.ceil(sorted.value.length / pageSize.value) || 1))
 
@@ -164,7 +212,9 @@ function onPageChange() {
 }
 
 async function load(opts?: { resetPage?: boolean }) {
+  const snap = opts?.resetPage ? null : takeSnapshotForLoad(route.path)
   if (opts?.resetPage) {
+    clearSnapshot()
     page.value = 1
     resetInfinite()
   }
@@ -176,12 +226,19 @@ async function load(opts?: { resetPage?: boolean }) {
     if (filters.name) params.name = filters.name
     if (filters.phone) params.phone = filters.phone
     rows.value = await listLeads(params)
-    if (opts?.resetPage || isCompact.value) resetInfinite()
+    if (opts?.resetPage) {
+      resetInfinite()
+    } else if (snap?.visibleCount != null && isCompact.value) {
+      ensureVisible(snap.visibleCount)
+    } else if (isCompact.value) {
+      resetInfinite()
+    }
     clampPage()
     saveListState()
   } finally {
     loading.value = false
   }
+  void finishListEnter({ snap, forceTop: !!opts?.resetPage })
 }
 
 function resetFilters() {
@@ -193,7 +250,12 @@ function resetFilters() {
 }
 
 function runQuery() {
+  if (isCompact.value) filterExpanded.value = false
   load({ resetPage: true })
+}
+
+function toggleFilterExpand() {
+  filterExpanded.value = !filterExpanded.value
 }
 
 watch(pageSize, () => clampPage())
@@ -259,68 +321,176 @@ onMounted(() => {
 </script>
 
 <template>
-  <div>
-    <div class="page-toolbar">
+  <div class="lead-page">
+    <div class="page-toolbar lead-toolbar" :class="{ 'is-compact': isCompact }">
       <el-page-header content="线索管理" />
-      <el-button type="primary" @click="openCreate">新建线索</el-button>
+      <el-button class="create-btn tb-btn tb-btn--primary" type="primary" @click="openCreate">
+        <el-icon><Plus /></el-icon>
+        新建线索
+      </el-button>
     </div>
 
-    <el-card class="filters" shadow="never" style="margin-top: 12px">
-      <el-form class="filter-form" :inline="true" @submit.prevent="runQuery">
-        <el-form-item label="来源">
-          <el-select v-model="filters.source" clearable placeholder="全部" style="width: 120px">
-            <el-option v-for="(label, key) in sourceLabels" :key="key" :label="label" :value="key" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="filters.status" clearable placeholder="全部" style="width: 120px">
-            <el-option v-for="(label, key) in statusLabels" :key="key" :label="label" :value="key" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="姓名">
-          <el-input v-model="filters.name" clearable placeholder="搜索姓名" style="width: 130px" />
-        </el-form-item>
-        <el-form-item label="电话">
-          <el-input v-model="filters.phone" clearable placeholder="搜索电话" style="width: 130px" />
-        </el-form-item>
-        <el-form-item class="filter-actions">
-          <el-button type="primary" @click="runQuery">查询</el-button>
-          <el-button @click="resetFilters">重置</el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
+    <!-- PC 筛选：与学生信息列表同一套米金筛选卡 -->
+    <div class="lead-pc">
+      <el-card class="filters pc-filters" shadow="never">
+        <div class="pc-filters-head">
+          <div class="pc-filters-head-main">
+            <span class="pc-filters-title">筛选条件</span>
+            <span v-if="activeFilterCount" class="pc-filters-badge">{{ activeFilterCount }} 项生效</span>
+          </div>
+          <div class="pc-list-summary">
+            <span class="pc-list-summary__label">获客线索</span>
+            <span class="pc-list-summary__count">
+              共 <strong>{{ sorted.length }}</strong> 条
+            </span>
+          </div>
+        </div>
+        <el-form class="filter-form pc-filter-form" :inline="true" @submit.prevent="runQuery">
+          <el-form-item label="来源">
+            <el-select v-model="filters.source" clearable placeholder="全部" style="width: 120px">
+              <el-option v-for="(label, key) in sourceLabels" :key="key" :label="label" :value="key" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="状态">
+            <el-select v-model="filters.status" clearable placeholder="全部" style="width: 120px">
+              <el-option v-for="(label, key) in statusLabels" :key="key" :label="label" :value="key" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="姓名">
+            <el-input v-model="filters.name" clearable placeholder="搜索姓名" style="width: 130px" />
+          </el-form-item>
+          <el-form-item label="电话">
+            <el-input v-model="filters.phone" clearable placeholder="搜索电话" style="width: 130px" />
+          </el-form-item>
+          <el-form-item class="filter-actions">
+            <el-button type="primary" @click="runQuery">查询</el-button>
+            <el-button @click="resetFilters">重置</el-button>
+          </el-form-item>
+        </el-form>
+      </el-card>
+    </div>
 
-    <div v-if="isCompact" v-loading="loading" class="m-card-list" style="margin-top: 12px">
-      <div v-if="!sorted.length && !loading" class="m-card m-card-empty">暂无线索</div>
-      <div v-for="row in infiniteRows" :key="row.id" class="m-card">
-        <div class="m-card-head">
-          <div class="m-card-title">{{ row.student_or_parent_name }}</div>
-          <el-tag v-if="isToday(row.next_follow_at)" type="danger" size="small">今日跟进</el-tag>
+    <!-- wap/pad 筛选 -->
+    <div class="lead-m m-filter">
+      <div class="m-filter-search">
+        <el-icon class="m-filter-search__icon"><Search /></el-icon>
+        <input
+          v-model="filters.name"
+          class="m-filter-search__input"
+          type="search"
+          enterkeyhint="search"
+          placeholder="搜索姓名"
+          @keyup.enter="runQuery"
+        />
+        <button type="button" class="m-filter-search__btn" @click="runQuery">查询</button>
+      </div>
+      <div class="m-filter-row">
+        <el-select
+          v-model="filters.status"
+          class="m-filter-select"
+          clearable
+          placeholder="状态"
+          teleported
+          placement="bottom-start"
+          :fit-input-width="true"
+          :popper-options="{ strategy: 'fixed' }"
+          popper-class="lead-m-select-popper"
+        >
+          <el-option v-for="(label, key) in statusLabels" :key="key" :label="label" :value="key" />
+        </el-select>
+        <el-select
+          v-model="filters.source"
+          class="m-filter-select"
+          clearable
+          placeholder="来源"
+          teleported
+          placement="bottom-start"
+          :fit-input-width="true"
+          :popper-options="{ strategy: 'fixed' }"
+          popper-class="lead-m-select-popper"
+        >
+          <el-option v-for="(label, key) in sourceLabels" :key="key" :label="label" :value="key" />
+        </el-select>
+        <button
+          type="button"
+          class="m-filter-more"
+          :class="{ 'is-active': filterExpanded || activeFilterCount > 0 }"
+          @click="toggleFilterExpand"
+        >
+          更多{{ activeFilterCount ? ` · ${activeFilterCount}` : '' }}
+          <el-icon :class="{ 'is-open': filterExpanded }"><ArrowDown /></el-icon>
+        </button>
+      </div>
+      <div v-show="filterExpanded" class="m-filter-panel">
+        <el-input v-model="filters.phone" clearable placeholder="电话" />
+        <div class="m-filter-panel__actions">
+          <button type="button" class="m-filter-link" @click="resetFilters">重置</button>
+          <button type="button" class="m-filter-apply" @click="runQuery">完成</button>
         </div>
-        <div class="m-card-meta">
-          <span v-if="row.phone"><span class="k">电话</span> {{ row.phone }}</span>
-          <span><span class="k">来源</span> {{ sourceLabels[row.source] || row.source }}</span>
-          <span v-if="row.need"><span class="k">需求</span> {{ row.need }}</span>
-          <span v-if="row.notes"><span class="k">备注</span> {{ row.notes }}</span>
+      </div>
+    </div>
+
+    <!-- 移动卡片（CSS 控制显隐，不依赖 isCompact 首帧） -->
+    <div v-loading="loading" class="lead-m lead-card-list">
+      <div v-if="!sorted.length && !loading" class="lead-card lead-card--empty">暂无线索</div>
+      <div
+        v-for="row in infiniteRows"
+        :key="row.id"
+        class="lead-card"
+        :class="{ 'is-today': isToday(row.next_follow_at) }"
+      >
+        <div class="lead-card__top">
+          <div class="lead-card__avatar">{{ (row.student_or_parent_name || '?').slice(0, 1) }}</div>
+          <div class="lead-card__who">
+            <div class="lead-card__name">{{ row.student_or_parent_name }}</div>
+            <div class="lead-card__sub">
+              <span>{{ sourceLabels[row.source] || row.source }}</span>
+              <span v-if="row.phone"> · {{ row.phone }}</span>
+            </div>
+          </div>
+          <div class="lead-card__badges">
+            <el-tag v-if="isToday(row.next_follow_at)" type="danger" size="small" effect="dark" round>
+              今日
+            </el-tag>
+            <el-tag :type="statusTagType(row.status)" size="small" effect="plain" round>
+              {{ statusLabels[row.status] || row.status }}
+            </el-tag>
+          </div>
         </div>
-        <div class="lead-fields">
-          <div class="field">
-            <span class="field-label">状态</span>
+
+        <div v-if="row.need || row.notes" class="lead-card__body">
+          <p v-if="row.need" class="lead-card__need">
+            <span class="k">需求</span>{{ row.need }}
+          </p>
+          <p v-if="row.notes" class="lead-card__notes">
+            <span class="k">备注</span>{{ row.notes }}
+          </p>
+        </div>
+
+        <div class="lead-card__controls">
+          <div class="ctrl">
+            <span class="ctrl-label">状态</span>
             <el-select
               :model-value="row.status"
-              style="width: 100%"
+              class="ctrl-select"
+              teleported
+              placement="bottom-start"
+              :fit-input-width="true"
+              :popper-options="{ strategy: 'fixed' }"
+              popper-class="lead-m-select-popper"
               @change="(v: LeadStatus) => changeStatus(row, v)"
             >
               <el-option v-for="s in statusOptions" :key="s" :label="statusLabels[s]" :value="s" />
             </el-select>
           </div>
-          <div class="field">
-            <span class="field-label">下次跟进</span>
+          <div class="ctrl">
+            <span class="ctrl-label">下次跟进</span>
             <el-date-picker
               :model-value="row.next_follow_at ? new Date(row.next_follow_at) : null"
               type="datetime"
               placeholder="设置跟进"
-              style="width: 100%"
+              class="ctrl-date"
+              teleported
               @update:model-value="(v: Date | null) => patchFollow(row, v)"
             />
           </div>
@@ -334,70 +504,119 @@ onMounted(() => {
       </div>
     </div>
 
-    <el-card v-else style="margin-top: 12px" v-loading="loading">
-      <div class="table-scroll">
-        <el-table :data="pagedRows" stripe style="width: 100%">
-          <el-table-column prop="student_or_parent_name" label="姓名" min-width="120" />
-          <el-table-column prop="phone" label="电话" width="120" />
-          <el-table-column label="来源" width="110">
-            <template #default="{ row }">{{ sourceLabels[row.source] || row.source }}</template>
-          </el-table-column>
-          <el-table-column prop="need" label="需求" min-width="140" show-overflow-tooltip />
-          <el-table-column label="状态" width="130">
-            <template #default="{ row }">
-              <el-select
-                :model-value="row.status"
-                size="small"
-                style="width: 110px"
-                @change="(v: LeadStatus) => changeStatus(row, v)"
-              >
-                <el-option v-for="s in statusOptions" :key="s" :label="statusLabels[s]" :value="s" />
-              </el-select>
-            </template>
-          </el-table-column>
-          <el-table-column label="下次跟进" min-width="200">
-            <template #default="{ row }">
-              <div class="follow-cell">
-                <el-tag v-if="isToday(row.next_follow_at)" type="danger" size="small">今日</el-tag>
-                <el-date-picker
-                  :model-value="row.next_follow_at ? new Date(row.next_follow_at) : null"
-                  type="datetime"
+    <!-- PC 表格：与学生信息列表同一套表格气质 -->
+    <div class="lead-pc">
+      <el-card class="pc-table-card" v-loading="loading" shadow="never">
+        <div class="table-scroll">
+          <el-table
+            :data="pagedRows"
+            stripe
+            class="pc-lead-table"
+            style="width: 100%"
+            :header-cell-style="pcHeaderStyle"
+          >
+            <el-table-column prop="student_or_parent_name" label="姓名" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">
+                <div class="pc-name-cell">
+                  <span class="pc-avatar">{{ (row.student_or_parent_name || '?').slice(0, 1) }}</span>
+                  <span class="pc-name-text">{{ row.student_or_parent_name }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column prop="phone" label="电话" width="128">
+              <template #default="{ row }">
+                <span class="pc-mono">{{ row.phone || '—' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="来源" width="108">
+              <template #default="{ row }">
+                <el-tag size="small" effect="plain" round type="info">
+                  {{ sourceLabels[row.source] || row.source }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="need" label="需求" min-width="120" show-overflow-tooltip />
+            <!-- 加宽状态列，避免 select 被挤出「..」省略 -->
+            <el-table-column label="状态" width="148" class-name="col-status">
+              <template #default="{ row }">
+                <el-select
+                  :model-value="row.status"
                   size="small"
-                  placeholder="设置跟进"
-                  style="width: 170px"
-                  @update:model-value="(v: Date | null) => patchFollow(row, v)"
-                />
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column prop="notes" label="备注" min-width="120" show-overflow-tooltip />
-        </el-table>
-      </div>
-    </el-card>
+                  class="status-select"
+                  teleported
+                  :fit-input-width="true"
+                  @change="(v: LeadStatus) => changeStatus(row, v)"
+                >
+                  <el-option v-for="s in statusOptions" :key="s" :label="statusLabels[s]" :value="s" />
+                </el-select>
+              </template>
+            </el-table-column>
+            <!-- 时间选择在前，今日标签在后 -->
+            <el-table-column label="下次跟进" min-width="248" class-name="col-follow">
+              <template #default="{ row }">
+                <div class="follow-cell">
+                  <el-date-picker
+                    :model-value="row.next_follow_at ? new Date(row.next_follow_at) : null"
+                    type="datetime"
+                    size="small"
+                    placeholder="设置跟进"
+                    class="follow-picker"
+                    teleported
+                    @update:model-value="(v: Date | null) => patchFollow(row, v)"
+                  />
+                  <el-tag
+                    v-if="isToday(row.next_follow_at)"
+                    type="danger"
+                    size="small"
+                    effect="dark"
+                    round
+                    class="follow-today-tag"
+                  >
+                    今日
+                  </el-tag>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column prop="notes" label="备注" min-width="120" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="pc-notes">{{ row.notes || '—' }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </el-card>
 
-    <div v-if="!isCompact && sorted.length" class="pager-bar">
-      <el-button size="small" :disabled="page <= 1" @click="goFirstPage">首页</el-button>
-      <el-pagination
-        v-model:current-page="page"
-        v-model:page-size="pageSize"
-        :page-sizes="PAGE_SIZES"
-        :total="sorted.length"
-        :pager-count="5"
-        background
-        layout="total, sizes, prev, pager, next, jumper"
-        @current-change="onPageChange"
-        @size-change="onPageSizeChange"
-      />
-      <el-button size="small" :disabled="page >= totalPages" @click="goLastPage">末页</el-button>
+      <div v-if="sorted.length" class="pager-bar pc-pager">
+        <el-button size="small" plain :disabled="page <= 1" @click="goFirstPage">首页</el-button>
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :page-sizes="PAGE_SIZES"
+          :total="sorted.length"
+          :pager-count="5"
+          background
+          layout="total, sizes, prev, pager, next, jumper"
+          @current-change="onPageChange"
+          @size-change="onPageSizeChange"
+        />
+        <el-button size="small" plain :disabled="page >= totalPages" @click="goLastPage">末页</el-button>
+      </div>
     </div>
 
-    <el-dialog v-model="createVisible" title="新建线索" width="90%" style="max-width: 520px" destroy-on-close>
+    <el-dialog
+      v-model="createVisible"
+      title="新建线索"
+      width="90%"
+      style="max-width: 520px"
+      destroy-on-close
+      class="lead-create-dialog"
+    >
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
         <el-form-item label="学生/家长姓名" prop="student_or_parent_name">
-          <el-input v-model="form.student_or_parent_name" />
+          <el-input v-model="form.student_or_parent_name" placeholder="必填" />
         </el-form-item>
         <el-form-item label="电话">
-          <el-input v-model="form.phone" />
+          <el-input v-model="form.phone" placeholder="选填" />
         </el-form-item>
         <el-form-item label="来源" prop="source">
           <el-select v-model="form.source" style="width: 100%">
@@ -405,10 +624,10 @@ onMounted(() => {
           </el-select>
         </el-form-item>
         <el-form-item label="介绍人">
-          <el-input v-model="form.referrer_name" />
+          <el-input v-model="form.referrer_name" placeholder="老带新可填" />
         </el-form-item>
         <el-form-item label="需求">
-          <el-input v-model="form.need" type="textarea" :rows="2" />
+          <el-input v-model="form.need" type="textarea" :rows="2" placeholder="如：一对一、英语口语" />
         </el-form-item>
         <el-form-item label="下次跟进时间">
           <el-date-picker
@@ -431,53 +650,522 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.lead-page {
+  min-width: 0;
+}
+
+/* ≤991：只显示移动布局；≥992：只显示 PC */
+.lead-pc {
+  display: none;
+}
+
+.lead-m {
+  display: block;
+}
+
+@media (min-width: 992px) {
+  .lead-pc {
+    display: block;
+  }
+
+  .lead-m {
+    display: none !important;
+  }
+}
+
+.lead-toolbar.is-compact {
+  gap: 10px;
+}
+
+.create-btn :deep(span) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .filters {
+  margin-top: 12px;
   border: 1px solid var(--oc-border, #e8e0d0);
   background: var(--oc-card, #fffdf8);
+  border-radius: 12px;
+}
+
+/* 与学生信息 PC 筛选卡一致 */
+.pc-filters {
+  margin-top: 12px;
+  border-radius: 12px;
+  border-color: var(--oc-border, #e8e0d0);
+  background: linear-gradient(180deg, #fffdfb 0%, #faf6ee 100%);
+}
+
+.pc-filters :deep(.el-card__body) {
+  padding: 14px 16px 8px;
+}
+
+.pc-filters-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 10px;
+}
+
+.pc-filters-head-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pc-filters-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--oc-ink, #44403c);
+}
+
+.pc-filters-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(161, 98, 7, 0.1);
+  color: var(--oc-primary, #a16207);
+  font-weight: 600;
+}
+
+.pc-list-summary {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(255, 253, 248, 0.9);
+  border: 1px solid var(--oc-border, #e8e0d0);
+  font-size: 12px;
+  color: var(--oc-muted, #78716c);
+  line-height: 1.4;
+}
+
+.pc-list-summary__label {
+  font-weight: 600;
+  color: var(--oc-ink, #44403c);
+}
+
+.pc-list-summary strong {
+  color: var(--oc-primary, #a16207);
+  font-weight: 700;
+}
+
+.pc-filter-form :deep(.el-form-item) {
+  margin-bottom: 10px;
+  margin-right: 14px;
+}
+
+.pc-filter-form :deep(.el-form-item__label) {
+  color: var(--oc-muted, #78716c);
+  font-weight: 500;
+}
+
+.tb-btn--primary {
+  height: 36px;
+  border-radius: 9px;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(161, 98, 7, 0.22);
+}
+
+/* ── wap 筛选 ── */
+.m-filter {
+  position: relative;
+  z-index: 20;
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--oc-card, #fffdf8);
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 12px;
+  overflow: visible;
+}
+
+.m-filter-search {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 4px 0 12px;
+  background: #f5f0e6;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 10px;
+}
+
+.m-filter-search__icon {
+  color: #a8a29e;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.m-filter-search__input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  margin: 0 8px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 14px;
+  color: var(--oc-ink, #44403c);
+  appearance: none;
+}
+
+.m-filter-search__input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+.m-filter-search__input::placeholder {
+  color: #a8a29e;
+}
+
+.m-filter-search__btn {
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--oc-primary, #a16207);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.m-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  overflow: visible;
+}
+
+.m-filter-select {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.m-filter-select :deep(.el-select__wrapper) {
+  min-height: 34px;
+  border-radius: 8px;
+  background: #faf6ef !important;
+  box-shadow: 0 0 0 1px var(--oc-border, #e8e0d0) inset !important;
+}
+
+.m-filter-more {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 8px;
+  background: #fffdf8;
+  color: var(--oc-ink, #44403c);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.m-filter-more.is-active {
+  border-color: #d4b483;
+  color: var(--oc-primary, #a16207);
+  background: #faf3e6;
+}
+
+.m-filter-more .el-icon {
+  transition: transform 0.15s ease;
+}
+
+.m-filter-more .el-icon.is-open {
+  transform: rotate(180deg);
+}
+
+.m-filter-panel {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--oc-border, #e8e0d0);
+}
+
+.m-filter-panel__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  align-items: center;
+}
+
+.m-filter-link {
+  border: none;
+  background: none;
+  color: var(--oc-muted, #78716c);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.m-filter-apply {
+  height: 30px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--oc-primary, #a16207);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+:global(.lead-m-select-popper.el-popper) {
+  z-index: 5000 !important;
+}
+
+/* ── 移动卡片 ── */
+.lead-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+  padding-bottom: 8px;
+}
+
+.lead-card {
+  background: var(--oc-card, #fffdf8);
+  border: 2px solid var(--oc-border, #e8e0d0);
+  border-radius: 14px;
+  padding: 14px;
+  transition: border-color 0.15s ease;
+}
+
+.lead-card.is-today {
+  border-color: #f0b4b4;
+  background: linear-gradient(180deg, #fff8f8 0%, #fffdf8 40%);
+}
+
+.lead-card--empty {
+  text-align: center;
+  color: var(--oc-muted, #78716c);
+  padding: 40px 16px;
+  border-style: dashed;
+}
+
+.lead-card__top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.lead-card__avatar {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(145deg, #e8d5b0, #c9a066);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(161, 98, 7, 0.18);
+}
+
+.lead-card__who {
+  flex: 1;
+  min-width: 0;
+}
+
+.lead-card__name {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--oc-ink, #44403c);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lead-card__sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--oc-muted, #78716c);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lead-card__badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.lead-card__body {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: #f7f2e9;
+  border-radius: 10px;
+}
+
+.lead-card__need,
+.lead-card__notes {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--oc-ink, #44403c);
+}
+
+.lead-card__notes {
+  margin-top: 4px;
+  color: var(--oc-muted, #78716c);
+}
+
+.lead-card__need .k,
+.lead-card__notes .k {
+  color: #a8a29e;
+  margin-right: 6px;
+}
+
+.lead-card__controls {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--oc-border, #e8e0d0);
+}
+
+.ctrl-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--oc-muted, #78716c);
+}
+
+.ctrl-select,
+.ctrl-date {
+  width: 100%;
+}
+
+/* ── PC 表格（对齐学生列表） ── */
+.pc-table-card {
+  margin-top: 14px;
+  border-radius: 12px;
+  border-color: var(--oc-border, #e8e0d0);
+  overflow: hidden;
+  min-height: 160px;
+}
+
+.pc-table-card :deep(.el-card__body) {
+  padding: 0;
+}
+
+.pc-lead-table {
+  --el-table-border-color: var(--oc-border, #e8e0d0);
+  --el-table-row-hover-bg-color: #faf6ee;
+}
+
+.pc-lead-table :deep(.el-table__header th) {
+  border-bottom-color: var(--oc-border, #e8e0d0);
+}
+
+.pc-lead-table :deep(.el-table__row td) {
+  padding: 12px 0;
+}
+
+.pc-lead-table :deep(.col-status .cell),
+.pc-lead-table :deep(.col-follow .cell) {
+  overflow: visible;
+}
+
+.pc-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pc-avatar {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(145deg, #e8d5b0, #c9a066);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pc-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--oc-ink, #44403c);
+}
+
+.pc-mono {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--oc-ink, #44403c);
+}
+
+.pc-notes {
+  color: var(--oc-muted, #78716c);
+}
+
+/* 状态列：给足宽度，去掉被挤出的「..」 */
+.status-select {
+  width: 120px;
+  max-width: 100%;
+}
+
+.status-select :deep(.el-select__wrapper) {
+  min-height: 28px;
 }
 
 .follow-cell {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.lead-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--oc-border, #e8e0d0);
-}
-
-.field-label {
-  display: block;
-  font-size: 12px;
-  color: var(--oc-muted, #78716c);
-  margin-bottom: 4px;
-}
-
-.pager-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
   gap: 8px;
-  margin-top: 12px;
-  padding: 4px 0 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
-.pager-bar :deep(.el-pagination) {
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  row-gap: 8px;
+.follow-picker {
+  width: 178px;
+  flex-shrink: 0;
 }
 
-@media (max-width: 767px) {
-  .pager-bar {
-    justify-content: center;
+.follow-today-tag {
+  flex-shrink: 0;
+}
+
+/* 分页样式见全局 style.css · .pager-bar.pc-pager */
+
+@media (max-width: 991px) {
+  .lead-toolbar {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .create-btn {
+    width: 100%;
+    height: 40px;
+    border-radius: 10px;
+    font-weight: 600;
   }
 }
 

@@ -10,11 +10,13 @@ import {
   type Student,
 } from '../../api/students'
 import { useAuthStore } from '../../stores/auth'
+import { useListScrollRestore } from '../../composables/useListScrollRestore'
 
 const router = useRouter()
 const auth = useAuthStore()
 const loading = ref(false)
 const rows = ref<Student[]>([])
+const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('m-students')
 const managers = ref<ManagerOption[]>([])
 const gradeFilter = ref('')
 const q = ref('')
@@ -55,7 +57,9 @@ const rules: FormRules = {
   academic_manager_id: [{ required: true, message: '请选择学管师', trigger: 'change' }],
 }
 
-async function load() {
+async function load(opts?: { fromQuery?: boolean }) {
+  if (opts?.fromQuery) clearSnapshot()
+  const snap = opts?.fromQuery ? null : takeSnapshotForLoad('/m/students')
   loading.value = true
   try {
     const params: Record<string, string | number> = { status: 'active' }
@@ -69,6 +73,7 @@ async function load() {
   } finally {
     loading.value = false
   }
+  void finishListEnter({ snap, forceTop: !!opts?.fromQuery })
 }
 
 async function loadManagers() {
@@ -137,7 +142,7 @@ onMounted(async () => {
       @clear="load"
     >
       <template #append>
-        <el-button @click="load">搜索</el-button>
+        <el-button @click="load({ fromQuery: true })">搜索</el-button>
       </template>
     </el-input>
 
@@ -147,7 +152,7 @@ onMounted(async () => {
         @change="
           () => {
             gradeFilter = ''
-            load()
+            load({ fromQuery: true })
           }
         "
       >
@@ -160,7 +165,7 @@ onMounted(async () => {
         @change="
           (v: boolean) => {
             gradeFilter = v ? g : ''
-            load()
+            load({ fromQuery: true })
           }
         "
       >

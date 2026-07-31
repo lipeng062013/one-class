@@ -41,7 +41,7 @@ onMounted(load)
     <div class="head">
       <h2>我的学情</h2>
       <el-button type="primary" size="small" @click="router.push('/m/learning/new')">
-        写学情
+        编写学情
       </el-button>
     </div>
 

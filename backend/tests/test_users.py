@@ -77,3 +77,34 @@ def test_deactivate_user_blocks_login(client):
     assert res.status_code == 200
     login = client.post("/api/v1/auth/login", json={"username": "ops", "password": "ops123"})
     assert login.status_code == 403
+
+
+def test_admin_can_delete_user(client):
+    headers = auth_header(client, "admin", "admin123")
+    created = client.post(
+        "/api/v1/users",
+        headers=headers,
+        json={
+            "username": "temp_del",
+            "display_name": "待删",
+            "role": "teacher",
+            "password": "temp1234",
+        },
+    )
+    assert created.status_code == 201, created.text
+    uid = created.json()["data"]["id"]
+    res = client.delete(f"/api/v1/users/{uid}", headers=headers)
+    assert res.status_code == 200, res.text
+    assert res.json()["data"]["deleted"] is True
+    names = [u["username"] for u in client.get("/api/v1/users", headers=headers).json()["data"]]
+    assert "temp_del" not in names
+    assert client.post("/api/v1/auth/login", json={"username": "temp_del", "password": "temp1234"}).status_code == 401
+
+
+def test_cannot_delete_self(client):
+    headers = auth_header(client, "admin", "admin123")
+    users = client.get("/api/v1/users", headers=headers).json()["data"]
+    admin = next(u for u in users if u["username"] == "admin")
+    res = client.delete(f"/api/v1/users/{admin['id']}", headers=headers)
+    assert res.status_code == 400
+    assert "当前登录" in res.json()["error"]["message"]

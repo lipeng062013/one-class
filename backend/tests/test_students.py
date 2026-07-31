@@ -132,9 +132,48 @@ def test_operator_cannot_access_students(client):
         headers=teacher,
         json={"student_id": sid, "learning_summary": "正常上课"},
     )
+    from urllib.parse import unquote
+
     report = client.get(f"/api/v1/students/{sid}/growth-report", headers=teacher)
     assert report.status_code == 200
     assert report.headers.get("content-type", "").startswith("application/pdf")
+    assert "成长档案" in unquote(report.headers.get("content-disposition") or "")
+
+    # 带学情区间参数仍应返回 PDF（区间外可为空内容）
+    ranged = client.get(
+        f"/api/v1/students/{sid}/growth-report",
+        headers=teacher,
+        params={"date_from": "2099-01-01", "date_to": "2099-12-31"},
+    )
+    assert ranged.status_code == 200
+    assert ranged.headers.get("content-type", "").startswith("application/pdf")
+
+    # 指定学情 id
+    lr = client.get(
+        "/api/v1/learning-records",
+        headers=teacher,
+        params={"student_id": sid},
+    )
+    assert lr.status_code == 200
+    items = lr.json()["data"]
+    assert len(items) >= 1
+    rid = items[0]["id"]
+    by_id = client.get(
+        f"/api/v1/students/{sid}/growth-report",
+        headers=teacher,
+        params={"record_ids": str(rid)},
+    )
+    assert by_id.status_code == 200
+    assert by_id.headers.get("content-type", "").startswith("application/pdf")
+    # 三种方式文件名统一为「XXX的成长档案.pdf」
+    assert "成长档案.pdf" in unquote(by_id.headers.get("content-disposition") or "")
+
+    bad = client.get(
+        f"/api/v1/students/{sid}/growth-report",
+        headers=teacher,
+        params={"date_from": "not-a-date"},
+    )
+    assert bad.status_code == 400
 
 
 def test_bulk_delete_students(client):

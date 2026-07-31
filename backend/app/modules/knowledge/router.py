@@ -10,8 +10,8 @@ from app.modules.knowledge.schemas import KnowledgeCreate, KnowledgeOut, Knowled
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
-# 成长中心：沟通话术 / 异议处理 / 禁用词（已移除旧 tone 语气分类）
-CATEGORIES = {"script", "objection", "banned", "course", "faq", "staff", "process"}
+# 成长中心：沟通话术 / 异议处理 / 禁用词（已移除 course / tone 等旧分类）
+CATEGORIES = {"script", "objection", "banned"}
 
 
 def _serialize(entry: KnowledgeEntry) -> dict:

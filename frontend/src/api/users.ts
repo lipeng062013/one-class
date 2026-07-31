@@ -39,3 +39,7 @@ export async function patchUserApi(
   const res = await client.patch(`/users/${userId}`, payload)
   return res.data.data
 }
+
+export async function deleteUserApi(userId: number): Promise<void> {
+  await client.delete(`/users/${userId}`)
+}

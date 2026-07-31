@@ -10,7 +10,7 @@ class KnowledgeEntry(Base):
     __tablename__ = "knowledge_entries"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    category: Mapped[str] = mapped_column(String(32), index=True)  # course|faq|tone|banned|staff|process
+    category: Mapped[str] = mapped_column(String(32), index=True)  # script|objection|banned
     title: Mapped[str] = mapped_column(String(255), default="")
     content: Mapped[str] = mapped_column(Text, default="")
     tags: Mapped[str] = mapped_column(String(255), default="")

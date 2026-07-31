@@ -30,6 +30,12 @@ export function useInfiniteScroll<T>(
     visibleCount.value = chunk
   }
 
+  /** 恢复到至少 n 条（从详情返回时用） */
+  function ensureVisible(n: number) {
+    const target = Math.max(chunk, Math.floor(n) || chunk)
+    visibleCount.value = Math.min(Math.max(visibleCount.value, target), Math.max(source.value.length, chunk))
+  }
+
   function loadMore() {
     if (!hasMore.value || loadingMore.value) return
     loadingMore.value = true
@@ -106,6 +112,7 @@ export function useInfiniteScroll<T>(
     loadingMore,
     visibleCount,
     resetVisible,
+    ensureVisible,
     loadMore,
   }
 }

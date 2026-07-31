@@ -48,7 +48,53 @@ def test_generate_copy_template_only(client):
     assert "应用题" in data["body"]
     assert data["mode"] == "template"
     assert data["platform"] == "xhs"
-    assert "banned_hits" in data
+
+
+def test_get_copy_detail(client):
+    h = auth_header(client, "ops", "ops123")
+    mid = _create_material(client, h, pain_point="应用题慢")
+    tid = _create_template(client, h, body="痛点是{{pain_point}}，加油！")
+    res = client.post(
+        "/api/v1/copies/generate",
+        headers=h,
+        json={"material_id": mid, "template_id": tid, "mode": "template", "platform": "xhs"},
+    )
+    assert res.status_code == 200, res.text
+    cid = res.json()["data"]["id"]
+
+    detail = client.get(f"/api/v1/copies/{cid}", headers=h)
+    assert detail.status_code == 200, detail.text
+    data = detail.json()["data"]
+    assert data["id"] == cid
+    assert "应用题" in data["body"]
+    assert data["mode"] == "template"
+    assert data["platform"] == "xhs"
+    assert data["material_id"] == mid
+    assert isinstance(data.get("banned_hits"), list)
+
+    missing = client.get("/api/v1/copies/999999", headers=h)
+    assert missing.status_code == 404
+
+
+def test_bulk_delete_copies(client):
+    h = auth_header(client, "ops", "ops123")
+    mid = _create_material(client, h)
+    tid = _create_template(client, h)
+    ids = []
+    for _ in range(2):
+        res = client.post(
+            "/api/v1/copies/generate",
+            headers=h,
+            json={"material_id": mid, "template_id": tid, "mode": "template", "platform": "xhs"},
+        )
+        assert res.status_code == 200, res.text
+        ids.append(res.json()["data"]["id"])
+    bulk = client.post("/api/v1/copies/bulk-delete", headers=h, json={"ids": ids})
+    assert bulk.status_code == 200, bulk.text
+    assert bulk.json()["data"]["deleted_count"] == 2
+    listed = client.get("/api/v1/copies", headers=h).json()["data"]
+    listed_ids = {c["id"] for c in listed}
+    assert not set(ids) & listed_ids
 
 
 def test_generate_with_llm_mock(client, monkeypatch):

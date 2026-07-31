@@ -75,6 +75,10 @@ function logout() {
   padding: 0 14px;
   background: var(--oc-card, #fffdf8);
   border-bottom: 1px solid var(--oc-border, #e8e0d0);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  flex-shrink: 0;
 }
 
 .brand {

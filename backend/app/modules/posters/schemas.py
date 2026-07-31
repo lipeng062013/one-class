@@ -13,6 +13,10 @@ class GeneratePosterRequest(BaseModel):
     prompt: Optional[str] = None
 
 
+class PosterBulkDelete(BaseModel):
+    ids: list[int] = Field(min_length=1)
+
+
 class GeneratedPosterOut(BaseModel):
     id: int
     material_id: Optional[int] = None

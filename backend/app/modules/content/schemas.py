@@ -17,6 +17,10 @@ class GeneratedCopyUpdate(BaseModel):
     body: Optional[str] = None
 
 
+class CopyBulkDelete(BaseModel):
+    ids: list[int] = Field(min_length=1)
+
+
 class GeneratedCopyOut(BaseModel):
     id: int
     material_id: Optional[int] = None

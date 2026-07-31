@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -222,6 +223,68 @@ def generate_poster(db: Session, user: User, body: GeneratePosterRequest) -> dic
     return serialize_poster(poster, image_error=image_error)
 
 
+_UPLOAD_EXT = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+
+
+def upload_poster(
+    db: Session,
+    user: User,
+    *,
+    title: str,
+    content: bytes,
+    content_type: str,
+    filename: str | None = None,
+) -> dict[str, Any]:
+    """Manually add a poster image to the list (no layout/AI generation)."""
+    if user.role == "teacher":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if user.role not in {"admin", "operator"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if not content:
+        raise HTTPException(status_code=400, detail="文件为空")
+
+    title_clean = (title or "").strip()
+    if not title_clean:
+        raise HTTPException(status_code=400, detail="标题不能为空")
+
+    ct = (content_type or "").split(";")[0].strip().lower()
+    if ct not in _UPLOAD_EXT and not ct.startswith("image/"):
+        raise HTTPException(status_code=400, detail="仅支持图片（PNG / JPG / WebP / GIF）")
+
+    # Prefer content-type; fall back to filename suffix
+    ext = _UPLOAD_EXT.get(ct)
+    if not ext and filename:
+        suffix = Path(filename).suffix.lower()
+        if suffix in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+            ext = ".jpg" if suffix == ".jpeg" else suffix
+    if not ext:
+        ext = ".png"
+
+    storage = get_storage()
+    relative_path = f"posters/{uuid.uuid4().hex}{ext}"
+    storage.save(relative_path, content)
+
+    poster = GeneratedPoster(
+        material_id=None,
+        template_id=None,
+        mode="upload",
+        title=title_clean,
+        payload_json="{}",
+        file_path=relative_path,
+        created_by=user.id,
+    )
+    db.add(poster)
+    db.commit()
+    db.refresh(poster)
+    return serialize_poster(poster)
+
+
 def list_posters(db: Session) -> list[GeneratedPoster]:
     return db.query(GeneratedPoster).order_by(GeneratedPoster.id.desc()).all()
 
@@ -237,3 +300,15 @@ def delete_poster(db: Session, poster_id: int) -> None:
     poster = get_poster(db, poster_id)
     db.delete(poster)
     db.commit()
+
+
+def bulk_delete_posters(db: Session, poster_ids: list[int]) -> dict:
+    ids = list(dict.fromkeys(poster_ids))
+    if not ids:
+        return {"deleted_count": 0, "deleted_ids": []}
+    items = db.query(GeneratedPoster).filter(GeneratedPoster.id.in_(ids)).all()
+    found = {p.id for p in items}
+    for p in items:
+        db.delete(p)
+    db.commit()
+    return {"deleted_count": len(items), "deleted_ids": sorted(found)}
