@@ -9,6 +9,7 @@ import {
   resolveProxyApiUrl,
   type ImagePlaygroundConfig,
 } from '../../api/imagePlayground'
+
 const router = useRouter()
 const loading = ref(true)
 const config = ref<ImagePlaygroundConfig | null>(null)
@@ -75,9 +76,6 @@ function onFrameLoad() {
     <!-- 顶栏 -->
     <header class="top">
       <div class="top-left">
-        <el-button class="back-btn" text @click="router.back()">
-          <el-icon :size="18"><ArrowLeft /></el-icon>
-        </el-button>
         <div class="brand-icon" aria-hidden="true">
           <el-icon :size="20"><MagicStick /></el-icon>
         </div>
@@ -97,7 +95,6 @@ function onFrameLoad() {
               未配置
             </el-tag>
           </div>
-          <p class="subtitle">本站代理 · 不暴露上游地址与密钥</p>
         </div>
       </div>
 
@@ -186,12 +183,15 @@ function onFrameLoad() {
 
 <style scoped>
 .page {
-  /* 吃满主内容区可视高度；宽度见 .oc-page-shell */
+  /* 吃满主内容区可视高度；宽度由 .oc-page-shell 吃满主区 */
   display: flex;
   flex-direction: column;
   height: calc(100vh - 88px);
+  height: calc(100dvh - 88px);
   min-height: 560px;
   gap: 12px;
+  /* 避免外层再滚一层，把滚动交给 playground iframe 内部 */
+  overflow: hidden;
 }
 
 /* ── 顶栏 ── */
@@ -215,17 +215,6 @@ function onFrameLoad() {
   align-items: center;
   gap: 12px;
   min-width: 0;
-}
-
-.back-btn {
-  color: var(--oc-muted, #78716c);
-  padding: 6px;
-  margin-left: -4px;
-}
-
-.back-btn:hover {
-  color: var(--oc-primary, #a16207);
-  background: rgba(161, 98, 7, 0.08);
 }
 
 .brand-icon {
@@ -264,12 +253,6 @@ function onFrameLoad() {
 .model-tag {
   border-radius: 999px;
   font-weight: 550;
-}
-
-.subtitle {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--oc-muted, #78716c);
 }
 
 .top-right {
@@ -377,6 +360,8 @@ function onFrameLoad() {
     0 4px 6px rgba(41, 37, 36, 0.03),
     0 12px 32px rgba(41, 37, 36, 0.06);
   overflow: hidden;
+  /* 关键 flex 高度链：chrome 固定 + body 吃剩余 */
+  min-height: 0;
 }
 
 .frame-chrome {
@@ -435,9 +420,17 @@ function onFrameLoad() {
   min-height: 0;
   position: relative;
   background: #f8fafc;
+  /* 给 absolute iframe 一个确定的包含块 */
+  isolation: isolate;
 }
 
+/*
+ * 绝对铺满 frame-body，避免 height:100% 在仅有 min-height 的祖先上塌缩。
+ * Playground 内部大量 position:fixed（顶栏/底栏输入），依赖 iframe 视口尺寸正确。
+ */
 .frame {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   border: 0;
@@ -445,29 +438,93 @@ function onFrameLoad() {
   background: #f8fafc;
 }
 
-/* ── 响应式 ── */
+/*
+ * wap / pad（≤991）：
+ * 根因是旧样式把 .page 设为 height:auto + frame 仅 min-height，
+ * flex 高度链断裂 → iframe 视口异常 → Playground 底栏/内容区空白或错位。
+ * 这里抵消 main 内边距，用确定高度吃满顶栏以下视口。
+ */
 @media (max-width: 991px) {
   .page {
-    height: auto;
-    min-height: calc(100vh - 72px);
+    /*
+     * AppLayout .header = 58px；.main pad 14px 12px。
+     * 注意：.main 在 wap/pad 使用 scrollbar-gutter: both-edges，
+     * 负 margin 只抵消 padding，不要用不对称的左右值。
+     */
+    margin: -14px -12px;
+    padding: 10px 12px 12px;
+    width: auto;
+    max-width: none;
+    height: calc(100vh - 58px);
+    height: calc(100dvh - 58px);
+    max-height: calc(100vh - 58px);
+    max-height: calc(100dvh - 58px);
+    min-height: 0;
+    gap: 8px;
+    box-sizing: border-box;
+    border-radius: 0;
+  }
+
+  .top {
+    padding: 10px 12px;
+    border-radius: 12px;
+    gap: 10px;
+  }
+
+  .brand-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+
+  .title {
+    font-size: 1.05rem;
+  }
+
+  .status-bar {
+    padding: 8px 12px;
+    font-size: 12px;
+    /* 单行截断，少占纵向空间 */
+    align-items: center;
+  }
+
+  .status-bar .status-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .status-ico {
+    margin-top: 0;
   }
 
   .frame-shell {
-    min-height: 70vh;
+    flex: 1;
+    min-height: 0;
+    border-radius: 12px;
   }
 
-  .frame-body {
-    min-height: 65vh;
+  .frame-chrome {
+    height: 32px;
+    padding: 0 12px;
   }
 }
 
 @media (max-width: 767px) {
-  .top {
-    padding: 12px;
+  .page {
+    /* AppLayout 移动端 .main padding: 10px */
+    margin: -10px;
+    padding: 8px 10px 10px;
+    height: calc(100vh - 58px);
+    height: calc(100dvh - 58px);
+    max-height: calc(100vh - 58px);
+    max-height: calc(100dvh - 58px);
+    gap: 6px;
   }
 
-  .subtitle {
-    display: none;
+  .top {
+    padding: 8px 10px;
+    gap: 8px;
   }
 
   .top-right {
@@ -478,8 +535,21 @@ function onFrameLoad() {
     flex: 1;
   }
 
-  .status-bar {
+  /* 已连接状态在 frame-chrome 可见，省掉大段说明 */
+  .status-bar.is-ready {
+    display: none;
+  }
+
+  .status-bar.is-pending {
     font-size: 12px;
+  }
+
+  .frame-chrome .chrome-dot {
+    display: none;
+  }
+
+  .chrome-title {
+    margin-left: 0;
   }
 }
 
@@ -487,6 +557,7 @@ function onFrameLoad() {
 @media (min-width: 1280px) {
   .page {
     height: calc(100vh - 80px);
+    height: calc(100dvh - 80px);
     gap: 10px;
   }
 

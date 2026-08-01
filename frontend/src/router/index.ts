@@ -16,10 +16,15 @@ const router = createRouter({
       children: [
         { path: '', name: 'dashboard', component: () => import('../views/DashboardView.vue') },
         {
+          path: 'upload',
+          name: 'upload',
+          component: () => import('../views/upload/UploadView.vue'),
+          meta: { roles: ['admin', 'operator', 'teacher'] },
+        },
+        {
           path: 'materials',
           name: 'materials',
           component: () => import('../views/materials/MaterialListView.vue'),
-          // 负责人 / 运营 / 老师均可上传与查看素材
           meta: { roles: ['admin', 'operator', 'teacher'] },
         },
         {
@@ -74,13 +79,25 @@ const router = createRouter({
           path: 'students',
           name: 'students',
           component: () => import('../views/students/StudentListView.vue'),
-          meta: { roles: ['admin'] },
+          meta: { roles: ['admin', 'teacher'] },
         },
         {
           path: 'students/:id',
           name: 'student-detail',
           component: () => import('../views/students/StudentDetailView.vue'),
-          meta: { roles: ['admin'] },
+          meta: { roles: ['admin', 'teacher'] },
+        },
+        {
+          path: 'learning',
+          name: 'learning',
+          component: () => import('../views/learning/LearningListView.vue'),
+          meta: { roles: ['admin', 'teacher'] },
+        },
+        {
+          path: 'learning/new',
+          name: 'learning-new',
+          component: () => import('../views/learning/LearningNewView.vue'),
+          meta: { roles: ['admin', 'teacher'] },
         },
         {
           path: 'knowledge',
@@ -124,42 +141,17 @@ const router = createRouter({
         },
       ],
     },
+    // 旧 /m 书签 → 统一正式路径（不再挂 MobileLayout）
+    { path: '/m', redirect: '/' },
+    { path: '/m/upload', redirect: '/upload' },
+    { path: '/m/materials', redirect: '/materials' },
+    { path: '/m/students', redirect: '/students' },
     {
-      path: '/m',
-      component: () => import('../layouts/MobileLayout.vue'),
-      children: [
-        {
-          path: 'upload',
-          name: 'mobile-upload',
-          component: () => import('../views/mobile/MobileUploadView.vue'),
-        },
-        {
-          path: 'materials',
-          name: 'mobile-materials',
-          component: () => import('../views/mobile/MobileMaterialsView.vue'),
-        },
-        {
-          path: 'students',
-          name: 'mobile-students',
-          component: () => import('../views/mobile/MobileStudentsView.vue'),
-        },
-        {
-          path: 'students/:id',
-          name: 'mobile-student-detail',
-          component: () => import('../views/mobile/MobileStudentDetailView.vue'),
-        },
-        {
-          path: 'learning',
-          name: 'mobile-learning',
-          component: () => import('../views/mobile/MobileLearningView.vue'),
-        },
-        {
-          path: 'learning/new',
-          name: 'mobile-learning-new',
-          component: () => import('../views/mobile/MobileLearningNewView.vue'),
-        },
-      ],
+      path: '/m/students/:id',
+      redirect: (to) => `/students/${to.params.id}`,
     },
+    { path: '/m/learning', redirect: '/learning' },
+    { path: '/m/learning/new', redirect: '/learning/new' },
   ],
 })
 
@@ -167,7 +159,7 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore()
   if (to.meta.public) {
     if (auth.isLoggedIn && to.name === 'login') {
-      return auth.isTeacher ? '/m/upload' : '/'
+      return '/'
     }
     return true
   }
@@ -182,25 +174,6 @@ router.beforeEach(async (to) => {
     } catch {
       auth.logout()
       return { name: 'login' }
-    }
-  }
-
-  // 老师默认手机端；工作台与素材（上传/管理）允许访问桌面
-  const teacherDesktopAllowed =
-    to.path === '/' || to.path === '/materials' || to.path.startsWith('/materials/')
-  if (auth.isTeacher && !to.path.startsWith('/m/') && !teacherDesktopAllowed) {
-    return '/m/upload'
-  }
-
-  // 负责人、运营也可使用手机端「上传素材」
-  // （仅拦截老师以外用户进入除 upload/materials 外的手机页）
-  if (!auth.isTeacher && to.path.startsWith('/m/')) {
-    const opsMobileAllowed =
-      to.path === '/m/upload' ||
-      to.path === '/m/materials' ||
-      to.path.startsWith('/m/materials/')
-    if (!opsMobileAllowed) {
-      return '/'
     }
   }
 

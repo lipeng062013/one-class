@@ -1,0 +1,42 @@
+# PR / 非 master 推送：只做前端 TypeScript 检查，不部署
+# master 的检查在 deploy-server.yml 的 typecheck job 里（部署前必过）
+name: Frontend Typecheck
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-typecheck.yml"
+  push:
+    branches-ignore: [master]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-typecheck.yml"
+
+concurrency:
+  group: frontend-typecheck-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: vue-tsc
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --registry=https://registry.npmmirror.com
+
+      - name: Run vue-tsc typecheck
+        working-directory: frontend
+        run: npm run typecheck

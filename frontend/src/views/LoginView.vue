@@ -29,11 +29,30 @@ async function onSubmit() {
   try {
     await auth.login(form.username.trim(), form.password)
     ElMessage.success('登录成功')
-    const redirect = (route.query.redirect as string) || ''
-    if (auth.isTeacher) {
-      await router.replace(redirect.startsWith('/m/') ? redirect : '/m/upload')
+    const raw = (route.query.redirect as string) || ''
+    // 旧 /m/* 书签映射到正式路径
+    let redirect = raw
+    if (redirect.startsWith('/m/') || redirect === '/m') {
+      const map: Record<string, string> = {
+        '/m': '/',
+        '/m/upload': '/upload',
+        '/m/materials': '/materials',
+        '/m/students': '/students',
+        '/m/learning': '/learning',
+        '/m/learning/new': '/learning/new',
+      }
+      if (map[redirect]) {
+        redirect = map[redirect]
+      } else if (redirect.startsWith('/m/students/')) {
+        redirect = redirect.replace(/^\/m/, '')
+      } else {
+        redirect = redirect.replace(/^\/m/, '') || '/'
+      }
+    }
+    if (redirect && redirect !== '/login') {
+      await router.replace(redirect)
     } else {
-      await router.replace(redirect && !redirect.startsWith('/m/') ? redirect : '/')
+      await router.replace('/')
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : '登录失败'

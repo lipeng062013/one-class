@@ -277,7 +277,7 @@ async function onDelete() {
     if (isCopy.value) await deleteCopyTemplate(item.value.id)
     else await deletePosterTemplate(item.value.id)
     ElMessage.success('已删除')
-    router.push('/templates')
+    goBack()
   } catch {
     /* cancel */
   }
@@ -537,7 +537,7 @@ onMounted(load)
 </template>
 
 <style scoped>
-/* 内容宽度：全局 .oc-page-shell（与工作台一致，见 docs/ui-detail-page-pattern.md） */
+/* 内容宽度：.oc-page-shell 吃满主区（docs/ui-detail-page-pattern.md） */
 .tpl-detail {
   padding-bottom: 16px;
 }

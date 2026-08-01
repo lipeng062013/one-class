@@ -1,4 +1,5 @@
 import client from './client'
+import { asPageResult, type PageResult } from './paging'
 
 export type StudentStatus = 'active' | 'paused' | 'graduated' | 'quit'
 export type ClassStatus = 'attended' | 'absent' | 'late' | 'leave' | 'makeup'
@@ -82,6 +83,8 @@ export interface StudentListParams {
   school?: string
   academic_manager_id?: number
   q?: string
+  page?: number
+  page_size?: number
 }
 
 export async function listManagersApi(includeInactive = true): Promise<ManagerOption[]> {
@@ -91,9 +94,36 @@ export async function listManagersApi(includeInactive = true): Promise<ManagerOp
   return res.data.data
 }
 
-export async function listStudentsApi(params: StudentListParams = {}): Promise<Student[]> {
-  const res = await client.get('/students', { params })
-  return res.data.data
+export async function listStudentsApi(
+  params: StudentListParams = {},
+): Promise<PageResult<Student>> {
+  const res = await client.get('/students', {
+    params: {
+      grade: params.grade || undefined,
+      name: params.name || undefined,
+      phone: params.phone || undefined,
+      status: params.status || undefined,
+      school: params.school || undefined,
+      academic_manager_id: params.academic_manager_id,
+      q: params.q || undefined,
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 20,
+    },
+  })
+  return asPageResult<Student>(res.data.data, params.page ?? 1, params.page_size ?? 20)
+}
+
+/** 下拉选学生等：取前若干条 */
+export async function listStudentsForPicker(
+  params: Omit<StudentListParams, 'page' | 'page_size'> = {},
+  limit = 100,
+): Promise<Student[]> {
+  const page = await listStudentsApi({
+    ...params,
+    page: 1,
+    page_size: Math.min(100, Math.max(1, limit)),
+  })
+  return page.items
 }
 
 export async function getStudentApi(id: number): Promise<Student> {

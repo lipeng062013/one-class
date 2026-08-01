@@ -1,5 +1,7 @@
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.core.pagination import clamp_page, clamp_page_size, page_payload, paginate_query
 from app.core.storage import Storage
 from app.models.material import Material, MaterialFile
 from app.models.user import User
@@ -31,11 +33,58 @@ def material_to_dict(m: Material) -> dict:
     }
 
 
-def list_materials(db: Session, user: User) -> list[Material]:
-    q = db.query(Material).options(joinedload(Material.files)).order_by(Material.id.desc())
+def _materials_base_query(
+    db: Session,
+    user: User,
+    *,
+    status: str | None = None,
+    grade: str | None = None,
+    subject: str | None = None,
+    q: str | None = None,
+):
+    query = db.query(Material).options(joinedload(Material.files))
     if user.role == "teacher":
-        q = q.filter(Material.uploader_id == user.id)
-    return q.all()
+        query = query.filter(Material.uploader_id == user.id)
+    if status:
+        query = query.filter(Material.status == status)
+    if grade:
+        query = query.filter(Material.grade.contains(grade.strip()))
+    if subject:
+        query = query.filter(Material.subject.contains(subject.strip()))
+    if q:
+        like = f"%{q.strip()}%"
+        query = query.filter(
+            or_(
+                Material.title.like(like),
+                Material.pain_point.like(like),
+                Material.teacher_action.like(like),
+                Material.next_step.like(like),
+                Material.grade.like(like),
+                Material.subject.like(like),
+            )
+        )
+    return query.order_by(Material.id.desc())
+
+
+def list_materials(
+    db: Session,
+    user: User,
+    *,
+    page: int | None = None,
+    page_size: int | None = None,
+    status: str | None = None,
+    grade: str | None = None,
+    subject: str | None = None,
+    q: str | None = None,
+) -> dict:
+    """Paginated material list. Returns { items, total, page, page_size }."""
+    p = clamp_page(page)
+    ps = clamp_page_size(page_size)
+    query = _materials_base_query(
+        db, user, status=status, grade=grade, subject=subject, q=q
+    )
+    rows, total = paginate_query(query, page=p, page_size=ps)
+    return page_payload(rows, total=total, page=p, page_size=ps)
 
 
 def get_material(db: Session, material_id: int) -> Material | None:

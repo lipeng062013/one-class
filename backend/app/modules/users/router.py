@@ -67,7 +67,7 @@ def patch_user(
     _: User = Depends(require_roles("admin")),
 ):
     user = db.get(User, user_id)
-    if not user:
+    if not user or user.deleted_at is not None:
         return fail("NOT_FOUND", "用户不存在", status_code=404)
     result = update_user(
         db,
@@ -89,9 +89,11 @@ def post_reset_password(
     _: User = Depends(require_roles("admin")),
 ):
     user = db.get(User, user_id)
-    if not user:
+    if not user or user.deleted_at is not None:
         return fail("NOT_FOUND", "用户不存在", status_code=404)
-    reset_password(db, user, body.new_password)
+    err = reset_password(db, user, body.new_password)
+    if err:
+        return fail("USER_RESET_FAILED", err, status_code=400)
     return ok({"reset": True})
 
 
@@ -102,7 +104,7 @@ def remove_user(
     actor: User = Depends(require_roles("admin")),
 ):
     user = db.get(User, user_id)
-    if not user:
+    if not user or user.deleted_at is not None:
         return fail("NOT_FOUND", "用户不存在", status_code=404)
     err = delete_user(db, user, actor=actor)
     if err:

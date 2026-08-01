@@ -13,8 +13,13 @@ import {
 import { listPosterTemplates, type PosterTemplate } from '../../api/templates'
 import { getIntegrationsStatus, type IntegrationsStatus } from '../../api/system'
 import { POSTER_GENERATE_FIELDS, type TemplateParamHint } from '../../constants/templateParams'
+import { useBreakpoint } from '../../composables/useBreakpoint'
+import { usePageBack } from '../../composables/usePageBack'
+
 const route = useRoute()
 const router = useRouter()
+const { goBack } = usePageBack('/posters')
+const { isCompact } = useBreakpoint()
 const loading = ref(false)
 const templates = ref<PosterTemplate[]>([])
 const result = ref<GeneratedPoster | null>(null)
@@ -142,7 +147,7 @@ onUnmounted(revokePreview)
 <template>
   <div class="poster-generate">
     <div class="page-head">
-      <el-page-header content="生成海报" @back="router.push('/posters')" />
+      <el-page-header content="生成海报" @back="goBack" />
     </div>
 
     <div
@@ -169,8 +174,12 @@ onUnmounted(revokePreview)
       <span v-else class="status-sub">配置 IMAGE_* 后可使用 AI 生图</span>
     </div>
 
-    <el-row :gutter="20" class="generate-layout">
-      <el-col :xs="24" :lg="9" :md="10" class="generate-form-col">
+    <el-row
+      :gutter="isCompact ? 0 : 20"
+      class="generate-layout"
+      :class="{ 'is-stacked': isCompact }"
+    >
+      <el-col :xs="24" :sm="24" :lg="9" :md="isCompact ? 24 : 10" class="generate-form-col">
         <el-card class="form-card" shadow="never">
           <template #header>
             <div class="card-head">
@@ -309,7 +318,7 @@ onUnmounted(revokePreview)
         </el-card>
       </el-col>
 
-      <el-col :xs="24" :lg="15" :md="14" class="generate-side-col">
+      <el-col :xs="24" :sm="24" :lg="15" :md="isCompact ? 24 : 14" class="generate-side-col">
         <el-card class="preview-card" shadow="never" v-loading="loading">
           <template #header>
             <div class="card-head">
@@ -389,7 +398,7 @@ onUnmounted(revokePreview)
 <style scoped>
 .poster-generate {
   width: 100%;
-  max-width: none;
+  max-width: 100%;
   box-sizing: border-box;
 }
 
@@ -461,6 +470,8 @@ onUnmounted(revokePreview)
 .generate-layout {
   margin-top: 16px;
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .generate-form-col,
@@ -468,6 +479,7 @@ onUnmounted(revokePreview)
   display: flex;
   flex-direction: column;
   min-width: 0;
+  max-width: 100%;
 }
 
 .generate-form-col > .form-card,
@@ -476,7 +488,34 @@ onUnmounted(revokePreview)
   flex: 1;
 }
 
+.generate-layout.is-stacked .generate-side-col {
+  margin-top: 16px;
+}
+
 @media (max-width: 991px) {
+  /*
+   * compact 下 gutter=0，清掉 EP 左右负 margin / col padding，
+   * 避免窄屏内容与右边框间距明显大于左侧。
+   */
+  .poster-generate {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+    box-sizing: border-box;
+  }
+
+  .generate-layout {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    width: 100% !important;
+  }
+
+  .generate-layout > :deep(.el-col) {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    max-width: 100%;
+  }
+
   .generate-layout .generate-side-col {
     margin-top: 16px;
   }

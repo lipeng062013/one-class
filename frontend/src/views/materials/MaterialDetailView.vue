@@ -177,7 +177,7 @@ async function onDelete() {
     })
     await deleteMaterialApi(item.value.id)
     ElMessage.success('已删除')
-    router.push('/materials')
+    goBack()
   } catch {
     /* cancel */
   }
@@ -209,12 +209,8 @@ async function onUploadMore(options: UploadRequestOptions) {
 
 function goGenerateCopy() {
   if (!item.value) return
+  // 素材仅用于生成文案，不进入海报流程
   router.push({ path: '/copies/generate', query: { material_id: String(item.value.id) } })
-}
-
-function goGeneratePoster() {
-  if (!item.value) return
-  router.push({ path: '/posters/generate', query: { material_id: String(item.value.id) } })
 }
 
 watch(
@@ -239,10 +235,6 @@ onUnmounted(revokePreviews)
         <el-button type="primary" @click="goGenerateCopy">
           <el-icon class="btn-ico"><EditPen /></el-icon>
           生成文案
-        </el-button>
-        <el-button @click="goGeneratePoster">
-          <el-icon class="btn-ico"><PictureFilled /></el-icon>
-          生成海报
         </el-button>
       </div>
     </div>
@@ -466,7 +458,7 @@ onUnmounted(revokePreviews)
 </template>
 
 <style scoped>
-/* 内容宽度：全局 .oc-page-shell（docs/ui-detail-page-pattern.md） */
+/* 内容宽度：.oc-page-shell 吃满主区（docs/ui-detail-page-pattern.md） */
 .mat-detail {
   padding-bottom: 12px;
 }
@@ -987,8 +979,8 @@ onUnmounted(revokePreviews)
   /* 顶栏操作：小屏两列，不吸顶（与文案详情一致，随页面滚动） */
   .toolbar-actions {
     width: 100%;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
+    flex-wrap: wrap;
     gap: 8px;
   }
 

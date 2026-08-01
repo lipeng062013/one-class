@@ -7,15 +7,16 @@
 
 ---
 
-## 0. 内容宽度（与工作台强制一致）
+## 0. 内容宽度
 
 | 项 | 值 | 说明 |
 |----|-----|------|
-| CSS 变量 | `--oc-content-max: 1680px` | 默认内容最大宽度 |
-| 超宽变量 | `--oc-content-max-wide: 1760px` | 视口 ≥1720px 时略放宽 |
-| 全局类 | **`.oc-page-shell`** | 根节点统一居中 + max-width |
+| 全局类 | **`.oc-page-shell`** | 业务页根节点：`width: 100%`，**吃满** `.main` |
+| 工作台 | **`.dashboard.oc-page-shell`** | 阅读限宽居中：`--oc-content-max` / wide |
+| CSS 变量 | `--oc-content-max: 1680px` | **仅工作台** |
+| 超宽变量 | `--oc-content-max-wide: 1760px` | 视口 ≥1720px 时工作台略放宽 |
 
-### 0.1 新详情页必须这样做
+### 0.1 新详情 / 上传 / 生成页必须这样做
 
 ```html
 <div class="xxx-detail oc-page-shell" v-loading="loading">
@@ -24,27 +25,26 @@
 ```
 
 ```css
-/* scoped 里只写页面自身间距，禁止再写 max-width / margin: 0 auto */
+/* scoped 里只写页面自身间距，禁止再写 max-width / margin: 0 auto 限宽 */
 .xxx-detail {
   padding-bottom: 12px; /* 或 16px */
 }
 ```
 
-**禁止**：在 scoped 里写 `max-width: 1280px` / `1120px` 等「私货宽度」。  
-**禁止**：详情页比工作台更窄或更宽（除非全屏沉浸页，如需例外须在文档登记）。
+**禁止**：在 scoped 里写 `max-width: 720/1280/1120px` 等「私货宽度」把表单/详情挤窄。  
+**禁止**：业务页再套一层居中限宽（左右大块留白）；工作台除外。
 
 ### 0.2 已对齐的页面
 
-| 页面 | 根 class | 状态 |
-|------|----------|------|
-| 工作台 | `dashboard oc-page-shell` | ✅ 基准 |
-| 文案详情 | `copy-detail oc-page-shell` | ✅ |
-| 素材详情 | `mat-detail oc-page-shell` | ✅ |
-| 文案/海报模板详情 | `tpl-detail oc-page-shell` | ✅ |
-| 学生详情 | `student-detail-page oc-page-shell` | ✅ |
-| GPT 生图 | `page oc-page-shell` | ✅ 同宽外壳 |
+| 页面 | 根 class | 宽度策略 |
+|------|----------|----------|
+| 工作台 | `dashboard oc-page-shell` | ✅ 限宽居中（阅读型） |
+| 文案/素材/模板/学生详情 | `*-detail oc-page-shell` | ✅ 吃满主区 |
+| 上传素材 / 编写学情 | `* oc-page-shell` | ✅ 吃满主区 |
+| GPT 生图 | `page oc-page-shell` | ✅ 吃满主区 |
+| 生成文案 / 生成海报 | 根节点满宽 | ✅ 吃满主区 |
 
-列表页一般**不**锁 `.oc-page-shell`（表格宜吃满主区），与详情/工作台的「内容型」页面区分。
+列表页一般**不**锁 `.oc-page-shell`（表格宜吃满主区）。
 
 ---
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ElMessage,
@@ -18,7 +18,6 @@ import {
 } from '../../api/materials'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
-import { useInfiniteScroll } from '../../composables/useInfiniteScroll'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
 
 const LIST_STATE_KEY = 'oc-material-list-state'
@@ -38,10 +37,17 @@ const pcHeaderStyle = {
 }
 
 const loading = ref(false)
+const loadingMore = ref(false)
+/** PC：当前页；WAP/Pad：已加载累计 */
 const rows = ref<Material[]>([])
+const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 const filterExpanded = ref(false)
+const sentinelRef = ref<HTMLElement | null>(null)
+/** 供从详情返回时恢复「已展开条数」 */
+const visibleCount = computed(() => rows.value.length)
+let scrollObserver: IntersectionObserver | null = null
 
 const filters = reactive({
   status: '',
@@ -106,66 +112,50 @@ const activeFilterCount = computed(() => {
   return n
 })
 
-const filtered = computed(() => {
-  const q = filters.q.trim().toLowerCase()
-  return rows.value.filter((r) => {
-    if (filters.status && r.status !== filters.status) return false
-    if (filters.grade.trim() && !(r.grade || '').includes(filters.grade.trim())) return false
-    if (filters.subject.trim() && !(r.subject || '').includes(filters.subject.trim())) return false
-    if (!q) return true
-    const hay = `${r.title} ${r.grade || ''} ${r.subject || ''} ${r.pain_point || ''}`.toLowerCase()
-    return hay.includes(q)
-  })
-})
-
-const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize.value) || 1))
-
-const pagedRows = computed(() => {
-  const start = (page.value - 1) * pageSize.value
-  return filtered.value.slice(start, start + pageSize.value)
-})
-
-const sentinelRef = ref<HTMLElement | null>(null)
-const {
-  displayRows: infiniteRows,
-  hasMore: hasMoreInfinite,
-  loadingMore,
-  visibleCount,
-  resetVisible: resetInfinite,
-  ensureVisible,
-} = useInfiniteScroll(filtered, {
-  chunk: SCROLL_CHUNK,
-  enabled: isCompact,
-  sentinelRef,
-})
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value) || 1))
+/** PC 表格：服务端当前页 */
+const pagedRows = computed(() => rows.value)
+/** WAP/Pad 卡片：累计已加载 */
+const infiniteRows = computed(() => rows.value)
+const hasMoreInfinite = computed(() => rows.value.length < total.value)
 
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('materials', {
   visibleCount,
   enabled: isCompact,
 })
 
-function clampPage() {
-  if (page.value > totalPages.value) page.value = totalPages.value
-  if (page.value < 1) page.value = 1
+function listQuery(pageNum: number, size: number) {
+  return {
+    page: pageNum,
+    page_size: size,
+    status: filters.status || undefined,
+    grade: filters.grade.trim() || undefined,
+    subject: filters.subject.trim() || undefined,
+    q: filters.q.trim() || undefined,
+  }
 }
 
 function goFirstPage() {
   page.value = 1
   saveListState()
+  void load()
 }
 
 function goLastPage() {
   page.value = totalPages.value
   saveListState()
+  void load()
 }
 
 function onPageChange() {
   saveListState()
+  void load()
 }
 
 function onPageSizeChange() {
   page.value = 1
   saveListState()
+  void load()
 }
 
 function restoreListState() {
@@ -211,9 +201,8 @@ function runQuery() {
   clearSnapshot()
   page.value = 1
   filterExpanded.value = false
-  resetInfinite()
-  clampPage()
   saveListState()
+  void load({ fromQuery: true })
 }
 
 function resetFilters() {
@@ -224,8 +213,8 @@ function resetFilters() {
   filters.subject = ''
   page.value = 1
   filterExpanded.value = false
-  resetInfinite()
   saveListState()
+  void load({ fromQuery: true })
 }
 
 function toggleFilterExpand() {
@@ -250,24 +239,73 @@ async function openUpload() {
   uploadFormRef.value?.clearValidate()
 }
 
-async function load(opts?: { fromQuery?: boolean }) {
-  const snap = opts?.fromQuery ? null : takeSnapshotForLoad(route.path)
+async function load(opts?: { fromQuery?: boolean; append?: boolean }) {
+  const append = !!opts?.append && isCompact.value
+  const snap = opts?.fromQuery || append ? null : takeSnapshotForLoad(route.path)
   if (opts?.fromQuery) clearSnapshot()
 
-  loading.value = true
+  if (append) loadingMore.value = true
+  else loading.value = true
   try {
-    rows.value = await listMaterialsApi()
-    if (snap?.visibleCount != null && isCompact.value) {
-      ensureVisible(snap.visibleCount)
+    if (isCompact.value) {
+      // 移动端：按 chunk 拉取；append 时 page 已 +1
+      if (!append) page.value = 1
+      const res = await listMaterialsApi(listQuery(page.value, SCROLL_CHUNK))
+      rows.value = append ? [...rows.value, ...res.items] : res.items
+      total.value = res.total
+      // 从详情返回：补拉到快照条数
+      if (!append && snap?.visibleCount != null) {
+        const need = Math.max(SCROLL_CHUNK, snap.visibleCount)
+        while (rows.value.length < need && rows.value.length < total.value) {
+          page.value += 1
+          const more = await listMaterialsApi(listQuery(page.value, SCROLL_CHUNK))
+          rows.value = [...rows.value, ...more.items]
+          total.value = more.total
+          if (!more.items.length) break
+        }
+      }
     } else {
-      resetInfinite()
+      const res = await listMaterialsApi(listQuery(page.value, pageSize.value))
+      rows.value = res.items
+      total.value = res.total
+      if (page.value > 1 && res.items.length === 0 && res.total > 0) {
+        page.value = Math.max(1, Math.ceil(res.total / pageSize.value))
+        const again = await listMaterialsApi(listQuery(page.value, pageSize.value))
+        rows.value = again.items
+        total.value = again.total
+      }
     }
-    clampPage()
     saveListState()
   } finally {
     loading.value = false
+    loadingMore.value = false
   }
-  void finishListEnter({ snap, forceTop: !!opts?.fromQuery })
+  if (!append) void finishListEnter({ snap, forceTop: !!opts?.fromQuery })
+}
+
+async function loadMore() {
+  if (!isCompact.value || loadingMore.value || loading.value || !hasMoreInfinite.value) return
+  page.value += 1
+  await load({ append: true })
+}
+
+function setupScrollObserver() {
+  teardownScrollObserver()
+  if (!isCompact.value) return
+  const el = sentinelRef.value
+  if (!el) return
+  scrollObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((e) => e.isIntersecting)) void loadMore()
+    },
+    { root: null, rootMargin: '160px 0px', threshold: 0 },
+  )
+  scrollObserver.observe(el)
+}
+
+function teardownScrollObserver() {
+  scrollObserver?.disconnect()
+  scrollObserver = null
 }
 
 async function submitUpload() {
@@ -309,19 +347,32 @@ async function onDelete(row: Material) {
   }
 }
 
-watch(filtered, () => clampPage())
-watch(pageSize, () => clampPage())
-
-onMounted(() => {
-  restoreListState()
-  load()
+watch(isCompact, async (compact, wasCompact) => {
+  if (compact === wasCompact) return
+  page.value = 1
+  await load({ fromQuery: true })
+  await nextTick()
+  setupScrollObserver()
 })
+
+watch(sentinelRef, () => {
+  if (isCompact.value) setupScrollObserver()
+})
+
+onMounted(async () => {
+  restoreListState()
+  await load()
+  await nextTick()
+  setupScrollObserver()
+})
+
+onUnmounted(() => teardownScrollObserver())
 </script>
 
 <template>
   <div class="material-page">
     <div class="page-toolbar" :class="{ 'is-compact': isCompact }">
-      <el-page-header content="素材管理" />
+      <el-page-header class="is-title-only" content="素材管理" />
       <el-button class="tb-btn tb-btn--primary" type="primary" @click="openUpload">
         <el-icon><Plus /></el-icon>
         上传素材
@@ -339,7 +390,7 @@ onMounted(() => {
           <div class="pc-list-summary">
             <span class="pc-list-summary__label">教学素材</span>
             <span class="pc-list-summary__count">
-              共 <strong>{{ filtered.length }}</strong> 条
+              共 <strong>{{ total }}</strong> 条
             </span>
           </div>
         </div>
@@ -420,7 +471,7 @@ onMounted(() => {
 
     <!-- 移动卡片 -->
     <div v-loading="loading" class="mat-m mat-card-list">
-      <div v-if="!filtered.length && !loading" class="mat-card mat-card--empty">暂无素材</div>
+      <div v-if="!total && !loading" class="mat-card mat-card--empty">暂无素材</div>
       <div v-for="row in infiniteRows" :key="row.id" class="mat-card">
         <div class="mat-card__top">
           <div class="mat-card__title" @click="router.push(`/materials/${row.id}`)">
@@ -452,11 +503,11 @@ onMounted(() => {
           <el-button size="small" type="danger" plain @click="onDelete(row)">删除</el-button>
         </div>
       </div>
-      <div v-if="filtered.length" ref="sentinelRef" class="scroll-sentinel">
+      <div v-if="total" ref="sentinelRef" class="scroll-sentinel">
         <span v-if="hasMoreInfinite || loadingMore" class="scroll-hint">
           {{ loadingMore ? '加载中…' : '上拉加载更多' }}
         </span>
-        <span v-else class="scroll-hint">已加载全部 {{ filtered.length }} 条</span>
+        <span v-else class="scroll-hint">已加载全部 {{ total }} 条</span>
       </div>
     </div>
 
@@ -527,16 +578,16 @@ onMounted(() => {
             </el-table-column>
           </el-table>
         </div>
-        <div v-if="!filtered.length && !loading" class="pc-table-empty">暂无素材，可点右上角「上传」</div>
+        <div v-if="!total && !loading" class="pc-table-empty">暂无素材，可点右上角「上传」</div>
       </el-card>
 
-      <div v-if="filtered.length" class="pager-bar pc-pager">
+      <div v-if="total" class="pager-bar pc-pager">
         <el-button size="small" plain :disabled="page <= 1" @click="goFirstPage">首页</el-button>
         <el-pagination
           v-model:current-page="page"
           v-model:page-size="pageSize"
           :page-sizes="PAGE_SIZES"
-          :total="filtered.length"
+          :total="total"
           :pager-count="5"
           background
           layout="total, sizes, prev, pager, next, jumper"

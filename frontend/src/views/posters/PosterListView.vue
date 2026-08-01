@@ -403,7 +403,7 @@ onUnmounted(() => {
 <template>
   <div>
     <div class="page-toolbar poster-toolbar">
-      <el-page-header content="海报列表" />
+      <el-page-header class="is-title-only" content="海报列表" />
       <div class="toolbar-right">
         <div v-if="!isCompact" class="view-switch" role="group" aria-label="视图切换">
           <button

@@ -1,17 +1,19 @@
+import secrets
+from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
-from app.models.content import GeneratedCopy
-from app.models.knowledge import KnowledgeEntry
 from app.models.lead import Lead
-from app.models.material import Material
-from app.models.poster import GeneratedPoster
-from app.models.student import LearningRecord, Student
-from app.models.template import CopyTemplate
+from app.models.student import Student
 from app.models.todo import TodoItem
 from app.models.user import User
 
 VALID_ROLES = {"admin", "operator", "teacher"}
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def list_users(
@@ -22,7 +24,7 @@ def list_users(
     username: str | None = None,
     display_name: str | None = None,
 ) -> list[User]:
-    q = db.query(User)
+    q = db.query(User).filter(User.deleted_at.is_(None))
     if role:
         q = q.filter(User.role == role)
     if is_active is not None:
@@ -34,12 +36,39 @@ def list_users(
     return q.order_by(User.id.asc()).all()
 
 
+def _display_name_taken(
+    db: Session,
+    display_name: str,
+    *,
+    exclude_user_id: int | None = None,
+) -> bool:
+    name = display_name.strip()
+    if not name:
+        return False
+    q = db.query(User).filter(User.display_name == name, User.deleted_at.is_(None))
+    if exclude_user_id is not None:
+        q = q.filter(User.id != exclude_user_id)
+    return q.first() is not None
+
+
 def create_user(db: Session, *, username: str, display_name: str, role: str, password: str) -> User | str:
     if role not in VALID_ROLES:
         return "角色无效"
-    exists = db.query(User).filter(User.username == username).first()
+    username = username.strip()
+    display_name = display_name.strip()
+    if not username:
+        return "用户名不能为空"
+    if not display_name:
+        return "显示名不能为空"
+    exists = (
+        db.query(User)
+        .filter(User.username == username, User.deleted_at.is_(None))
+        .first()
+    )
     if exists:
         return "用户名已存在"
+    if _display_name_taken(db, display_name):
+        return "显示名已存在，请更换"
     user = User(
         username=username,
         display_name=display_name,
@@ -61,8 +90,15 @@ def update_user(
     role: str | None = None,
     is_active: bool | None = None,
 ) -> User | str:
+    if user.deleted_at is not None:
+        return "用户已删除"
     if display_name is not None:
-        user.display_name = display_name
+        name = display_name.strip()
+        if not name:
+            return "显示名不能为空"
+        if _display_name_taken(db, name, exclude_user_id=user.id):
+            return "显示名已存在，请更换"
+        user.display_name = name
     if role is not None:
         if role not in VALID_ROLES:
             return "角色无效"
@@ -75,63 +111,51 @@ def update_user(
     return user
 
 
-def reset_password(db: Session, user: User, new_password: str) -> None:
+def reset_password(db: Session, user: User, new_password: str) -> str | None:
+    if user.deleted_at is not None:
+        return "用户已删除"
     user.password_hash = hash_password(new_password)
     db.add(user)
     db.commit()
+    return None
 
 
 def delete_user(db: Session, user: User, *, actor: User) -> str | None:
     """
-    Hard-delete a user account. Detach or reassign related rows so FKs stay valid.
-    Returns error message string on failure, None on success.
+    Soft-delete a user account (including 负责人/admin).
+
+    Authorship on materials (uploader_id) and learning records (teacher_id) is kept
+    as-is so historical “who wrote this” still resolves via display_name.
+    Current operational assignments (学管师 / 线索负责人) are cleared.
+    Personal todos are removed. Login is disabled and the username is freed.
     """
     if user.id == actor.id:
         return "不能删除当前登录账号"
-    if user.role == "admin":
-        other_admins = (
-            db.query(User).filter(User.role == "admin", User.id != user.id).count()
-        )
-        if other_admins == 0:
-            return "不能删除唯一的负责人账号"
+    if user.deleted_at is not None:
+        return "用户已删除"
 
     uid = user.id
-    reassign_to = actor.id
-
-    # Non-null FKs: reassign to the admin performing the delete
-    db.query(Material).filter(Material.uploader_id == uid).update(
-        {Material.uploader_id: reassign_to}, synchronize_session=False
-    )
-    db.query(LearningRecord).filter(LearningRecord.teacher_id == uid).update(
-        {LearningRecord.teacher_id: reassign_to}, synchronize_session=False
-    )
 
     # Personal todos go away with the account
     db.query(TodoItem).filter(TodoItem.user_id == uid).delete(synchronize_session=False)
 
-    # Nullable FKs: clear reference
+    # Current operational assignments only — not historical authorship
     db.query(Student).filter(Student.academic_manager_id == uid).update(
         {Student.academic_manager_id: None}, synchronize_session=False
-    )
-    db.query(Student).filter(Student.created_by == uid).update(
-        {Student.created_by: None}, synchronize_session=False
     )
     db.query(Lead).filter(Lead.owner_id == uid).update(
         {Lead.owner_id: None}, synchronize_session=False
     )
-    db.query(GeneratedCopy).filter(GeneratedCopy.created_by == uid).update(
-        {GeneratedCopy.created_by: None}, synchronize_session=False
-    )
-    db.query(GeneratedPoster).filter(GeneratedPoster.created_by == uid).update(
-        {GeneratedPoster.created_by: None}, synchronize_session=False
-    )
-    db.query(CopyTemplate).filter(CopyTemplate.created_by == uid).update(
-        {CopyTemplate.created_by: None}, synchronize_session=False
-    )
-    db.query(KnowledgeEntry).filter(KnowledgeEntry.updated_by == uid).update(
-        {KnowledgeEntry.updated_by: None}, synchronize_session=False
-    )
 
-    db.delete(user)
+    # Soft-delete: keep row for material/learning FK + display_name attribution
+    original_username = user.username
+    user.deleted_at = _utcnow()
+    user.is_active = False
+    # Free username so a new account can reuse it (e.g. replace default admin)
+    suffix = f".del{uid}"
+    base = original_username[: max(1, 64 - len(suffix))]
+    user.username = f"{base}{suffix}"
+    user.password_hash = hash_password(secrets.token_urlsafe(32))
+    db.add(user)
     db.commit()
     return None

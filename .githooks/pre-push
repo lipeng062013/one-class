@@ -1,0 +1,32 @@
+#!/bin/sh
+# pre-push: 推送 GitHub 前必须通过前端 TypeScript 检查
+# 安装：在仓库根目录执行  git config core.hooksPath .githooks
+# 或运行：powershell -File scripts/setup/install-git-hooks.ps1
+
+set -e
+
+ROOT="$(git rev-parse --show-toplevel)"
+FRONTEND="$ROOT/frontend"
+
+if [ ! -f "$FRONTEND/package.json" ]; then
+  echo "pre-push: 未找到 frontend/package.json，跳过 typecheck"
+  exit 0
+fi
+
+if [ ! -d "$FRONTEND/node_modules" ]; then
+  echo "pre-push: frontend/node_modules 不存在"
+  echo "请先执行: cd frontend && npm install"
+  exit 1
+fi
+
+echo "pre-push: 正在运行前端 TypeScript 检查 (vue-tsc)…"
+echo "         （与部署 Docker 内 npm run build 的类型检查一致；此处失败可避免远端部署白跑）"
+cd "$FRONTEND"
+if ! npm run typecheck; then
+  echo ""
+  echo "pre-push: TypeScript 检查失败 — 已阻止推送"
+  echo "请先修复 frontend 类型错误，或本地执行: cd frontend && npm run typecheck"
+  echo "说明: 服务器 docker build 也会跑 vue-tsc，类型错误会导致部署失败"
+  exit 1
+fi
+echo "pre-push: TypeScript 检查通过，允许推送"

@@ -36,11 +36,19 @@ uvicorn app.main:app --reload --port 8000
 cd frontend
 npm install
 npm run dev
+
+# 一次性：安装 Git pre-push（推送前自动 TypeScript 检查）
+powershell -ExecutionPolicy Bypass -File scripts/setup/install-git-hooks.ps1
 ```
 
 - 前端：http://127.0.0.1:5173  
 - 健康检查：http://127.0.0.1:8000/api/v1/health  
-- AI 状态：`GET /api/v1/system/integrations`（登录后）
+- AI 状态：`GET /api/v1/system/integrations`（登录后）  
+- **TypeScript 与部署**：`frontend` 的 `npm run build`（Docker 部署）会先跑 `vue-tsc`，类型错误会导致部署失败。防护链路：
+  1. 本地 pre-push：`cd frontend && npm run typecheck`（需先装 hooks，见上）
+  2. GitHub Actions：`Deploy to Server` 在 SSH 部署前先跑 typecheck；PR 走 `Frontend Typecheck`
+  3. 服务器 Docker：`npm run build` 再次校验  
+  手动检查：`cd frontend && npm run typecheck`
 
 ## 一键启动（Docker Compose，本机 / 服务器同一套）
 

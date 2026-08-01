@@ -23,7 +23,7 @@ def get_current_user(
     if not user_id:
         raise HTTPException(status_code=401, detail="登录已失效")
     user = db.get(User, int(user_id))
-    if not user or not user.is_active:
+    if not user or not user.is_active or user.deleted_at is not None:
         raise HTTPException(status_code=401, detail="账号不可用")
     return user
 

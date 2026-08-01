@@ -166,11 +166,24 @@ docker compose up -d
 ## 5. 推送代码触发自动部署
 
 1. 本机确保改动已提交（含 `scripts/`、`.github/workflows/deploy-server.yml`、Dockerfile 国内源等）  
-2. `git push origin master`  
-3. GitHub → **Actions** → **Deploy to Server** 查看是否绿色  
-4. 浏览器打开 `http://你的IP:8080` 验证  
+2. 建议先装本地 hooks（推送前 typecheck）：`powershell -File scripts/setup/install-git-hooks.ps1`  
+3. `git push origin master`  
+4. GitHub → **Actions** → **Deploy to Server** 查看是否绿色  
+5. 浏览器打开 `http://你的IP:8080` 验证  
 
-也可在 Actions 里 **Run workflow** 手动部署；可勾选跳过备份（`skip_backup=1`）。
+### TypeScript 与部署失败
+
+前端 Docker 构建会执行 `npm run build`（内含 `vue-tsc`）。类型错误会导致**整次部署失败**。
+
+防护顺序：
+
+| 阶段 | 做什么 |
+|------|--------|
+| 本地 pre-push | `frontend` 的 `npm run typecheck`，失败则禁止 push |
+| GitHub Actions `typecheck` job | 部署 workflow **先**跑 vue-tsc；失败则**不** SSH、不调服务器 |
+| 服务器 `docker compose build` | 再次 `vue-tsc`（双保险） |
+
+手动部署时可在 Actions **Run workflow** 里设 `skip_typecheck=1`（仅紧急情况）；也可勾选 `skip_backup=1`。
 
 服务器上等价于执行：
 

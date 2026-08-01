@@ -4,17 +4,26 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules, type UploadUserFile } from 'element-plus'
 import {
   createLearningApi,
-  listStudentsApi,
+  listStudentsForPicker,
   uploadLearningFileApi,
   type ClassStatus,
   type Student,
 } from '../../api/students'
+import { useAuthStore } from '../../stores/auth'
+import { usePageBack } from '../../composables/usePageBack'
+
+type StudentScope = 'mine' | 'all'
+
 const route = useRoute()
 const router = useRouter()
+const { goBack } = usePageBack('/learning')
+const auth = useAuthStore()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const students = ref<Student[]>([])
 const fileList = ref<UploadUserFile[]>([])
+/** 老师默认选「我的学生」 */
+const studentScope = ref<StudentScope>('mine')
 
 const form = reactive({
   student_id: undefined as number | undefined,
@@ -45,11 +54,24 @@ const prefilled = computed(() => {
   return raw ? Number(raw) : undefined
 })
 
+const showStudentScope = computed(() => auth.isTeacher)
+
 async function loadStudents() {
-  students.value = await listStudentsApi({ status: 'active' })
+  const params: { status: string; academic_manager_id?: number } = { status: 'active' }
+  if (auth.isTeacher && studentScope.value === 'mine' && auth.user?.id != null) {
+    params.academic_manager_id = auth.user.id
+  }
+  students.value = await listStudentsForPicker(params, 100)
   if (prefilled.value && students.value.some((s) => s.id === prefilled.value)) {
     form.student_id = prefilled.value
+  } else if (form.student_id != null && !students.value.some((s) => s.id === form.student_id)) {
+    form.student_id = undefined
   }
+}
+
+async function onStudentScopeChange() {
+  form.student_id = undefined
+  await loadStudents()
 }
 
 async function submit() {
@@ -70,7 +92,7 @@ async function submit() {
       if (item.raw) await uploadLearningFileApi(rec.id, item.raw as File)
     }
     ElMessage.success('学情已提交')
-    await router.replace(`/m/students/${form.student_id}`)
+    await router.replace(`/students/${form.student_id}`)
   } catch {
     /* interceptor */
   } finally {
@@ -82,11 +104,20 @@ onMounted(loadStudents)
 </script>
 
 <template>
-  <div class="page">
-    <el-page-header content="编写学情" @back="router.back()" />
+  <div class="page oc-page-shell">
+    <div class="page-toolbar">
+      <el-page-header content="编写学情" @back="goBack" />
+      <el-button plain @click="goBack()">学情列表</el-button>
+    </div>
 
     <el-card class="form-card" shadow="never">
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top" size="large">
+        <el-form-item v-if="showStudentScope" label="学生范围">
+          <el-radio-group v-model="studentScope" @change="onStudentScopeChange">
+            <el-radio-button value="mine">我的学生</el-radio-button>
+            <el-radio-button value="all">全部学生</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
         <el-form-item label="选择学生" prop="student_id">
           <el-select
             v-model="form.student_id"
@@ -150,12 +181,26 @@ onMounted(loadStudents)
 
 <style scoped>
 .page {
-  padding-bottom: 80px;
+  padding-bottom: 24px;
+}
+
+.page-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
 }
 
 .form-card {
   margin-top: 12px;
+  width: 100%;
+  max-width: none;
   border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 14px;
+  background: var(--oc-card, #fffdf8);
+  box-sizing: border-box;
 }
 
 .status-group {

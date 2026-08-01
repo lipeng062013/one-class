@@ -1,4 +1,5 @@
 import client from './client'
+import { asPageResult, type PageParams, type PageResult } from './paging'
 
 export interface MaterialFile {
   id: number
@@ -32,13 +33,39 @@ export interface MaterialPayload {
   auth_status?: string
 }
 
-export async function listMaterialsApi(): Promise<Material[]> {
-  const res = await client.get('/materials')
-  return res.data.data
+export interface MaterialListParams extends PageParams {
+  status?: string
+  grade?: string
+  subject?: string
+  q?: string
 }
 
-/** Alias used by copy/poster generators */
-export const listMaterials = listMaterialsApi
+export async function listMaterialsApi(
+  params: MaterialListParams = {},
+): Promise<PageResult<Material>> {
+  const res = await client.get('/materials', {
+    params: {
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 20,
+      status: params.status || undefined,
+      grade: params.grade || undefined,
+      subject: params.subject || undefined,
+      q: params.q || undefined,
+    },
+  })
+  return asPageResult<Material>(res.data.data, params.page ?? 1, params.page_size ?? 20)
+}
+
+/** Picker / 生成页：取前若干条（服务端分页上限 100） */
+export async function listMaterialsForPicker(limit = 100): Promise<Material[]> {
+  const page = await listMaterialsApi({ page: 1, page_size: Math.min(100, Math.max(1, limit)) })
+  return page.items
+}
+
+/** @deprecated 使用 listMaterialsApi / listMaterialsForPicker */
+export async function listMaterials(): Promise<Material[]> {
+  return listMaterialsForPicker(100)
+}
 
 export async function getMaterialApi(id: number): Promise<Material> {
   const res = await client.get(`/materials/${id}`)

@@ -3,7 +3,7 @@
 > 对 AI 说：**「按 docs/ui-list-page-pattern.md 做列表页」** 即可对齐本站风格。  
 > **标准模板**：`frontend/src/views/students/StudentListView.vue`  
 > **全局样式**：`frontend/src/style.css`（`.pc-filters` / `.pc-table-card` / `.pager-bar.pc-pager` / `.pc-avatar` 等）  
-> **详情页 / 内容宽度**：`docs/ui-detail-page-pattern.md`（与工作台同宽：`.oc-page-shell`）
+> **详情页 / 内容宽度**：`docs/ui-detail-page-pattern.md`（业务页满宽；仅工作台限宽）
 
 ---
 
@@ -12,14 +12,15 @@
 | 页面类型 | 宽度策略 |
 |----------|----------|
 | **列表页**（表格式） | 一般**不**加 `.oc-page-shell`，表格吃满 `el-main` 主区 |
-| **工作台 / 详情 / 内容型** | **必须**根节点 `class="… oc-page-shell"`，最大 **1680px**（≥1720 时 **1760px**） |
+| **详情 / 上传 / 生成等** | 根节点 `class="… oc-page-shell"`，**吃满主区**（不限宽） |
+| **工作台** | `class="dashboard oc-page-shell"`，限宽 **1680px**（≥1720 时 **1760px**） |
 
-CSS 变量（`style.css` `:root`）：
+CSS 变量（`style.css` `:root`，**仅工作台**使用）：
 
 - `--oc-content-max: 1680px`
 - `--oc-content-max-wide: 1760px`
 
-新做详情页请读 **`docs/ui-detail-page-pattern.md`**，不要在 scoped 里再写一套 max-width。
+新做详情页请读 **`docs/ui-detail-page-pattern.md`**，不要在 scoped 里再写 `max-width: 720/1280px` 等私货。
 
 ---
 
@@ -170,6 +171,7 @@ const pcHeaderStyle = {
 
 > 全局：`.pager-bar.pc-pager`（`style.css`）  
 > **凡有列表数据的业务页，PC 端都必须有分页**；无数据不渲染分页条。  
+> **位置**：PC 分页在**页面底部**（内容少时 flex 沉底，内容多时 sticky 贴主区底）。  
 > wap/pad：卡片 + `useInfiniteScroll`，**不要**底部分页。
 
 ```html
@@ -196,20 +198,26 @@ const pcHeaderStyle = {
 | layout | `total, sizes, prev, pager, next, jumper` |
 | 视觉 | 米金卡片条：圆角 12、边框、`#fffdf8` 底 |
 
-### 2.5 客户端分页逻辑（推荐）
+### 2.5 服务端分页（推荐，素材/学生已落地）
+
+> **禁止**再一次拉全量后在前端 `slice`。接口返回 `{ items, total, page, page_size }`。
 
 ```ts
+// GET /xxx?page=1&page_size=20&…filters
+// data: { items, total, page, page_size }
+
 const PAGE_SIZES = [10, 20, 50, 100]
 const page = ref(1)
 const pageSize = ref(20)
-const totalPages = computed(() => Math.max(1, Math.ceil(list.length / pageSize.value) || 1))
-const pagedRows = computed(() => {
-  const start = (page.value - 1) * pageSize.value
-  return list.slice(start, start + pageSize.value)
-})
+const total = ref(0)
+const rows = ref<T[]>([]) // PC：当前页；wap：累计已加载
+
+// PC：翻页 / 改 pageSize → 重新请求，替换 rows
+// wap/pad：触底 page++ → 请求下一页，append 到 rows；筛选变化 page=1 清空重载
 ```
 
-筛选变化后 `page = 1`；`sessionStorage` 可记忆 page/pageSize/filters。
+筛选变化后 `page = 1` 并重新请求；`sessionStorage` 可记忆 page/pageSize/filters。  
+参考：`MaterialListView.vue`、`StudentListView.vue`；API：`api/paging.ts`。
 
 ---
 

@@ -301,7 +301,7 @@ onMounted(() => {
 <template>
   <div class="copy-page">
     <div class="page-toolbar" :class="{ 'is-compact': isCompact }">
-      <el-page-header content="文案列表" />
+      <el-page-header class="is-title-only" content="文案列表" />
       <div class="toolbar-right">
         <el-button
           class="tb-btn"

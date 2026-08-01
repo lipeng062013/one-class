@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.core.pagination import clamp_page, clamp_page_size, page_payload, paginate_query
 from app.core.storage import Storage
 from app.models.student import LearningRecord, LearningRecordFile, Student
 from app.models.user import User
@@ -26,11 +27,11 @@ def validate_class_status(status: str) -> str | None:
 
 
 def resolve_manager(db: Session, manager_id: int | None) -> User | str | None:
-    """学管师必须是 teacher 角色（可停用，便于转交前仍显示）。"""
+    """学管师必须是 teacher 角色（可停用，便于转交前仍显示；已删除账号不可再指派）。"""
     if manager_id is None:
         return None
     user = db.get(User, manager_id)
-    if not user:
+    if not user or user.deleted_at is not None:
         return "学管师不存在"
     if user.role != "teacher":
         return "学管师须为老师角色账号"
@@ -41,6 +42,7 @@ def manager_name(db: Session, manager_id: int | None) -> str | None:
     if not manager_id:
         return None
     user = db.get(User, manager_id)
+    # Soft-deleted teachers still resolve so historical 学管师名可展示
     return user.display_name if user else None
 
 
@@ -83,7 +85,10 @@ def list_students(
     school: str | None = None,
     academic_manager_id: int | None = None,
     q: str | None = None,
-) -> list[Student]:
+    page: int | None = None,
+    page_size: int | None = None,
+) -> dict:
+    """Paginated student list. Returns { items, total, page, page_size }."""
     query = db.query(Student)
     if grade:
         query = query.filter(Student.grade == grade)
@@ -110,7 +115,11 @@ def list_students(
                 Student.parent_name.like(like),
             )
         )
-    return query.order_by(Student.id.desc()).all()
+    query = query.order_by(Student.id.desc())
+    p = clamp_page(page)
+    ps = clamp_page_size(page_size)
+    rows, total = paginate_query(query, page=p, page_size=ps)
+    return page_payload(rows, total=total, page=p, page_size=ps)
 
 
 def get_student(db: Session, student_id: int) -> Student | None:
@@ -244,8 +253,8 @@ def reassign_students(
 
 
 def list_managers(db: Session, *, include_inactive: bool = True) -> list[dict]:
-    """可选学管师列表（老师账号），附带名下学生数。"""
-    query = db.query(User).filter(User.role == "teacher")
+    """可选学管师列表（老师账号），附带名下学生数。已删除账号不出现在指派列表。"""
+    query = db.query(User).filter(User.role == "teacher", User.deleted_at.is_(None))
     if not include_inactive:
         query = query.filter(User.is_active.is_(True))
     teachers = query.order_by(User.id.asc()).all()

@@ -5,7 +5,11 @@ from app.models.user import User
 
 
 def authenticate(db: Session, username: str, password: str) -> User | None:
-    user = db.query(User).filter(User.username == username).first()
+    user = (
+        db.query(User)
+        .filter(User.username == username, User.deleted_at.is_(None))
+        .first()
+    )
     if not user:
         return None
     if not verify_password(password, user.password_hash):

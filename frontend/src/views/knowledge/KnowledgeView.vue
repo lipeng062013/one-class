@@ -374,7 +374,7 @@ onMounted(() => {
 <template>
   <div class="know-page">
     <div class="page-toolbar know-toolbar" :class="{ 'is-compact': isCompact }">
-      <el-page-header :content="section.title" />
+      <el-page-header class="is-title-only" :content="section.title" />
       <el-button
         v-if="auth.isAdmin"
         class="create-btn tb-btn tb-btn--primary"

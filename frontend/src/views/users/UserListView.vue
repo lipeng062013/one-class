@@ -69,7 +69,25 @@ const resetForm = reactive({
 
 const createRules: FormRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
-  display_name: [{ required: true, message: '请输入显示名', trigger: 'blur' }],
+  display_name: [
+    { required: true, message: '请输入显示名', trigger: 'blur' },
+    {
+      validator: (_rule, value: string, callback) => {
+        const name = (value || '').trim()
+        if (!name) {
+          callback()
+          return
+        }
+        const taken = rows.value.some((u) => (u.display_name || '').trim() === name)
+        if (taken) {
+          callback(new Error('显示名已存在，请更换'))
+          return
+        }
+        callback()
+      },
+      trigger: 'blur',
+    },
+  ],
   role: [{ required: true, message: '请选择角色', trigger: 'change' }],
   password: [
     { required: true, message: '请设置初始密码', trigger: 'blur' },
@@ -320,12 +338,18 @@ async function toggleActive(row: UserRow) {
 
 async function onDelete(row: UserRow) {
   if (auth.user?.id === row.id) {
-    ElMessage.warning('不能删除当前登录账号')
+    ElMessage.warning(
+      '不能删除当前登录账号。若要更换默认负责人：先新建另一负责人，用新账号登录后再删除此账号。',
+    )
     return
   }
   try {
+    const roleHint =
+      row.role === 'admin'
+        ? '\n（负责人账号可删除；删除后请确认仍有可用的负责人登录。）'
+        : ''
     await ElMessageBox.confirm(
-      `确定删除用户「${row.display_name || row.username}」？\n关联素材/学情会改挂到当前管理员，待办会一并删除，且不可恢复。`,
+      `确定删除用户「${row.display_name || row.username}」？\n账号将无法登录并从列表移除；其上传的素材与填写的学情仍保留原作者署名。名下学管/线索归属会清空，个人待办会删除。${roleHint}`,
       '删除用户',
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
     )
@@ -357,7 +381,7 @@ onMounted(() => {
 <template>
   <div class="user-page">
     <div class="page-toolbar user-toolbar" :class="{ 'is-compact': isCompact }">
-      <el-page-header content="用户管理" />
+      <el-page-header class="is-title-only" content="用户管理" />
       <el-button class="create-btn tb-btn tb-btn--primary" type="primary" @click="openCreate">
         <el-icon><Plus /></el-icon>
         新建用户

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import {
@@ -16,7 +16,6 @@ import {
 } from '../../api/students'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
-import { useInfiniteScroll } from '../../composables/useInfiniteScroll'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
 
 const LIST_STATE_KEY = 'oc-student-list-state'
@@ -26,24 +25,21 @@ const SCROLL_CHUNK = 10
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const { isCompact } = useBreakpoint()
+const { isCompact, width } = useBreakpoint()
+/** Pad 横屏～窄桌面：表格藏次要列，避免横向挤压 */
+const isNarrowTable = computed(() => !isCompact.value && width.value < 1280)
 const loading = ref(false)
+const loadingMore = ref(false)
 const rows = ref<Student[]>([])
+const total = ref(0)
 const managers = ref<ManagerOption[]>([])
 const selectedIds = ref<number[]>([])
 const page = ref(1)
 const pageSize = ref(20)
 const tableRef = ref<{ clearSelection?: () => void } | null>(null)
-
 const sentinelRef = ref<HTMLElement | null>(null)
-const {
-  displayRows: infiniteRows,
-  hasMore: hasMoreInfinite,
-  loadingMore,
-  visibleCount,
-  resetVisible: resetInfinite,
-  ensureVisible,
-} = useInfiniteScroll(rows, { chunk: SCROLL_CHUNK, enabled: isCompact, sentinelRef })
+const visibleCount = computed(() => rows.value.length)
+let scrollObserver: IntersectionObserver | null = null
 
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('students', {
   visibleCount,
@@ -59,6 +55,17 @@ const filters = reactive({
   academic_manager_id: undefined as number | undefined,
 })
 
+/** 老师：我的学生 / 全部学生；负责人不展示，始终看全部并可按学管筛 */
+type ListScope = 'mine' | 'all'
+const listScope = ref<ListScope>('mine')
+const showMineAllScope = computed(() => auth.isTeacher)
+const listSummaryLabel = computed(() => {
+  if (auth.isTeacher) {
+    return listScope.value === 'mine' ? '我的学生' : '全部学生'
+  }
+  return '在读学员档案'
+})
+
 /** wap/pad：筛选默认收起，避免占满首屏 */
 const filterExpanded = ref(false)
 
@@ -66,7 +73,7 @@ const activeFilterCount = computed(() => {
   let n = 0
   if (filters.grade) n += 1
   if (filters.status && filters.status !== 'active') n += 1
-  if (filters.academic_manager_id != null) n += 1
+  if (!auth.isTeacher && filters.academic_manager_id != null) n += 1
   if (filters.name.trim()) n += 1
   if (filters.phone.trim()) n += 1
   if (filters.school.trim()) n += 1
@@ -164,6 +171,7 @@ function restoreListState() {
       filters.status = s.filters.status ?? 'active'
       filters.academic_manager_id = s.filters.academic_manager_id
     }
+    // 我的/全部：每次进入默认「我的学生」，不恢复历史选中
     if (typeof s.page === 'number' && s.page > 0) page.value = s.page
     if (typeof s.pageSize === 'number' && PAGE_SIZES.includes(s.pageSize)) {
       pageSize.value = s.pageSize
@@ -188,78 +196,125 @@ function saveListState() {
   }
 }
 
-const totalPages = computed(() => Math.max(1, Math.ceil(rows.value.length / pageSize.value) || 1))
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value) || 1))
+const pagedRows = computed(() => rows.value)
+const infiniteRows = computed(() => rows.value)
+const hasMoreInfinite = computed(() => rows.value.length < total.value)
 
-const pagedRows = computed(() => {
-  const start = (page.value - 1) * pageSize.value
-  return rows.value.slice(start, start + pageSize.value)
-})
-
-function clampPage() {
-  if (page.value > totalPages.value) page.value = totalPages.value
-  if (page.value < 1) page.value = 1
+function buildStudentParams(pageNum: number, size: number) {
+  const params: Record<string, string | number> = {
+    page: pageNum,
+    page_size: size,
+  }
+  if (filters.grade) params.grade = filters.grade
+  if (filters.name) params.name = filters.name
+  if (filters.phone) params.phone = filters.phone
+  if (filters.school) params.school = filters.school
+  if (filters.status) params.status = filters.status
+  if (auth.isTeacher && listScope.value === 'mine' && auth.user?.id != null) {
+    params.academic_manager_id = auth.user.id
+  } else if (!auth.isTeacher && filters.academic_manager_id != null) {
+    params.academic_manager_id = filters.academic_manager_id
+  }
+  return params
 }
 
 function goFirstPage() {
   page.value = 1
   saveListState()
+  void load()
 }
 
 function goLastPage() {
   page.value = totalPages.value
   saveListState()
+  void load()
 }
 
 function onPageSizeChange() {
   page.value = 1
   saveListState()
+  void load()
 }
 
 function onPageChange() {
   saveListState()
+  void load()
 }
 
 async function loadManagers() {
   managers.value = await listManagersApi(true)
 }
 
-async function load(opts?: { resetPage?: boolean }) {
-  const snap = opts?.resetPage ? null : takeSnapshotForLoad(route.path)
+async function load(opts?: { resetPage?: boolean; append?: boolean }) {
+  const append = !!opts?.append && isCompact.value
+  const snap = opts?.resetPage || append ? null : takeSnapshotForLoad(route.path)
   if (opts?.resetPage) {
     clearSnapshot()
     page.value = 1
-    resetInfinite()
   }
-  loading.value = true
+
+  if (append) loadingMore.value = true
+  else loading.value = true
   try {
-    const params: Record<string, string | number> = {}
-    if (filters.grade) params.grade = filters.grade
-    if (filters.name) params.name = filters.name
-    if (filters.phone) params.phone = filters.phone
-    if (filters.school) params.school = filters.school
-    if (filters.status) params.status = filters.status
-    if (filters.academic_manager_id != null) {
-      params.academic_manager_id = filters.academic_manager_id
+    if (isCompact.value) {
+      if (!append) page.value = 1
+      const res = await listStudentsApi(buildStudentParams(page.value, SCROLL_CHUNK))
+      rows.value = append ? [...rows.value, ...res.items] : res.items
+      total.value = res.total
+      if (!append && snap?.visibleCount != null) {
+        const need = Math.max(SCROLL_CHUNK, snap.visibleCount)
+        while (rows.value.length < need && rows.value.length < total.value) {
+          page.value += 1
+          const more = await listStudentsApi(buildStudentParams(page.value, SCROLL_CHUNK))
+          rows.value = [...rows.value, ...more.items]
+          total.value = more.total
+          if (!more.items.length) break
+        }
+      }
+    } else {
+      const res = await listStudentsApi(buildStudentParams(page.value, pageSize.value))
+      rows.value = res.items
+      total.value = res.total
+      if (page.value > 1 && res.items.length === 0 && res.total > 0) {
+        page.value = Math.max(1, Math.ceil(res.total / pageSize.value))
+        const again = await listStudentsApi(buildStudentParams(page.value, pageSize.value))
+        rows.value = again.items
+        total.value = again.total
+      }
     }
-    rows.value = await listStudentsApi(params)
-    if (opts?.resetPage) {
-      resetInfinite()
-    } else if (snap?.visibleCount != null && isCompact.value) {
-      ensureVisible(snap.visibleCount)
-    } else if (isCompact.value) {
-      resetInfinite()
-    }
-    clampPage()
     saveListState()
   } finally {
     loading.value = false
+    loadingMore.value = false
   }
-  void finishListEnter({ snap, forceTop: !!opts?.resetPage })
+  if (!append) void finishListEnter({ snap, forceTop: !!opts?.resetPage })
 }
 
-watch(pageSize, () => {
-  clampPage()
-})
+async function loadMore() {
+  if (!isCompact.value || loadingMore.value || loading.value || !hasMoreInfinite.value) return
+  page.value += 1
+  await load({ append: true })
+}
+
+function setupScrollObserver() {
+  teardownScrollObserver()
+  if (!isCompact.value) return
+  const el = sentinelRef.value
+  if (!el) return
+  scrollObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((e) => e.isIntersecting)) void loadMore()
+    },
+    { root: null, rootMargin: '160px 0px', threshold: 0 },
+  )
+  scrollObserver.observe(el)
+}
+
+function teardownScrollObserver() {
+  scrollObserver?.disconnect()
+  scrollObserver = null
+}
 
 function resetForm() {
   form.name = ''
@@ -273,13 +328,20 @@ function resetForm() {
   editingId.value = null
 }
 
-function openCreate() {
+async function openCreate() {
   formMode.value = 'create'
   resetForm()
+  // 打开时刷新，避免用户管理里刚删除的老师仍出现在学管下拉
+  await loadManagers()
+  // 老师新建默认自己为学管
+  if (auth.isTeacher && auth.user?.id != null) {
+    const me = managers.value.find((m) => m.id === auth.user?.id && m.is_active)
+    if (me) form.academic_manager_id = me.id
+  }
   formVisible.value = true
 }
 
-function openEdit(row: Student) {
+async function openEdit(row: Student) {
   formMode.value = 'edit'
   editingId.value = row.id
   form.name = row.name
@@ -290,6 +352,14 @@ function openEdit(row: Student) {
   form.academic_manager_id = row.academic_manager_id ?? undefined
   form.status = (row.status as StudentStatus) || 'active'
   form.notes = row.notes || ''
+  await loadManagers()
+  // 已删除账号不在可选列表；若当前仍挂着已删学管，清空以免脏值提交
+  if (
+    form.academic_manager_id != null &&
+    !managers.value.some((m) => m.id === form.academic_manager_id)
+  ) {
+    form.academic_manager_id = undefined
+  }
   formVisible.value = true
 }
 
@@ -366,11 +436,12 @@ async function onBulkDelete() {
   }
 }
 
-function openReassign(preselect?: number[]) {
+async function openReassign(preselect?: number[]) {
   reassign.from_manager_id = undefined
   reassign.to_manager_id = undefined
   reassign.student_ids = preselect?.length ? [...preselect] : [...selectedIds.value]
   reassignStudentQuery.value = ''
+  await loadManagers()
   reassignVisible.value = true
 }
 
@@ -485,21 +556,47 @@ function runQuery() {
   load({ resetPage: true })
 }
 
+function onListScopeChange() {
+  // 切换 scope 时清掉负责人用的学管筛选，避免状态串扰
+  filters.academic_manager_id = undefined
+  load({ resetPage: true })
+}
+
 function toggleFilterExpand() {
   filterExpanded.value = !filterExpanded.value
 }
 
+watch(isCompact, async (compact, was) => {
+  if (compact === was) return
+  page.value = 1
+  await load({ resetPage: true })
+  await nextTick()
+  setupScrollObserver()
+})
+
+watch(sentinelRef, () => {
+  if (isCompact.value) setupScrollObserver()
+})
+
 onMounted(async () => {
   restoreListState()
+  // 每次进入固定默认「我的学生」，不记忆上次切换
+  if (auth.isTeacher) {
+    listScope.value = 'mine'
+  }
   await loadManagers()
   await load()
+  await nextTick()
+  setupScrollObserver()
 })
+
+onUnmounted(() => teardownScrollObserver())
 </script>
 
 <template>
   <div class="student-list-page">
     <div class="page-toolbar student-toolbar" :class="{ 'is-compact': isCompact }">
-      <el-page-header content="学生信息" />
+      <el-page-header class="is-title-only" content="学生信息" />
       <div class="toolbar-right">
         <el-button
           v-if="canDelete"
@@ -521,6 +618,14 @@ onMounted(async () => {
       </div>
     </div>
 
+    <!-- 老师：我的 / 全部 -->
+    <div v-if="showMineAllScope" class="scope-bar" :class="{ 'is-compact': isCompact }">
+      <el-radio-group v-model="listScope" size="default" @change="onListScopeChange">
+        <el-radio-button value="mine">我的学生</el-radio-button>
+        <el-radio-button value="all">全部学生</el-radio-button>
+      </el-radio-group>
+    </div>
+
     <!-- PC 筛选 + 列表摘要（档案说明放在这里，不挤在标题下） -->
     <el-card v-if="!isCompact" class="filters pc-filters" shadow="never">
       <div class="pc-filters-head">
@@ -529,9 +634,9 @@ onMounted(async () => {
           <span v-if="activeFilterCount" class="pc-filters-badge">{{ activeFilterCount }} 项生效</span>
         </div>
         <div class="pc-list-summary">
-          <span class="pc-list-summary__label">在读学员档案</span>
+          <span class="pc-list-summary__label">{{ listSummaryLabel }}</span>
           <span class="pc-list-summary__count">
-            共 <strong>{{ rows.length }}</strong> 人
+            共 <strong>{{ total }}</strong> 人
           </span>
           <span v-if="selectedIds.length" class="pc-list-summary__sel">
             已选 <strong>{{ selectedIds.length }}</strong>
@@ -549,7 +654,7 @@ onMounted(async () => {
             <el-option v-for="(label, key) in statusLabels" :key="key" :label="label" :value="key" />
           </el-select>
         </el-form-item>
-        <el-form-item label="学管师">
+        <el-form-item v-if="!auth.isTeacher" label="学管师">
           <el-select
             v-model="filters.academic_manager_id"
             clearable
@@ -634,6 +739,7 @@ onMounted(async () => {
       </div>
       <div v-show="filterExpanded" class="m-filter-panel">
         <el-select
+          v-if="!auth.isTeacher"
           v-model="filters.academic_manager_id"
           class="m-filter-panel__full"
           clearable
@@ -662,7 +768,13 @@ onMounted(async () => {
 
     <!-- 平板 / 手机：学生卡片 -->
     <div v-if="isCompact" v-loading="loading" class="stu-card-list">
-      <div v-if="!rows.length && !loading" class="stu-card stu-card--empty">暂无学生，可点「新建」</div>
+      <div v-if="!total && !loading" class="stu-card stu-card--empty">
+        {{
+          auth.isTeacher && listScope === 'mine'
+            ? '暂无我的学生，可点「新建」'
+            : '暂无学生，可点「新建」'
+        }}
+      </div>
       <div
         v-for="row in infiniteRows"
         :key="row.id"
@@ -727,11 +839,11 @@ onMounted(async () => {
           </el-button>
         </div>
       </div>
-      <div v-if="rows.length" ref="sentinelRef" class="scroll-sentinel">
+      <div v-if="total" ref="sentinelRef" class="scroll-sentinel">
         <span v-if="hasMoreInfinite || loadingMore" class="scroll-hint">
           {{ loadingMore ? '加载中…' : '上拉加载更多' }}
         </span>
-        <span v-else class="scroll-hint">已加载全部 {{ rows.length }} 条</span>
+        <span v-else class="scroll-hint">已加载全部 {{ total }} 条</span>
       </div>
     </div>
 
@@ -784,12 +896,12 @@ onMounted(async () => {
               <span class="pc-mono">{{ row.phone || '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="parent_name" label="家长" width="90">
+          <el-table-column v-if="!isNarrowTable" prop="parent_name" label="家长" width="90">
             <template #default="{ row }">
               <span class="pc-muted">{{ row.parent_name || '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="学管师" min-width="110">
+          <el-table-column label="学管师" :min-width="isNarrowTable ? 88 : 110">
             <template #default="{ row }">
               <span class="pc-manager">{{ row.academic_manager_name || '—' }}</span>
             </template>
@@ -806,12 +918,18 @@ onMounted(async () => {
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="notes" label="备注" min-width="140" show-overflow-tooltip>
+          <el-table-column
+            v-if="!isNarrowTable"
+            prop="notes"
+            label="备注"
+            min-width="140"
+            show-overflow-tooltip
+          >
             <template #default="{ row }">
               <span class="pc-notes">{{ row.notes || '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="最近学情" min-width="148">
+          <el-table-column label="最近学情" :min-width="isNarrowTable ? 120 : 148">
             <template #default="{ row }">
               <span
                 class="pc-learning"
@@ -835,17 +953,17 @@ onMounted(async () => {
           </el-table-column>
         </el-table>
       </div>
-      <div v-if="!rows.length && !loading" class="pc-table-empty">暂无学生，可点右上角「新建」</div>
+      <div v-if="!total && !loading" class="pc-table-empty">暂无学生，可点右上角「新建」</div>
     </el-card>
 
     <!-- 仅 PC 显示底部分页；wap/pad 用滚动加载 -->
-    <div v-if="!isCompact && rows.length" class="pager-bar pc-pager">
+    <div v-if="!isCompact && total" class="pager-bar pc-pager">
       <el-button size="small" plain :disabled="page <= 1" @click="goFirstPage">首页</el-button>
       <el-pagination
         v-model:current-page="page"
         v-model:page-size="pageSize"
         :page-sizes="PAGE_SIZES"
-        :total="rows.length"
+        :total="total"
         :pager-count="5"
         background
         layout="total, sizes, prev, pager, next, jumper"
@@ -994,6 +1112,27 @@ onMounted(async () => {
 
 <style scoped>
 .student-list-page {
+  width: 100%;
+}
+
+.scope-bar {
+  margin-bottom: 12px;
+}
+
+.scope-bar.is-compact {
+  margin-bottom: 10px;
+}
+
+.scope-bar.is-compact :deep(.el-radio-group) {
+  display: flex;
+  width: 100%;
+}
+
+.scope-bar.is-compact :deep(.el-radio-button) {
+  flex: 1;
+}
+
+.scope-bar.is-compact :deep(.el-radio-button__inner) {
   width: 100%;
 }
 

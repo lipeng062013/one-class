@@ -45,7 +45,9 @@ def test_teacher_only_sees_own_materials(client):
     )
     listed = client.get("/api/v1/materials", headers=h_t)
     assert listed.status_code == 200
-    titles = [m["title"] for m in listed.json()["data"]]
+    payload = listed.json()["data"]
+    assert "items" in payload and "total" in payload
+    titles = [m["title"] for m in payload["items"]]
     assert "only-mine" in titles
     assert "ops-mat" not in titles
 
@@ -59,7 +61,7 @@ def test_ops_sees_all_and_can_patch_status(client):
     ).json()["data"]["id"]
     h_ops = auth_header(client, "ops", "ops123")
     listed = client.get("/api/v1/materials", headers=h_ops)
-    titles = [m["title"] for m in listed.json()["data"]]
+    titles = [m["title"] for m in listed.json()["data"]["items"]]
     assert "x" in titles
 
     res = client.patch(
@@ -70,6 +72,32 @@ def test_ops_sees_all_and_can_patch_status(client):
     assert res.status_code == 200
     assert res.json()["data"]["status"] == "usable"
     assert res.json()["data"]["auth_status"] == "authorized"
+
+
+def test_materials_list_pagination(client):
+    h = auth_header(client, "ops", "ops123")
+    for i in range(3):
+        client.post(
+            "/api/v1/materials",
+            headers=h,
+            json={"title": f"page-mat-{i}", "auth_status": "pending"},
+        )
+    page1 = client.get("/api/v1/materials", headers=h, params={"page": 1, "page_size": 2})
+    assert page1.status_code == 200
+    body = page1.json()["data"]
+    assert body["page"] == 1
+    assert body["page_size"] == 2
+    assert body["total"] >= 3
+    assert len(body["items"]) == 2
+
+    filtered = client.get(
+        "/api/v1/materials",
+        headers=h,
+        params={"q": "page-mat-1", "page": 1, "page_size": 20},
+    )
+    assert filtered.status_code == 200
+    titles = [m["title"] for m in filtered.json()["data"]["items"]]
+    assert "page-mat-1" in titles
 
 
 def test_teacher_cannot_patch_status(client):

@@ -19,4 +19,6 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(128))
     role: Mapped[str] = mapped_column(String(32), index=True)  # admin|operator|teacher
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Soft-delete: keep row so material/learning authorship (uploader_id / teacher_id) stays valid
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

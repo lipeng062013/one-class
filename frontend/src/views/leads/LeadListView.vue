@@ -323,7 +323,7 @@ onMounted(() => {
 <template>
   <div class="lead-page">
     <div class="page-toolbar lead-toolbar" :class="{ 'is-compact': isCompact }">
-      <el-page-header content="线索管理" />
+      <el-page-header class="is-title-only" content="线索管理" />
       <el-button class="create-btn tb-btn tb-btn--primary" type="primary" @click="openCreate">
         <el-icon><Plus /></el-icon>
         新建线索

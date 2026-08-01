@@ -77,21 +77,37 @@ type QuickLink = {
   path: string
   icon: string
   primary?: boolean
+  /** 仅负责人 */
   adminOnly?: boolean
+  /** 标记运营向入口（老师工作台不用） */
+  opsOnly?: boolean
+  teacherOk?: boolean
 }
 
 const quickLinks = computed((): QuickLink[] => {
+  if (auth.isTeacher) {
+    return [
+      { title: '学生信息', desc: '我的 / 全部学员', path: '/students', icon: 'Avatar', primary: true, teacherOk: true },
+      { title: '上传素材', desc: '课堂照片与场景', path: '/upload', icon: 'Upload', teacherOk: true },
+      { title: '素材', desc: '我的素材库', path: '/materials', icon: 'Picture', teacherOk: true },
+      { title: '学情', desc: '记录与查看', path: '/learning', icon: 'EditPen', teacherOk: true },
+      { title: '写学情', desc: '新建一条学情', path: '/learning/new', icon: 'EditPen', teacherOk: true },
+    ]
+  }
   const links: QuickLink[] = [
     { title: '素材', desc: '上传与管理', path: '/materials', icon: 'Picture', primary: true },
-    { title: '生成文案', desc: '模板 / AI', path: '/copies/generate', icon: 'EditPen' },
-    { title: '生成海报', desc: '版式 / 生图', path: '/posters/generate', icon: 'PictureFilled' },
-    { title: '线索', desc: '跟进转化', path: '/leads', icon: 'Phone' },
-    { title: '成长中心', desc: '话术与异议', path: '/knowledge/scripts', icon: 'Reading' },
-    { title: '综合办公', desc: '表格协作', path: '/office', icon: 'Grid' },
+    { title: '生成文案', desc: '模板 / AI', path: '/copies/generate', icon: 'EditPen', opsOnly: true },
+    { title: '生成海报', desc: '版式 / 生图', path: '/posters/generate', icon: 'PictureFilled', opsOnly: true },
+    { title: '线索', desc: '跟进转化', path: '/leads', icon: 'Phone', opsOnly: true },
+    { title: '成长中心', desc: '话术与异议', path: '/knowledge/scripts', icon: 'Reading', opsOnly: true },
+    { title: '综合办公', desc: '表格协作', path: '/office', icon: 'Grid', opsOnly: true },
     { title: '用户管理', desc: '账号权限', path: '/users', icon: 'User', adminOnly: true },
     { title: '学生信息', desc: '学员档案', path: '/students', icon: 'Avatar', adminOnly: true },
   ]
-  return links.filter((l) => !l.adminOnly || auth.isAdmin)
+  return links.filter((l) => {
+    if (l.adminOnly) return auth.isAdmin
+    return true
+  })
 })
 
 const authStatusLabel: Record<string, string> = {
@@ -108,14 +124,14 @@ async function load() {
   if (auth.isTeacher) return
   loading.value = true
   try {
-    const [s, all, integ] = await Promise.all([
+    const [s, pendingPage, integ] = await Promise.all([
       getSummary(),
-      listMaterialsApi(),
+      listMaterialsApi({ status: 'new', page: 1, page_size: 8 }),
       getIntegrationsStatus().catch(() => null),
     ])
     summary.value = s
     integrations.value = integ
-    pending.value = all.filter((m) => m.status === 'new').slice(0, 8)
+    pending.value = pendingPage.items
   } finally {
     loading.value = false
   }
@@ -283,28 +299,51 @@ onMounted(load)
         </section>
       </template>
 
-      <section v-else class="teacher-tip panel">
-        <div class="teacher-tip-icon" aria-hidden="true">
-          <el-icon :size="28"><Reading /></el-icon>
-        </div>
-        <div>
-          <h2 class="panel-title">今日重点</h2>
-          <p class="teacher-tip-text">
-            可在待办中规划跟进事项；手机端支持上传素材、查看学员与学情。
-          </p>
-          <div class="teacher-actions">
-            <el-button type="primary" @click="router.push('/materials')">素材库</el-button>
-            <el-button @click="router.push('/m/upload')">手机上传</el-button>
+      <template v-else>
+        <section class="panel quick-panel">
+          <div class="panel-head">
+            <h2 class="panel-title">快捷入口</h2>
+            <span class="panel-extra">常用功能一键直达</span>
           </div>
-        </div>
-      </section>
+          <div class="quick-grid">
+            <button
+              v-for="link in quickLinks"
+              :key="link.path"
+              type="button"
+              class="quick-item"
+              :class="{ 'is-primary': link.primary }"
+              @click="router.push(link.path)"
+            >
+              <span class="quick-icon" aria-hidden="true">
+                <el-icon :size="20"><component :is="link.icon" /></el-icon>
+              </span>
+              <span class="quick-text">
+                <span class="quick-title">{{ link.title }}</span>
+                <span class="quick-desc">{{ link.desc }}</span>
+              </span>
+            </button>
+          </div>
+        </section>
+
+        <section class="teacher-tip panel">
+          <div class="teacher-tip-icon" aria-hidden="true">
+            <el-icon :size="28"><Reading /></el-icon>
+          </div>
+          <div>
+            <h2 class="panel-title">使用提示</h2>
+            <p class="teacher-tip-text">
+              手机底栏可快速切换上传 / 素材 / 学生 / 学情。学生列表默认「我的学生」，详情中可编写学情与导出报告。
+            </p>
+          </div>
+        </section>
+      </template>
     </div>
   </div>
 </template>
 
 <style scoped>
 /*
- * 宽屏策略（内容宽度见全局 .oc-page-shell / --oc-content-max）：
+ * 宽屏策略（内容宽度见 .dashboard.oc-page-shell / --oc-content-max）：
  * - ≥1280：待办 | 快捷+素材 两列
  * - ≥1480：待办 | 快捷 | 素材 三列铺满
  */
@@ -851,9 +890,19 @@ onMounted(load)
 
 /* ── ≥1100：顶栏欢迎+AI 并排；工作区 待办 | 右侧堆叠 ── */
 @media (min-width: 1100px) {
-  .top-band {
+  /* 运营：欢迎 | AI；老师无 AI，hero 拉满内容宽 */
+  .is-ops .top-band {
     grid-template-columns: minmax(0, 1.55fr) minmax(260px, 0.55fr);
     align-items: stretch;
+  }
+
+  .is-teacher .top-band {
+    grid-template-columns: 1fr;
+  }
+
+  .is-teacher .hero-body {
+    padding: 24px 32px;
+    min-height: 120px;
   }
 
   .ai-panel {
@@ -891,14 +940,19 @@ onMounted(load)
 
 /* ── ≥1480：真正的宽屏三列 ── */
 @media (min-width: 1480px) {
-  .top-band {
+  .is-ops .top-band {
     grid-template-columns: minmax(0, 1.7fr) minmax(300px, 0.5fr);
     gap: 16px;
   }
 
-  .hero-body {
+  .is-ops .hero-body {
     padding: 26px 32px;
     min-height: 120px;
+  }
+
+  .is-teacher .hero-body {
+    padding: 28px 36px;
+    min-height: 128px;
   }
 
   .stats-grid {
@@ -941,7 +995,7 @@ onMounted(load)
   }
 }
 
-/* ── ≥1720：超宽再拉开（内容 max-width 由 .oc-page-shell 统一） ── */
+/* ── ≥1720：超宽再拉开（内容 max-width 由 .dashboard.oc-page-shell 统一） ── */
 @media (min-width: 1720px) {
   .is-ops .work-grid {
     grid-template-columns: minmax(360px, 0.85fr) minmax(0, 1.2fr) minmax(320px, 0.9fr);

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { generateCopy, type CopyMode, type GeneratedCopy } from '../../api/copies'
 import {
-  listMaterials,
+  listMaterialsForPicker,
   materialFileObjectUrl,
   type Material,
 } from '../../api/materials'
@@ -12,10 +12,11 @@ import { listCopyTemplates, type CopyTemplate } from '../../api/templates'
 import { getIntegrationsStatus, type IntegrationsStatus } from '../../api/system'
 import { COPY_TEMPLATE_PARAMS, copyParamPlaceholder } from '../../constants/templateParams'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { usePageBack } from '../../composables/usePageBack'
 import { asyncPool } from '../../utils/asyncPool'
 
 const route = useRoute()
-const router = useRouter()
+const { goBack } = usePageBack('/copies')
 const { isCompact } = useBreakpoint()
 const loading = ref(false)
 const materials = ref<Material[]>([])
@@ -133,7 +134,7 @@ watch(
 
 async function loadOptions() {
   const [mats, tpls, integ] = await Promise.all([
-    listMaterials(),
+    listMaterialsForPicker(100),
     listCopyTemplates(),
     getIntegrationsStatus().catch(() => null),
   ])
@@ -205,7 +206,7 @@ onUnmounted(revokePreviews)
 <template>
   <div class="copy-generate">
     <div class="page-head">
-      <el-page-header content="生成文案" @back="router.push('/copies')" />
+      <el-page-header content="生成文案" @back="goBack" />
     </div>
 
     <div class="status-bar" :class="integrations?.llm.configured ? 'is-ok' : 'is-info'">
@@ -227,12 +228,12 @@ onUnmounted(revokePreviews)
     </div>
 
     <el-row
-      :gutter="20"
+      :gutter="isCompact ? 0 : 20"
       class="generate-layout"
       :class="{ 'is-stacked': isCompact }"
     >
       <!-- 左侧配置 -->
-      <el-col :xs="24" :lg="9" :md="10" class="generate-form-col">
+      <el-col :xs="24" :sm="24" :lg="9" :md="isCompact ? 24 : 10" class="generate-form-col">
         <el-card class="form-card" shadow="never">
           <template #header>
             <div class="card-head">
@@ -349,7 +350,7 @@ onUnmounted(revokePreviews)
       </el-col>
 
       <!-- 右侧：素材 + 结果 -->
-      <el-col :xs="24" :lg="15" :md="14" class="generate-side-col">
+      <el-col :xs="24" :sm="24" :lg="15" :md="isCompact ? 24 : 14" class="generate-side-col">
         <el-card class="material-card" shadow="never" v-loading="previewLoading">
           <template #header>
             <div class="card-head">
@@ -603,6 +604,8 @@ onUnmounted(revokePreviews)
 .generate-layout {
   margin-top: 16px;
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .generate-form-col,
@@ -610,6 +613,7 @@ onUnmounted(revokePreviews)
   display: flex;
   flex-direction: column;
   min-width: 0;
+  max-width: 100%;
 }
 
 .generate-form-col > .form-card {
@@ -621,8 +625,31 @@ onUnmounted(revokePreviews)
 }
 
 @media (max-width: 991px) {
+  /*
+   * compact 下 gutter=0，仍清掉 EP 可能残留的左右负 margin / col padding，
+   * 避免窄屏右侧比左侧多出一截。
+   */
+  .generate-layout {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    width: 100% !important;
+  }
+
+  .generate-layout > :deep(.el-col) {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    max-width: 100%;
+  }
+
   .generate-layout .generate-side-col {
     margin-top: 16px;
+  }
+
+  .copy-generate {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+    box-sizing: border-box;
   }
 }
 

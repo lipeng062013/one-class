@@ -32,20 +32,34 @@ def test_create_student_with_school_and_manager(client):
     assert data["academic_manager_name"] == "老师甲"
     sid = data["id"]
 
-    # filter by grade / name / phone / school
-    listed = client.get("/api/v1/students", headers=admin, params={"grade": "三年级"})
-    assert any(s["id"] == sid for s in listed.json()["data"])
+    # filter by grade / name / phone / school（分页 envelope）
+    listed = client.get(
+        "/api/v1/students",
+        headers=admin,
+        params={"grade": "三年级", "page": 1, "page_size": 20},
+    )
+    body = listed.json()["data"]
+    assert "items" in body and "total" in body
+    assert any(s["id"] == sid for s in body["items"])
 
-    by_name = client.get("/api/v1/students", headers=admin, params={"name": "小明"})
-    assert len(by_name.json()["data"]) >= 1
+    by_name = client.get(
+        "/api/v1/students",
+        headers=admin,
+        params={"name": "小明", "page": 1, "page_size": 20},
+    )
+    assert len(by_name.json()["data"]["items"]) >= 1
 
-    by_phone = client.get("/api/v1/students", headers=admin, params={"phone": "1380000"})
-    assert len(by_phone.json()["data"]) >= 1
+    by_phone = client.get(
+        "/api/v1/students",
+        headers=admin,
+        params={"phone": "1380000", "page": 1, "page_size": 20},
+    )
+    assert len(by_phone.json()["data"]["items"]) >= 1
 
     # teacher can see students
-    t_list = client.get("/api/v1/students", headers=teacher)
+    t_list = client.get("/api/v1/students", headers=teacher, params={"page": 1, "page_size": 50})
     assert t_list.status_code == 200
-    assert any(s["id"] == sid for s in t_list.json()["data"])
+    assert any(s["id"] == sid for s in t_list.json()["data"]["items"])
 
 
 def test_teacher_create_student_and_learning_with_image(client):
@@ -99,6 +113,44 @@ def test_teacher_create_student_and_learning_with_image(client):
     # timeline on student
     timeline = client.get("/api/v1/learning-records", headers=h, params={"student_id": sid})
     assert any(r["id"] == rid for r in timeline.json()["data"])
+
+    # 老师默认仅自己的学情；mine=false 可看全部
+    mine_only = client.get("/api/v1/learning-records", headers=h)
+    assert mine_only.status_code == 200
+    assert all(r["teacher_id"] == teacher_id for r in mine_only.json()["data"])
+
+    all_rows = client.get("/api/v1/learning-records", headers=h, params={"mine": False})
+    assert all_rows.status_code == 200
+    assert any(r["id"] == rid for r in all_rows.json()["data"])
+
+
+def test_admin_learning_list_defaults_to_all(client):
+    admin = auth_header(client, "admin", "admin123")
+    teacher = auth_header(client, "teacher1", "t123")
+    managers = client.get("/api/v1/students/managers", headers=admin).json()["data"]
+    teacher_id = next(m["id"] for m in managers if m["username"] == "teacher1")
+    sid = client.post(
+        "/api/v1/students",
+        headers=admin,
+        json={
+            "name": "学情全量生",
+            "grade": "二年级",
+            "school": "B",
+            "academic_manager_id": teacher_id,
+        },
+    ).json()["data"]["id"]
+    rid = client.post(
+        "/api/v1/learning-records",
+        headers=teacher,
+        json={"student_id": sid, "learning_summary": "负责人应能看见"},
+    ).json()["data"]["id"]
+
+    listed = client.get("/api/v1/learning-records", headers=admin)
+    assert listed.status_code == 200
+    assert any(r["id"] == rid for r in listed.json()["data"])
+
+    mine = client.get("/api/v1/learning-records", headers=admin, params={"mine": True})
+    assert all(r["id"] != rid for r in mine.json()["data"])
 
 
 def test_operator_cannot_access_students(client):
@@ -214,7 +266,9 @@ def test_bulk_delete_students(client):
     )
     assert res.status_code == 200, res.text
     assert res.json()["data"]["deleted_count"] == 2
-    listed = client.get("/api/v1/students", headers=admin).json()["data"]
+    listed = client.get("/api/v1/students", headers=admin, params={"page": 1, "page_size": 100}).json()[
+        "data"
+    ]["items"]
     listed_ids = {s["id"] for s in listed}
     assert ids[0] not in listed_ids
     assert ids[1] not in listed_ids

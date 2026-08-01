@@ -61,6 +61,8 @@ const displayName = computed(
 
 const active = computed(() => {
   if (route.path.startsWith('/students')) return '/students'
+  if (route.path.startsWith('/learning')) return '/learning'
+  if (route.path.startsWith('/upload')) return '/upload'
   if (route.path.startsWith('/leads')) return '/leads'
   if (route.path.startsWith('/knowledge')) return route.path
   if (route.path.startsWith('/copies')) return '/copies'
@@ -70,18 +72,40 @@ const active = computed(() => {
   return route.path
 })
 
+/** 老师手机底栏高亮（上传 / 素材 / 学生 / 学情） */
+const teacherTabActive = computed(() => {
+  if (route.path.startsWith('/upload')) return '/upload'
+  if (route.path.startsWith('/materials')) return '/materials'
+  if (route.path.startsWith('/students')) return '/students'
+  if (route.path.startsWith('/learning')) return '/learning'
+  return ''
+})
+
 type MenuItem = { index: string; title: string; icon: string }
 type MenuGroup = { type: 'group'; index: string; title: string; icon: string; children: MenuItem[] }
 type MenuEntry = (MenuItem & { type?: 'item' }) | MenuGroup
 
 const menus = computed((): MenuEntry[] => {
+  // 老师：工作台 + 上传/素材/学生/学情（与手机底栏一致）
+  if (auth.isTeacher) {
+    return [
+      { index: '/', title: '工作台', icon: 'Odometer' },
+      { index: '/upload', title: '上传素材', icon: 'Upload' },
+      { index: '/materials', title: '素材', icon: 'Picture' },
+      { index: '/students', title: '学生信息', icon: 'Avatar' },
+      { index: '/learning', title: '学情', icon: 'EditPen' },
+    ]
+  }
+
   const crmChildren: MenuItem[] = [{ index: '/leads', title: '线索跟进', icon: 'Phone' }]
   if (auth.isAdmin) {
     crmChildren.push({ index: '/students', title: '学生信息', icon: 'Avatar' })
+    crmChildren.push({ index: '/learning', title: '学情', icon: 'EditPen' })
   }
 
   const items: MenuEntry[] = [
     { index: '/', title: '工作台', icon: 'Odometer' },
+    { index: '/upload', title: '上传素材', icon: 'Upload' },
     { index: '/materials', title: '素材', icon: 'Picture' },
     { index: '/copies', title: '文案', icon: 'Document' },
     { index: '/posters', title: '海报', icon: 'PictureFilled' },
@@ -112,6 +136,18 @@ const menus = computed((): MenuEntry[] => {
   }
   return items
 })
+
+const brandTag = computed(() => (auth.isTeacher ? '老师端后台' : '管理后台'))
+
+/** 老师在手机宽度下用底栏主导航 */
+const showTeacherTabBar = computed(() => auth.isTeacher && isMobile.value)
+
+const teacherTabs: MenuItem[] = [
+  { index: '/upload', title: '上传', icon: 'Upload' },
+  { index: '/materials', title: '素材', icon: 'Picture' },
+  { index: '/students', title: '学生', icon: 'User' },
+  { index: '/learning', title: '学情', icon: 'EditPen' },
+]
 
 /** 仅手动 push，不用 el-menu 的 router 属性，避免双跳 + EP 默认蓝底闪一下 */
 function onSelect(index: string) {
@@ -154,7 +190,7 @@ watch(
           :aria-hidden="!brandMetaVisible"
         >
           <span class="brand-text">嘉壹启航</span>
-          <span class="brand-tag">管理后台</span>
+          <span class="brand-tag">{{ brandTag }}</span>
         </div>
       </div>
       <el-menu
@@ -201,7 +237,7 @@ watch(
         <img class="brand-logo" src="/brand-mark.png" alt="" width="36" height="36" />
         <div class="brand-meta">
           <span class="brand-text">嘉壹启航</span>
-          <span class="brand-tag">管理后台</span>
+          <span class="brand-tag">{{ brandTag }}</span>
         </div>
       </div>
       <el-menu
@@ -232,7 +268,7 @@ watch(
       </el-menu>
     </el-drawer>
 
-    <el-container class="content-wrap">
+    <el-container class="content-wrap" :class="{ 'has-teacher-tabs': showTeacherTabBar }">
       <el-header class="header">
         <el-button v-if="isMobile" text class="icon-btn" @click="drawer = true">
           <el-icon><Menu /></el-icon>
@@ -240,6 +276,14 @@ watch(
         <el-button v-else text class="icon-btn" @click="toggleAside">
           <el-icon><Fold v-if="!collapsed" /><Expand v-else /></el-icon>
         </el-button>
+        <button
+          v-if="showTeacherTabBar"
+          type="button"
+          class="header-home"
+          @click="onSelect('/')"
+        >
+          工作台
+        </button>
         <div class="spacer" />
         <el-dropdown>
           <span class="user-trigger">
@@ -260,6 +304,21 @@ watch(
       <el-main class="main">
         <router-view />
       </el-main>
+
+      <!-- 老师 WAP：底栏（与侧栏能力对齐） -->
+      <nav v-if="showTeacherTabBar" class="teacher-tabbar" aria-label="老师主导航">
+        <button
+          v-for="tab in teacherTabs"
+          :key="tab.index"
+          type="button"
+          class="teacher-tab"
+          :class="{ 'is-active': teacherTabActive === tab.index }"
+          @click="onSelect(tab.index)"
+        >
+          <el-icon :size="20"><component :is="tab.icon" /></el-icon>
+          <span>{{ tab.title }}</span>
+        </button>
+      </nav>
     </el-container>
 
     <ChangePasswordDialog v-model="changePwdVisible" />
@@ -268,6 +327,8 @@ watch(
 
 <style scoped>
 .layout {
+  width: 100%;
+  max-width: 100%;
   height: 100vh;
   max-height: 100vh;
   overflow: hidden;
@@ -666,6 +727,7 @@ watch(
 .content-wrap {
   position: relative;
   min-width: 0;
+  width: 100%;
   flex: 1;
   height: 100vh;
   max-height: 100vh;
@@ -707,6 +769,61 @@ watch(
 
 .spacer {
   flex: 1;
+}
+
+.header-home {
+  margin-left: 4px;
+  border: none;
+  background: transparent;
+  color: var(--oc-primary, #a16207);
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.header-home:hover {
+  background: rgba(161, 98, 7, 0.08);
+}
+
+.content-wrap.has-teacher-tabs .main {
+  padding-bottom: 72px;
+}
+
+.teacher-tabbar {
+  position: sticky;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-around;
+  min-height: 56px;
+  padding: 4px 0 calc(4px + env(safe-area-inset-bottom, 0px));
+  background: var(--oc-card, #fffdf8);
+  border-top: 1px solid var(--oc-border, #e8e0d0);
+  flex-shrink: 0;
+}
+
+.teacher-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: none;
+  background: transparent;
+  color: var(--oc-muted, #78716c);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 6px 0;
+  min-height: 52px;
+}
+
+.teacher-tab.is-active {
+  color: var(--oc-primary, #a16207);
+  font-weight: 650;
 }
 
 .user-trigger {
@@ -763,17 +880,40 @@ watch(
   flex: 1;
   min-width: 0;
   min-height: 0;
+  width: 100%;
   overflow-x: hidden;
   overflow-y: auto;
   padding: 18px 20px;
   overscroll-behavior: contain;
   background: transparent;
+  box-sizing: border-box;
+  /* 桌面：主区自管滚动时预留槽，避免出现滚动条时内容右跳 */
+  scrollbar-gutter: stable;
 }
 
 @media (max-width: 991px) {
   .main {
+    /*
+     * Windows / DevTools 经典滚动条只吃右侧宽度，会显得「右边距更大」。
+     * both-edges：左右各留同等槽位，内容视觉居中对称。
+     */
     padding: 14px 12px;
-    overflow-x: visible;
+    overflow-x: hidden;
+    scrollbar-gutter: stable both-edges;
+    scrollbar-width: thin;
+  }
+
+  .main::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .main::-webkit-scrollbar-thumb {
+    background: rgba(120, 113, 108, 0.35);
+    border-radius: 4px;
+  }
+
+  .main::-webkit-scrollbar-track {
+    background: transparent;
   }
 }
 
@@ -787,6 +927,7 @@ watch(
   }
 
   .layout {
+    width: 100%;
     height: 100vh;
     height: 100dvh;
     max-height: 100vh;
@@ -796,6 +937,7 @@ watch(
   }
 
   .content-wrap {
+    width: 100%;
     height: 100%;
     max-height: 100%;
     min-height: 0;
@@ -809,6 +951,8 @@ watch(
     flex: 1;
     min-height: 0;
     -webkit-overflow-scrolling: touch;
+    scrollbar-gutter: stable both-edges;
+    scrollbar-width: thin;
   }
 
   .header {
@@ -1005,8 +1149,13 @@ watch(
 }
 
 .content-wrap > .header,
-.content-wrap > .main {
+.content-wrap > .main,
+.content-wrap > .teacher-tabbar {
   position: relative;
   z-index: 1;
+}
+
+.content-wrap > .teacher-tabbar {
+  z-index: 40;
 }
 </style>

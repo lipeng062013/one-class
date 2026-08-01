@@ -29,7 +29,7 @@ const DETAIL_MATCHERS: Record<string, (toPath: string) => boolean> = {
   knowledge: () => false,
   templates: (p) =>
     /^\/templates\/copies\/\d+\/?$/.test(p) || /^\/templates\/posters\/\d+\/?$/.test(p),
-  'm-students': (p) => /^\/m\/students\/\d+\/?$/.test(p),
+  learning: (p) => p === '/learning/new' || p.startsWith('/learning/new'),
 }
 
 export function isListDetailNavigation(listKey: string, toPath: string): boolean {
@@ -47,7 +47,7 @@ const LIST_PATH_MATCHERS: Record<string, (path: string) => boolean> = {
   users: (p) => p === '/users' || p === '/users/',
   knowledge: (p) => p.startsWith('/knowledge'),
   templates: (p) => p === '/templates' || p === '/templates/',
-  'm-students': (p) => p === '/m/students' || p === '/m/students/',
+  learning: (p) => p === '/learning' || p === '/learning/',
 }
 
 export function isCurrentListPath(listKey: string, path: string): boolean {

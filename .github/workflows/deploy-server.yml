@@ -1,4 +1,5 @@
-# Push master → SSH 到阿里云 → 同步代码 → 备份(OSS) → docker compose up
+# Push master → 先 TypeScript 检查 → 通过后再 SSH 部署
+# 避免 vue-tsc 错误拖到服务器 docker build 才失败
 # 所需 Secrets 见 docs/ops-auto-deploy.md
 name: Deploy to Server
 
@@ -11,13 +12,51 @@ on:
         description: "Skip OSS backup before deploy (0/1)"
         required: false
         default: "0"
+      skip_typecheck:
+        description: "Skip frontend TypeScript check (0/1, emergency only)"
+        required: false
+        default: "0"
 
 concurrency:
   group: deploy-server
   cancel-in-progress: false
 
 jobs:
+  # 在 GitHub 上先跑 vue-tsc：失败则根本不触发远端部署，日志也更清晰
+  typecheck:
+    name: Frontend TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.skip_typecheck != '1' }}
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.skip_typecheck != '1' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.skip_typecheck != '1' }}
+        working-directory: frontend
+        run: npm ci --registry=https://registry.npmmirror.com
+
+      - name: Run vue-tsc typecheck
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.skip_typecheck != '1' }}
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Skip typecheck (manual)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.skip_typecheck == '1' }}
+        run: echo "WARN: skipped frontend typecheck (emergency deploy)"
+
   deploy:
+    name: Deploy over SSH
+    needs: typecheck
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

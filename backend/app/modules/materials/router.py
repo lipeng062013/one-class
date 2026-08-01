@@ -38,11 +38,33 @@ MAX_FILE_SIZE = 8 * 1024 * 1024  # 8MB
 
 @router.get("")
 def get_materials(
+    page: int = Query(1, ge=1, description="页码，从 1 开始"),
+    page_size: int = Query(20, ge=1, le=100, description="每页条数，最大 100"),
+    status: str | None = Query(None, description="素材状态"),
+    grade: str | None = Query(None),
+    subject: str | None = Query(None),
+    q: str | None = Query(None, description="关键词：标题/痛点/处理等"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    items = list_materials(db, user)
-    return ok([material_to_dict(m) for m in items])
+    result = list_materials(
+        db,
+        user,
+        page=page,
+        page_size=page_size,
+        status=status,
+        grade=grade,
+        subject=subject,
+        q=q,
+    )
+    return ok(
+        {
+            "items": [material_to_dict(m) for m in result["items"]],
+            "total": result["total"],
+            "page": result["page"],
+            "page_size": result["page_size"],
+        }
+    )
 
 
 @router.post("")

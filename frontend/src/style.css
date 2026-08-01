@@ -15,9 +15,9 @@
   --oc-radius: 10px;
   --oc-shadow: 0 8px 24px rgba(41, 37, 36, 0.06);
   /*
-   * 内容区最大宽度（与工作台一致）
-   * 工作台 / 详情页 / 内容型页面根节点统一用 .oc-page-shell
-   * 规范：docs/ui-detail-page-pattern.md 、docs/ui-list-page-pattern.md §内容宽度
+   * 工作台阅读宽度（仅 .dashboard.oc-page-shell 使用）
+   * 详情 / 上传 / 生成等业务页：.oc-page-shell 默认吃满主区，不限宽
+   * 规范：docs/ui-detail-page-pattern.md
    */
   --oc-content-max: 1680px;
   --oc-content-max-wide: 1760px; /* ≥1720 视口略放宽 */
@@ -58,29 +58,49 @@
 }
 
 html {
-  /* 预留滚动条槽，避免 el-image 预览锁滚动时页面左右闪动 */
-  scrollbar-gutter: stable;
-  overflow-y: scroll;
+  /*
+   * 桌面端预留滚动条槽，避免 el-image 预览锁滚动时页面左右闪动。
+   * wap/pad 不要在 html 上 stable：滚动在 .main，html 再占 gutter
+   * 会让视口右侧多一截空白。
+   */
+  width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+@media (min-width: 992px) {
+  html {
+    scrollbar-gutter: stable;
+    overflow-y: scroll;
+  }
 }
 
 html,
 body {
   margin: 0;
   min-height: 100%;
+  width: 100%;
   font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
   background: var(--oc-page-gradient);
   background-attachment: fixed;
   color: var(--oc-ink);
 }
 
+body {
+  overflow-x: hidden;
+}
+
 #app {
   margin: 0;
   min-height: 100%;
+  width: 100%;
+  max-width: 100%;
   /* 透明，让 body 渐变与圆环装饰透上来 */
   background: transparent;
   position: relative;
   z-index: 1;
   color: var(--oc-ink);
+  overflow-x: hidden;
 }
 
 /* 右上角圆环已去掉；装饰圆统一放在右下角（见 AppLayout .content-wrap） */
@@ -131,6 +151,17 @@ a {
   color: var(--oc-ink);
 }
 
+/**
+ * 模块根列表页：el-page-header 只当标题用。
+ * EP 默认会渲染可点的「返回」区，未绑 @back 时点了无反应，整站体感很差。
+ */
+.el-page-header.is-title-only .el-page-header__back {
+  display: none;
+}
+.el-page-header.is-title-only .el-page-header__left > .el-divider {
+  display: none;
+}
+
 .el-input__wrapper,
 .el-textarea__inner,
 .el-select__wrapper {
@@ -147,19 +178,27 @@ a {
 }
 
 /*
- * 内容区外壳：工作台 / 详情页统一宽度
+ * 内容区外壳
+ * - 默认：吃满 AppLayout .main（详情 / 上传 / 生成等）
+ * - 工作台：.dashboard.oc-page-shell 保留阅读限宽
  * 详见 docs/ui-detail-page-pattern.md
  */
 .oc-page-shell {
   width: 100%;
-  max-width: var(--oc-content-max, 1680px);
-  margin-left: auto;
-  margin-right: auto;
+  max-width: none;
+  margin-left: 0;
+  margin-right: 0;
   box-sizing: border-box;
 }
 
+.dashboard.oc-page-shell {
+  max-width: var(--oc-content-max, 1680px);
+  margin-left: auto;
+  margin-right: auto;
+}
+
 @media (min-width: 1720px) {
-  .oc-page-shell {
+  .dashboard.oc-page-shell {
     max-width: var(--oc-content-max-wide, 1760px);
   }
 }
@@ -403,6 +442,45 @@ a {
 .pager-bar.pc-pager .el-pagination.is-background .btn-prev,
 .pager-bar.pc-pager .el-pagination.is-background .el-pager li {
   border-radius: 8px;
+}
+
+/**
+ * PC（≥992）：分页始终在页面底部
+ * - 列表内容少：用 flex 把分页顶到主区底部
+ * - 列表内容多：sticky 贴在主区滚动视口底，始终可操作
+ */
+@media (min-width: 992px) {
+  .main:has(.pager-bar.pc-pager) > * {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+  }
+
+  /* 直接包含分页条的容器（页面根或 .mat-pc / .user-pc 等）撑满剩余高度 */
+  .main *:has(> .pager-bar.pc-pager) {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  /* 表格卡吃掉中间空白，分页沉底 */
+  .main:has(.pager-bar.pc-pager) .pc-table-card {
+    flex: 1 1 auto;
+  }
+
+  .pager-bar.pc-pager {
+    margin-top: auto;
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    flex-shrink: 0;
+    /* 盖住下方滚动内容，避免「浮在半空」 */
+    box-shadow:
+      0 -8px 20px rgba(41, 37, 36, 0.06),
+      0 -1px 0 rgba(232, 224, 208, 0.9);
+  }
 }
 
 @media (max-width: 767px) {

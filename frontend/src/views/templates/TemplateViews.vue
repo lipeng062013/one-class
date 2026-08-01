@@ -207,12 +207,11 @@ function restoreListState() {
     const raw = sessionStorage.getItem(LIST_STATE_KEY)
     if (!raw) return
     const s = JSON.parse(raw) as {
-      tab?: 'copies' | 'posters'
       filters?: Partial<typeof filters>
       page?: number
       pageSize?: number
     }
-    if (s.tab === 'copies' || s.tab === 'posters') tab.value = s.tab
+    // 文案/海报 tab：每次进入默认「文案模板」，不恢复历史选中
     if (s.filters) {
       filters.q = s.filters.q ?? ''
       filters.status = s.filters.status ?? ''
@@ -232,7 +231,6 @@ function saveListState() {
     sessionStorage.setItem(
       LIST_STATE_KEY,
       JSON.stringify({
-        tab: tab.value,
         filters: { ...filters },
         page: page.value,
         pageSize: pageSize.value,
@@ -472,6 +470,8 @@ watch(pageSize, () => clampPage())
 
 onMounted(() => {
   restoreListState()
+  // 每次进入固定默认「文案模板」，不记忆上次 tab
+  tab.value = 'copies'
   load()
 })
 </script>
@@ -479,7 +479,7 @@ onMounted(() => {
 <template>
   <div class="tpl-page">
     <div class="page-toolbar" :class="{ 'is-compact': isCompact }">
-      <el-page-header content="模板管理" />
+      <el-page-header class="is-title-only" content="模板管理" />
       <el-button class="tb-btn tb-btn--primary" type="primary" @click="openCreate">
         <el-icon><Plus /></el-icon>
         {{ tab === 'copies' ? '新建文案模板' : '新建海报模板' }}

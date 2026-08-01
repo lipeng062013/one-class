@@ -167,7 +167,7 @@ async function onDelete() {
     })
     await deleteCopy(item.value.id)
     ElMessage.success('已删除')
-    router.push('/copies')
+    goBack()
   } catch {
     /* cancel */
   }
@@ -379,7 +379,7 @@ onMounted(load)
 </template>
 
 <style scoped>
-/* 内容宽度：全局 .oc-page-shell（docs/ui-detail-page-pattern.md） */
+/* 内容宽度：.oc-page-shell 吃满主区（docs/ui-detail-page-pattern.md） */
 .copy-detail {
   padding-bottom: 16px;
 }

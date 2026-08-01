@@ -314,8 +314,24 @@ def seed_demo_students(db: Session, target: int = 40) -> None:
     db.commit()
 
 
+def migrate_user_deleted_at(db: Session) -> None:
+    """Add users.deleted_at for soft-delete (existing SQLite DBs won't get it from create_all)."""
+    from sqlalchemy import text
+
+    try:
+        cols = db.execute(text("PRAGMA table_info(users)")).fetchall()
+    except Exception:
+        return
+    names = {c[1] for c in cols}
+    if "deleted_at" in names:
+        return
+    db.execute(text("ALTER TABLE users ADD COLUMN deleted_at DATETIME"))
+    db.commit()
+
+
 def seed_essentials(db: Session) -> None:
     """Always: login accounts, system templates, sample knowledge, brand fix."""
+    migrate_user_deleted_at(db)
     seed_demo_users(db)
     seed_system_templates(db)
     seed_sample_knowledge(db)

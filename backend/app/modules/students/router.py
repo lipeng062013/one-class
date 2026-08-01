@@ -59,10 +59,12 @@ def list_students(
     school: str | None = None,
     academic_manager_id: int | None = None,
     q: str | None = None,
+    page: int = Query(1, ge=1, description="页码，从 1 开始"),
+    page_size: int = Query(20, ge=1, le=100, description="每页条数，最大 100"),
     db: Session = Depends(get_db),
     _: User = Depends(_student_roles),
 ):
-    rows = svc.list_students(
+    result = svc.list_students(
         db,
         grade=grade,
         name=name,
@@ -71,8 +73,17 @@ def list_students(
         school=school,
         academic_manager_id=academic_manager_id,
         q=q,
+        page=page,
+        page_size=page_size,
     )
-    return ok([svc.student_to_dict(db, s) for s in rows])
+    return ok(
+        {
+            "items": [svc.student_to_dict(db, s) for s in result["items"]],
+            "total": result["total"],
+            "page": result["page"],
+            "page_size": result["page_size"],
+        }
+    )
 
 
 @router.post("/students")
@@ -253,15 +264,24 @@ def delete_student(
 def list_learning(
     student_id: int | None = None,
     teacher_id: int | None = None,
-    mine: bool = False,
+    mine: bool | None = Query(
+        None,
+        description="True=仅自己填写；False=全部；默认：老师=自己，负责人=全部",
+    ),
     db: Session = Depends(get_db),
     user: User = Depends(_student_roles),
 ):
     tid = teacher_id
-    if mine or (user.role == "teacher" and teacher_id is None and student_id is None):
-        # 老师默认看自己的；若带了 student_id 则看该学生全部学情
-        if student_id is None:
-            tid = user.id
+    # 显式 mine / 角色默认；带 student_id 时看该生全部学情（不强制填写人）
+    want_mine = mine
+    if want_mine is None:
+        want_mine = (
+            user.role == "teacher"
+            and student_id is None
+            and teacher_id is None
+        )
+    if want_mine and student_id is None:
+        tid = user.id
     rows = svc.list_learning_records(db, student_id=student_id, teacher_id=tid)
     return ok([svc.learning_to_dict(db, r) for r in rows])
 

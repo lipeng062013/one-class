@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules, type UploadUserFile } from 'element-plus'
 import {
   createLearningApi,
@@ -15,10 +15,11 @@ import {
 } from '../../api/students'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { usePageBack } from '../../composables/usePageBack'
 import { asyncPool } from '../../utils/asyncPool'
 
 const route = useRoute()
-const router = useRouter()
+const { goBack } = usePageBack('/students')
 const auth = useAuthStore()
 const { isMobile } = useBreakpoint()
 const descCols = computed(() => (isMobile.value ? 1 : 2))
@@ -256,7 +257,7 @@ onUnmounted(() => {
 <template>
   <div v-loading="loading" class="student-detail-page oc-page-shell">
     <div class="page-toolbar">
-      <el-page-header @back="router.push('/students')">
+      <el-page-header @back="goBack">
         <template #content>
           <span>学生详情{{ student ? ` · ${student.name}` : '' }}</span>
         </template>
