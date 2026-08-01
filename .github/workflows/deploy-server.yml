@@ -52,7 +52,8 @@ jobs:
 
       - name: Skip typecheck (manual)
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.skip_typecheck == '1' }}
-        run: echo "WARN: skipped frontend typecheck (emergency deploy)"
+        run: |
+          echo "WARN: skipped frontend typecheck (emergency deploy)"
 
   deploy:
     name: Deploy over SSH
