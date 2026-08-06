@@ -1,4 +1,5 @@
 import client from './client'
+import { asPageResult, type PageResult } from './paging'
 
 export type PosterMode = 'layout' | 'ai_image' | 'upload'
 
@@ -50,9 +51,21 @@ function unwrap<T>(res: { data: ApiResponse<T> }, fallback: string): T {
   return res.data.data
 }
 
-export async function listPosters(): Promise<GeneratedPoster[]> {
-  const res = await client.get<ApiResponse<GeneratedPoster[]>>('/posters')
-  return unwrap(res, 'Failed to list posters')
+export async function listPosters(params: {
+  q?: string
+  mode?: string
+  page?: number
+  page_size?: number
+} = {}): Promise<PageResult<GeneratedPoster>> {
+  const res = await client.get('/posters', {
+    params: {
+      q: params.q || undefined,
+      mode: params.mode || undefined,
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 20,
+    },
+  })
+  return asPageResult<GeneratedPoster>(res.data.data, params.page ?? 1, params.page_size ?? 20)
 }
 
 export async function generatePoster(payload: GeneratePosterInput): Promise<GeneratedPoster> {

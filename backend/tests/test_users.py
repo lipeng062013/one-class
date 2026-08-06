@@ -1,15 +1,44 @@
 from tests.conftest import auth_header
 
 
+def _user_items(client, headers, **params):
+    res = client.get("/api/v1/users", headers=headers, params=params)
+    assert res.status_code == 200, res.text
+    body = res.json()["data"]
+    assert "items" in body and "total" in body
+    return body
+
+
 def test_admin_can_list_users(client):
     headers = auth_header(client, "admin", "admin123")
-    res = client.get("/api/v1/users", headers=headers)
-    assert res.status_code == 200
-    users = res.json()["data"]
-    assert len(users) >= 3
-    for u in users:
+    body = _user_items(client, headers)
+    assert body["total"] >= 3
+    assert len(body["items"]) >= 3
+    assert body["page"] == 1
+    assert body["page_size"] == 20
+    for u in body["items"]:
         assert "password" not in u
         assert "password_hash" not in u
+
+
+def test_admin_list_users_pagination(client):
+    headers = auth_header(client, "admin", "admin123")
+    page1 = _user_items(client, headers, page=1, page_size=2)
+    assert page1["page"] == 1
+    assert page1["page_size"] == 2
+    assert len(page1["items"]) == 2
+    assert page1["total"] >= 3
+
+    page2 = _user_items(client, headers, page=2, page_size=2)
+    assert page2["page"] == 2
+    assert len(page2["items"]) >= 1
+    ids1 = {u["id"] for u in page1["items"]}
+    ids2 = {u["id"] for u in page2["items"]}
+    assert ids1.isdisjoint(ids2)
+
+    by_role = _user_items(client, headers, role="admin", page=1, page_size=10)
+    assert by_role["total"] >= 1
+    assert all(u["role"] == "admin" for u in by_role["items"])
 
 
 def test_operator_cannot_list_users(client):
@@ -69,7 +98,7 @@ def test_create_user_duplicate_display_name_rejected(client):
 def test_reset_password(client):
     headers = auth_header(client, "admin", "admin123")
     # ops is id 2 in fixture order
-    users = client.get("/api/v1/users", headers=headers).json()["data"]
+    users = _user_items(client, headers, page_size=100)["items"]
     ops = next(u for u in users if u["username"] == "ops")
     res = client.post(
         f"/api/v1/users/{ops['id']}/reset-password",
@@ -83,7 +112,7 @@ def test_reset_password(client):
 
 def test_deactivate_user_blocks_login(client):
     headers = auth_header(client, "admin", "admin123")
-    users = client.get("/api/v1/users", headers=headers).json()["data"]
+    users = _user_items(client, headers, page_size=100)["items"]
     ops = next(u for u in users if u["username"] == "ops")
     res = client.patch(
         f"/api/v1/users/{ops['id']}",
@@ -112,14 +141,14 @@ def test_admin_can_delete_user(client):
     res = client.delete(f"/api/v1/users/{uid}", headers=headers)
     assert res.status_code == 200, res.text
     assert res.json()["data"]["deleted"] is True
-    names = [u["username"] for u in client.get("/api/v1/users", headers=headers).json()["data"]]
+    names = [u["username"] for u in _user_items(client, headers, page_size=100)["items"]]
     assert "temp_del" not in names
     assert client.post("/api/v1/auth/login", json={"username": "temp_del", "password": "temp1234"}).status_code == 401
 
 
 def test_cannot_delete_self(client):
     headers = auth_header(client, "admin", "admin123")
-    users = client.get("/api/v1/users", headers=headers).json()["data"]
+    users = _user_items(client, headers, page_size=100)["items"]
     admin = next(u for u in users if u["username"] == "admin")
     res = client.delete(f"/api/v1/users/{admin['id']}", headers=headers)
     assert res.status_code == 400
@@ -143,13 +172,13 @@ def test_admin_can_delete_another_admin(client):
 
     # Switch to the new admin, then delete the original default admin
     new_headers = auth_header(client, "boss2", "secure99")
-    users = client.get("/api/v1/users", headers=new_headers).json()["data"]
+    users = _user_items(client, new_headers, page_size=100)["items"]
     old_admin = next(u for u in users if u["username"] == "admin")
     res = client.delete(f"/api/v1/users/{old_admin['id']}", headers=new_headers)
     assert res.status_code == 200, res.text
     assert res.json()["data"]["deleted"] is True
 
-    names = [u["username"] for u in client.get("/api/v1/users", headers=new_headers).json()["data"]]
+    names = [u["username"] for u in _user_items(client, new_headers, page_size=100)["items"]]
     assert "admin" not in names
     assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin123"}).status_code == 401
 
@@ -169,6 +198,8 @@ def test_admin_can_delete_another_admin(client):
 
 def test_delete_teacher_keeps_material_and_learning_author(client):
     """Deleting a teacher must not reassign material/learning authorship."""
+    from tests.conftest import first_manager_id
+
     h_t = auth_header(client, "teacher1", "t123")
     mat = client.post(
         "/api/v1/materials",
@@ -178,11 +209,10 @@ def test_delete_teacher_keeps_material_and_learning_author(client):
     assert mat.status_code == 201, mat.text
     mid = mat.json()["data"]["id"]
     uploader_id = mat.json()["data"]["uploader_id"]
+    teacher_id = uploader_id
 
     h_admin = auth_header(client, "admin", "admin123")
-    managers = client.get("/api/v1/students/managers", headers=h_admin).json()["data"]
-    teacher_id = next(m["id"] for m in managers if m["username"] == "teacher1")
-    assert teacher_id == uploader_id
+    manager_id = first_manager_id(client, h_admin)
 
     stu = client.post(
         "/api/v1/students",
@@ -191,7 +221,9 @@ def test_delete_teacher_keeps_material_and_learning_author(client):
             "name": "署名测试生",
             "grade": "三年级",
             "school": "测试小学",
-            "academic_manager_id": teacher_id,
+            "phone": "13800006666",
+            "academic_manager_id": manager_id,
+            "courses": [{"name": "署名关联课", "type": "一对多", "price_label": "100元/课时"}],
         },
     )
     assert stu.status_code == 201, stu.text
@@ -216,7 +248,7 @@ def test_delete_teacher_keeps_material_and_learning_author(client):
     res = client.delete(f"/api/v1/users/{teacher_id}", headers=h_admin)
     assert res.status_code == 200, res.text
     assert "teacher1" not in [
-        u["username"] for u in client.get("/api/v1/users", headers=h_admin).json()["data"]
+        u["username"] for u in _user_items(client, h_admin, page_size=100)["items"]
     ]
     assert client.post("/api/v1/auth/login", json={"username": "teacher1", "password": "t123"}).status_code == 401
 
@@ -228,28 +260,18 @@ def test_delete_teacher_keeps_material_and_learning_author(client):
     # Learning record still shows original teacher name (soft-deleted row kept)
     learning = client.get("/api/v1/learning-records", headers=h_admin, params={"student_id": sid})
     assert learning.status_code == 200
-    row = next(r for r in learning.json()["data"] if r["id"] == rid)
+    _ld = learning.json()["data"]
+    _items = _ld["items"] if isinstance(_ld, dict) else _ld
+    row = next(r for r in _items if r["id"] == rid)
     assert row["teacher_id"] == teacher_id
     assert row["teacher_name"] == "老师甲"
 
-    # Current 学管 assignment cleared (operational, not historical authorship)
+    # 学管师是 CR，删老师不影响学管归属
     student = client.get(f"/api/v1/students/{sid}", headers=h_admin)
     assert student.status_code == 200
-    assert student.json()["data"]["academic_manager_id"] is None
+    assert student.json()["data"]["academic_manager_id"] == manager_id
 
-    # 新建学生 / 改学管下拉：已删除老师不可再选
-    managers_after = client.get("/api/v1/students/managers", headers=h_admin).json()["data"]
-    assert all(m["id"] != teacher_id for m in managers_after)
-    assert all(m.get("username") != "teacher1" for m in managers_after)
-    # 即使带 include_inactive 也不应出现
-    managers_all = client.get(
-        "/api/v1/students/managers",
-        headers=h_admin,
-        params={"include_inactive": True},
-    ).json()["data"]
-    assert all(m["id"] != teacher_id for m in managers_all)
-
-    # 后端也拒绝把已删除老师指派为学管
+    # 老师账号不可再被指派为学管
     bad = client.post(
         "/api/v1/students",
         headers=h_admin,
@@ -257,7 +279,63 @@ def test_delete_teacher_keeps_material_and_learning_author(client):
             "name": "不可指派",
             "grade": "一年级",
             "school": "A",
+            "phone": "13800007777",
             "academic_manager_id": teacher_id,
+            "courses": [{"name": "不可指派测试课"}],
+        },
+    )
+    assert bad.status_code == 400
+    assert "学管师" in bad.json()["error"]["message"]
+
+
+def test_delete_cr_clears_academic_manager_assignment(client):
+    """删除学管师账号时，应清空其名下学员的学管归属，且不可再选。"""
+    from tests.conftest import first_manager_id
+
+    h_admin = auth_header(client, "admin", "admin123")
+    manager_id = first_manager_id(client, h_admin)
+
+    stu = client.post(
+        "/api/v1/students",
+        headers=h_admin,
+        json={
+            "name": "学管删除测试生",
+            "grade": "二年级",
+            "school": "测试小学",
+            "phone": "13800008888",
+            "academic_manager_id": manager_id,
+            "courses": [{"name": "学管删除关联课"}],
+        },
+    )
+    assert stu.status_code == 201, stu.text
+    sid = stu.json()["data"]["id"]
+
+    res = client.delete(f"/api/v1/users/{manager_id}", headers=h_admin)
+    assert res.status_code == 200, res.text
+
+    student = client.get(f"/api/v1/students/{sid}", headers=h_admin)
+    assert student.status_code == 200
+    assert student.json()["data"]["academic_manager_id"] is None
+
+    managers_after = client.get("/api/v1/students/managers", headers=h_admin).json()["data"]
+    assert all(m["id"] != manager_id for m in managers_after)
+    managers_all = client.get(
+        "/api/v1/students/managers",
+        headers=h_admin,
+        params={"include_inactive": True},
+    ).json()["data"]
+    assert all(m["id"] != manager_id for m in managers_all)
+
+    bad = client.post(
+        "/api/v1/students",
+        headers=h_admin,
+        json={
+            "name": "不可指派学管",
+            "grade": "一年级",
+            "school": "A",
+            "phone": "13800009999",
+            "academic_manager_id": manager_id,
+            "courses": [{"name": "不可指派测试课"}],
         },
     )
     assert bad.status_code == 400

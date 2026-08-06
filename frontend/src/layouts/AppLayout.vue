@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useBreakpoint } from '../composables/useBreakpoint'
@@ -7,6 +7,8 @@ import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
 
 /** 与 .aside width transition 对齐 */
 const ASIDE_MS = 220
+/** 折叠弹层选中后锁住 pointer，挡住 touch 残留 mouseenter 再打开 */
+const POPPER_LOCK_MS = 420
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -15,9 +17,17 @@ const collapsed = ref(false)
 const brandMetaVisible = ref(true)
 const drawer = ref(false)
 const changePwdVisible = ref(false)
+/** 折叠态选中子项后短暂锁侧栏交互，避免弹层闪回 */
+const popperLock = ref(false)
 const { isMobile } = useBreakpoint()
 
+/** 侧栏菜单实例：用于强制关闭折叠弹层 */
+const menuRef = ref<{ close: (index: string) => void } | null>(null)
+
+const GROUP_MENU_INDEXES = ['crm', 'academic', 'finance', 'growth'] as const
+
 let brandMetaTimer: ReturnType<typeof setTimeout> | null = null
+let popperLockTimer: ReturnType<typeof setTimeout> | null = null
 
 function clearBrandMetaTimer() {
   if (brandMetaTimer != null) {
@@ -26,14 +36,57 @@ function clearBrandMetaTimer() {
   }
 }
 
+function clearPopperLockTimer() {
+  if (popperLockTimer != null) {
+    clearTimeout(popperLockTimer)
+    popperLockTimer = null
+  }
+}
+
+/** 强制关掉所有分组弹层（折叠态 EP 靠 hover 开关，touch 易残留） */
+function closeCollapsedPoppers() {
+  const menu = menuRef.value
+  if (!menu?.close) return
+  for (const idx of GROUP_MENU_INDEXES) {
+    try {
+      menu.close(idx)
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * 折叠侧栏选中后：
+ * 1) 立刻关弹层
+ * 2) 短暂 pointer-events:none，挡住 touch 合成的 mouseenter 再 open
+ * 3) showTimeout(默认 300) 后再关一次兜底
+ */
+function lockCollapsedPopper() {
+  if (!collapsed.value) return
+  popperLock.value = true
+  closeCollapsedPoppers()
+  void nextTick(() => closeCollapsedPoppers())
+  clearPopperLockTimer()
+  popperLockTimer = setTimeout(() => {
+    closeCollapsedPoppers()
+    popperLock.value = false
+    popperLockTimer = null
+  }, POPPER_LOCK_MS)
+}
+
 /** 宽度与 EP collapse 同步，避免两拍不同步导致箭头/弹层错乱 */
 function toggleAside() {
   clearBrandMetaTimer()
+  clearPopperLockTimer()
+  popperLock.value = false
   const next = !collapsed.value
   collapsed.value = next
   if (next) {
     // 收起：文案立刻藏，不参与变窄挤压
     brandMetaVisible.value = false
+    // 收起瞬间清掉可能还开着的 inline 子菜单状态
+    void nextTick(() => closeCollapsedPoppers())
   } else {
     // 展开：等宽度到位再出 brand 文案
     brandMetaTimer = setTimeout(() => {
@@ -43,12 +96,17 @@ function toggleAside() {
   }
 }
 
-onUnmounted(() => clearBrandMetaTimer())
+onUnmounted(() => {
+  clearBrandMetaTimer()
+  clearPopperLockTimer()
+})
 
 const roleLabel: Record<string, string> = {
   admin: '负责人',
   operator: '运营',
   teacher: '老师',
+  cr: 'CR（班主任，学管师）',
+  academic_manager: 'CR（班主任，学管师）',
 }
 
 const roleText = computed(
@@ -61,22 +119,29 @@ const displayName = computed(
 
 const active = computed(() => {
   if (route.path.startsWith('/students')) return '/students'
+  if (route.path.startsWith('/enrollments')) return '/enrollments'
   if (route.path.startsWith('/learning')) return '/learning'
   if (route.path.startsWith('/upload')) return '/upload'
-  if (route.path.startsWith('/leads')) return '/leads'
+  if (route.path.startsWith('/leads')) return '/leads' // 含 /leads/:id 详情
   if (route.path.startsWith('/knowledge')) return route.path
   if (route.path.startsWith('/copies')) return '/copies'
   if (route.path.startsWith('/posters')) return '/posters'
   if (route.path.startsWith('/materials')) return '/materials'
   if (route.path.startsWith('/templates')) return '/templates'
+  // 教务 / 财务：新建/详情子页高亮父级列表
+  if (route.path.startsWith('/academic/courses')) return '/academic/courses'
+  if (route.path.startsWith('/academic/')) return route.path
+  if (route.path.startsWith('/finance/orders')) return '/finance/orders'
+  if (route.path.startsWith('/finance/')) return route.path
   return route.path
 })
 
-/** 老师手机底栏高亮（上传 / 素材 / 学生 / 学情） */
+/** 老师手机底栏高亮（上传 / 素材 / 学生 / 课表 / 学情） */
 const teacherTabActive = computed(() => {
   if (route.path.startsWith('/upload')) return '/upload'
   if (route.path.startsWith('/materials')) return '/materials'
   if (route.path.startsWith('/students')) return '/students'
+  if (route.path.startsWith('/academic/schedule')) return '/academic/schedule'
   if (route.path.startsWith('/learning')) return '/learning'
   return ''
 })
@@ -86,38 +151,120 @@ type MenuGroup = { type: 'group'; index: string; title: string; icon: string; ch
 type MenuEntry = (MenuItem & { type?: 'item' }) | MenuGroup
 
 const menus = computed((): MenuEntry[] => {
-  // 老师：工作台 + 上传/素材/学生/学情（与手机底栏一致）
-  if (auth.isTeacher) {
+  const can = (code: string) => auth.hasPermission(code)
+
+  // 纯老师默认包且无额外模块权限：精简菜单（手机友好）
+  const hasOpsExtras =
+    can('copies.use') ||
+    can('posters.use') ||
+    can('ai_image.use') ||
+    can('knowledge.read') ||
+    can('leads.read') ||
+    can('finance.read') ||
+    can('enrollments.manage') ||
+    can('academic.write') ||
+    can('users.manage')
+  if (auth.isTeacher && !hasOpsExtras) {
     return [
       { index: '/', title: '工作台', icon: 'Odometer' },
-      { index: '/upload', title: '上传素材', icon: 'Upload' },
-      { index: '/materials', title: '素材', icon: 'Picture' },
-      { index: '/students', title: '学生信息', icon: 'Avatar' },
-      { index: '/learning', title: '学情', icon: 'EditPen' },
+      ...(can('materials.write') ? [{ index: '/upload', title: '上传素材', icon: 'Upload' }] : []),
+      ...(can('materials.read') ? [{ index: '/materials', title: '素材', icon: 'Picture' }] : []),
+      ...(can('students.read') ? [{ index: '/students', title: '学员', icon: 'Avatar' }] : []),
+      // 默认 academic.read：老师可查看自己所带课表
+      ...(can('academic.read')
+        ? [{ index: '/academic/schedule', title: '我的课表', icon: 'Calendar' }]
+        : []),
+      ...(can('learning.write') ? [{ index: '/learning', title: '上传学情', icon: 'EditPen' }] : []),
     ]
   }
 
-  const crmChildren: MenuItem[] = [{ index: '/leads', title: '线索跟进', icon: 'Phone' }]
-  if (auth.isAdmin) {
-    crmChildren.push({ index: '/students', title: '学生信息', icon: 'Avatar' })
-    crmChildren.push({ index: '/learning', title: '学情', icon: 'EditPen' })
+  const items: MenuEntry[] = [{ index: '/', title: '工作台', icon: 'Odometer' }]
+
+  if (can('materials.write')) {
+    items.push({ index: '/upload', title: '上传素材', icon: 'Upload' })
+  }
+  if (can('materials.read')) {
+    items.push({ index: '/materials', title: '素材', icon: 'Picture' })
+  }
+  if (can('copies.use')) {
+    items.push({ index: '/copies', title: '文案', icon: 'Document' })
+  }
+  if (can('posters.use')) {
+    items.push({ index: '/posters', title: '海报', icon: 'PictureFilled' })
+  }
+  if (can('ai_image.use')) {
+    items.push({ index: '/ai-image', title: 'GPT 生图', icon: 'MagicStick' })
   }
 
-  const items: MenuEntry[] = [
-    { index: '/', title: '工作台', icon: 'Odometer' },
-    { index: '/upload', title: '上传素材', icon: 'Upload' },
-    { index: '/materials', title: '素材', icon: 'Picture' },
-    { index: '/copies', title: '文案', icon: 'Document' },
-    { index: '/posters', title: '海报', icon: 'PictureFilled' },
-    { index: '/ai-image', title: 'GPT 生图', icon: 'MagicStick' },
-    {
+  if (can('leads.read')) {
+    items.push({
       type: 'group',
       index: 'crm',
-      title: '获客与学员',
+      title: '获客中心',
       icon: 'UserFilled',
-      children: crmChildren,
-    },
-    {
+      children: [{ index: '/leads', title: '线索跟进', icon: 'Phone' }],
+    })
+  }
+
+  const academicChildren: MenuItem[] = []
+  if (can('students.read')) {
+    academicChildren.push({ index: '/students', title: '学员管理', icon: 'Avatar' })
+  }
+  if (can('academic.read')) {
+    academicChildren.push(
+      { index: '/academic/classes', title: '班级管理', icon: 'Collection' },
+      { index: '/academic/schedule', title: '课表管理', icon: 'Calendar' },
+      { index: '/academic/class-records', title: '上课记录', icon: 'Notebook' },
+      { index: '/academic/courses', title: '课程管理', icon: 'Reading' },
+      { index: '/academic/teachers', title: '老师管理', icon: 'User' },
+    )
+  }
+  if (can('learning.write')) {
+    academicChildren.push({ index: '/learning', title: '学情', icon: 'EditPen' })
+  }
+  if (academicChildren.length) {
+    items.push({
+      type: 'group',
+      index: 'academic',
+      title: '教务中心',
+      icon: 'School',
+      children: academicChildren,
+    })
+  }
+
+  const financeChildren: MenuItem[] = []
+  if (can('finance.read')) {
+    financeChildren.push({ index: '/finance/orders', title: '订单管理', icon: 'Tickets' })
+  }
+  if (can('enrollments.manage')) {
+    financeChildren.push({ index: '/enrollments', title: '报名/续费', icon: 'Ticket' })
+  }
+  if (can('finance.read')) {
+    financeChildren.push(
+      { index: '/finance/transactions', title: '收支明细', icon: 'List' },
+      { index: '/finance/consumption', title: '课消记录', icon: 'DataLine' },
+      { index: '/finance/recharge', title: '充值管理', icon: 'Coin' },
+    )
+  }
+  if (can('finance.income_report')) {
+    financeChildren.push({
+      index: '/finance/income-report',
+      title: '确认收入报表',
+      icon: 'DataAnalysis',
+    })
+  }
+  if (financeChildren.length) {
+    items.push({
+      type: 'group',
+      index: 'finance',
+      title: '财务中心',
+      icon: 'Wallet',
+      children: financeChildren,
+    })
+  }
+
+  if (can('knowledge.read')) {
+    items.push({
       type: 'group',
       index: 'growth',
       title: '成长中心',
@@ -127,11 +274,15 @@ const menus = computed((): MenuEntry[] => {
         { index: '/knowledge/objections', title: '异议处理', icon: 'Comment' },
         { index: '/knowledge/banned', title: '禁用词列表', icon: 'Warning' },
       ],
-    },
-    { index: '/templates', title: '模板', icon: 'Files' },
-    { index: '/office', title: '综合办公表', icon: 'Grid' },
-  ]
-  if (auth.isAdmin) {
+    })
+  }
+  if (can('templates.manage')) {
+    items.push({ index: '/templates', title: '模板', icon: 'Files' })
+  }
+  if (can('office.use')) {
+    items.push({ index: '/office', title: '综合办公表', icon: 'Grid' })
+  }
+  if (can('users.manage')) {
     items.push({ index: '/users', title: '用户管理', icon: 'User' })
   }
   return items
@@ -139,13 +290,22 @@ const menus = computed((): MenuEntry[] => {
 
 const brandTag = computed(() => (auth.isTeacher ? '老师端后台' : '管理后台'))
 
-/** 老师在手机宽度下用底栏主导航 */
-const showTeacherTabBar = computed(() => auth.isTeacher && isMobile.value)
+/** 老师在手机宽度下用底栏主导航（有额外授权时走完整侧栏） */
+const showTeacherTabBar = computed(() => {
+  if (!auth.isTeacher || !isMobile.value) return false
+  const extra =
+    auth.hasPermission('copies.use') ||
+    auth.hasPermission('leads.read') ||
+    auth.hasPermission('finance.read') ||
+    auth.hasPermission('users.manage')
+  return !extra
+})
 
 const teacherTabs: MenuItem[] = [
   { index: '/upload', title: '上传', icon: 'Upload' },
   { index: '/materials', title: '素材', icon: 'Picture' },
   { index: '/students', title: '学生', icon: 'User' },
+  { index: '/academic/schedule', title: '课表', icon: 'Calendar' },
   { index: '/learning', title: '学情', icon: 'EditPen' },
 ]
 
@@ -155,6 +315,20 @@ function onSelect(index: string) {
   if (!index.startsWith('/')) return
   if (route.path !== index) void router.push(index)
   if (isMobile.value) drawer.value = false
+  // 折叠态：选中子项后锁弹层，避免 pad/touch「关一下又弹回来」
+  lockCollapsedPopper()
+}
+
+/** 锁定期内若 EP 又因 hover 打开分组，立刻关掉 */
+function onSubMenuOpen(index: string) {
+  if (!popperLock.value || !collapsed.value) return
+  void nextTick(() => {
+    try {
+      menuRef.value?.close?.(index)
+    } catch {
+      /* ignore */
+    }
+  })
 }
 
 function logout() {
@@ -181,7 +355,12 @@ watch(
 
 <template>
   <el-container class="layout">
-    <el-aside v-if="!isMobile" :width="collapsed ? '64px' : '232px'" class="aside">
+    <el-aside
+      v-if="!isMobile"
+      :width="collapsed ? '64px' : '232px'"
+      class="aside"
+      :class="{ 'is-collapsed': collapsed, 'is-popper-lock': popperLock }"
+    >
       <div class="brand" :class="{ 'is-collapsed': collapsed }">
         <img class="brand-logo" src="/brand-mark.png" alt="" width="36" height="36" />
         <div
@@ -193,34 +372,42 @@ watch(
           <span class="brand-tag">{{ brandTag }}</span>
         </div>
       </div>
-      <el-menu
-        class="aside-menu"
-        :default-active="active"
-        :default-openeds="[]"
-        :collapse="collapsed"
-        :collapse-transition="false"
-        background-color="transparent"
-        text-color="#e7e5e4"
-        active-text-color="#f5e6c8"
-        @select="onSelect"
-      >
-        <template v-for="m in menus" :key="m.index">
-          <el-sub-menu v-if="m.type === 'group'" :index="m.index" popper-class="oc-aside-popper">
-            <template #title>
+      <!-- 仅菜单区滚动，brand 钉住；避免整栏 overflow 在 pad 上滑不动/乱滑 -->
+      <div class="aside-scroll">
+        <el-menu
+          ref="menuRef"
+          class="aside-menu"
+          :default-active="active"
+          :default-openeds="[]"
+          :collapse="collapsed"
+          :collapse-transition="false"
+          :persistent="false"
+          :show-timeout="0"
+          :hide-timeout="150"
+          background-color="transparent"
+          text-color="#e7e5e4"
+          active-text-color="#f5e6c8"
+          @select="onSelect"
+          @open="onSubMenuOpen"
+        >
+          <template v-for="m in menus" :key="m.index">
+            <el-sub-menu v-if="m.type === 'group'" :index="m.index" popper-class="oc-aside-popper">
+              <template #title>
+                <el-icon><component :is="m.icon" /></el-icon>
+                <span>{{ m.title }}</span>
+              </template>
+              <el-menu-item v-for="c in m.children" :key="c.index" :index="c.index">
+                <el-icon><component :is="c.icon" /></el-icon>
+                <span>{{ c.title }}</span>
+              </el-menu-item>
+            </el-sub-menu>
+            <el-menu-item v-else :index="m.index">
               <el-icon><component :is="m.icon" /></el-icon>
               <span>{{ m.title }}</span>
-            </template>
-            <el-menu-item v-for="c in m.children" :key="c.index" :index="c.index">
-              <el-icon><component :is="c.icon" /></el-icon>
-              <span>{{ c.title }}</span>
             </el-menu-item>
-          </el-sub-menu>
-          <el-menu-item v-else :index="m.index">
-            <el-icon><component :is="m.icon" /></el-icon>
-            <span>{{ m.title }}</span>
-          </el-menu-item>
-        </template>
-      </el-menu>
+          </template>
+        </el-menu>
+      </div>
     </el-aside>
 
     <el-drawer
@@ -302,7 +489,11 @@ watch(
         </el-dropdown>
       </el-header>
       <el-main class="main">
-        <router-view />
+        <router-view v-slot="{ Component }">
+          <KeepAlive include="LeadListView" :max="1">
+            <component :is="Component" />
+          </KeepAlive>
+        </router-view>
       </el-main>
 
       <!-- 老师 WAP：底栏（与侧栏能力对齐） -->
@@ -329,8 +520,16 @@ watch(
 .layout {
   width: 100%;
   max-width: 100%;
+  /*
+   * 壳层必须贴「动态可视高度」。
+   * 纯 100vh 在 iPad / 平板浏览器里常大于可视区（地址栏、底栏），
+   * 再叠加 overflow:hidden 就会底部被裁切，且整页无法下滚。
+   */
   height: 100vh;
+  height: 100dvh;
   max-height: 100vh;
+  max-height: 100dvh;
+  min-height: 0;
   overflow: hidden;
   background: transparent;
 }
@@ -351,13 +550,16 @@ watch(
   --el-menu-border-color: transparent;
   --el-color-primary: #a16207;
 
-  position: sticky;
-  top: 0;
+  /* 列布局：brand 固定，.aside-scroll 独自滚动（盖掉 EP .el-aside{overflow:auto}） */
+  position: relative;
+  top: auto;
   align-self: stretch;
-  height: 100vh !important;
-  max-height: 100vh;
-  overflow-x: hidden;
-  overflow-y: auto;
+  display: flex !important;
+  flex-direction: column;
+  height: 100% !important;
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden !important;
   flex-shrink: 0;
   z-index: 30;
   background: linear-gradient(90deg, #25211f 0%, #2c2825 100%);
@@ -365,7 +567,47 @@ watch(
   transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   border-right: 1px solid rgba(245, 230, 200, 0.14);
   box-shadow: inset -1px 0 0 rgba(161, 98, 7, 0.18);
+}
+
+/* 选中折叠子项后短暂锁交互，防止 touch 残留 hover 把弹层再打开 */
+.aside.is-popper-lock :deep(.el-sub-menu),
+.aside.is-popper-lock :deep(.el-menu-item) {
+  pointer-events: none !important;
+}
+
+.aside-scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
   overscroll-behavior: contain;
+  /* pad 细滚动条，不占太多宽度 */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(245, 230, 200, 0.28) transparent;
+}
+
+.aside-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.aside-scroll::-webkit-scrollbar-thumb {
+  background: rgba(245, 230, 200, 0.28);
+  border-radius: 4px;
+}
+
+.aside-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.aside-menu {
+  border-right: none;
+  width: 100%;
+  min-height: 100%;
+  box-sizing: border-box;
 }
 
 .aside :deep(.el-menu),
@@ -379,14 +621,58 @@ watch(
   --el-menu-text-color: #e7e5e4;
 }
 
+/*
+ * 仅根 .aside-menu 不二次滚动（滚动在 .aside-scroll）。
+ * 切勿对所有 .el-menu 设 overflow:visible !important —— 会盖住 EP 收起时的 overflow:hidden，
+ * 导致「高度已折上、子项文字还挂在外面慢慢消失」。
+ */
+.aside :deep(.aside-menu.el-menu) {
+  height: auto !important;
+  overflow: visible !important;
+}
+
+/*
+ * 分组子菜单收起/展开：高度与文字同步消失。
+ * leave 略快并带 opacity，避免「壳先合上、字还在」。
+ */
 .aside :deep(.el-collapse-transition-enter-active),
 .nav-drawer :deep(.el-collapse-transition-enter-active) {
-  transition: max-height 0.28s cubic-bezier(0.22, 1, 0.36, 1) !important;
+  transition:
+    max-height 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+    padding-top 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+    padding-bottom 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.16s ease !important;
+  overflow: hidden !important;
 }
 
 .aside :deep(.el-collapse-transition-leave-active),
 .nav-drawer :deep(.el-collapse-transition-leave-active) {
-  transition: max-height 0.22s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  transition:
+    max-height 0.16s cubic-bezier(0.4, 0, 1, 1),
+    padding-top 0.16s cubic-bezier(0.4, 0, 1, 1),
+    padding-bottom 0.16s cubic-bezier(0.4, 0, 1, 1),
+    opacity 0.1s linear !important;
+  overflow: hidden !important;
+}
+
+.aside :deep(.el-collapse-transition-enter-from),
+.nav-drawer :deep(.el-collapse-transition-enter-from) {
+  opacity: 0;
+}
+
+.aside :deep(.el-collapse-transition-enter-to),
+.nav-drawer :deep(.el-collapse-transition-enter-to) {
+  opacity: 1;
+}
+
+.aside :deep(.el-collapse-transition-leave-from),
+.nav-drawer :deep(.el-collapse-transition-leave-from) {
+  opacity: 1;
+}
+
+.aside :deep(.el-collapse-transition-leave-to),
+.nav-drawer :deep(.el-collapse-transition-leave-to) {
+  opacity: 0;
 }
 
 .aside :deep(.el-menu-item),
@@ -597,7 +883,8 @@ watch(
   padding: 0 !important;
   margin: 0 !important;
   border: none !important;
-  overflow: hidden;
+  /* 收起动画依赖 overflow:hidden 裁切文字，必须 !important 压过其它规则 */
+  overflow: hidden !important;
 }
 
 .aside :deep(.el-sub-menu .el-menu--inline .el-menu-item),
@@ -729,8 +1016,10 @@ watch(
   min-width: 0;
   width: 100%;
   flex: 1;
-  height: 100vh;
-  max-height: 100vh;
+  /* 吃满 .layout，勿再写死 100vh（Pad 上会比可视区更高） */
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
   overflow: hidden;
   background: transparent;
   display: flex;
@@ -877,12 +1166,16 @@ watch(
 }
 
 .main {
-  flex: 1;
+  /* flex-basis:0 才能在列 flex 里真正收缩，否则内容把壳撑破后 overflow 形同虚设 */
+  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
+  height: auto;
   width: 100%;
   overflow-x: hidden;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
   padding: 18px 20px;
   overscroll-behavior: contain;
   background: transparent;
@@ -896,9 +1189,13 @@ watch(
     /*
      * Windows / DevTools 经典滚动条只吃右侧宽度，会显得「右边距更大」。
      * both-edges：左右各留同等槽位，内容视觉居中对称。
+     * pad（768–991）与手机一样走主区滚动，勿依赖 body 滚动。
      */
     padding: 14px 12px;
     overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
     scrollbar-gutter: stable both-edges;
     scrollbar-width: thin;
   }
@@ -926,31 +1223,14 @@ watch(
     padding: 4px;
   }
 
-  .layout {
-    width: 100%;
-    height: 100vh;
-    height: 100dvh;
-    max-height: 100vh;
-    max-height: 100dvh;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .content-wrap {
-    width: 100%;
-    height: 100%;
-    max-height: 100%;
-    min-height: 0;
-    overflow: hidden;
-  }
-
   .main {
     padding: 10px;
     overflow-x: hidden;
     overflow-y: auto;
-    flex: 1;
+    flex: 1 1 0;
     min-height: 0;
     -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
     scrollbar-gutter: stable both-edges;
     scrollbar-width: thin;
   }
@@ -1031,6 +1311,18 @@ watch(
   border: none !important;
   box-shadow: none !important;
   overflow-x: hidden !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.nav-drawer .aside-menu {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .nav-drawer .el-drawer__header {

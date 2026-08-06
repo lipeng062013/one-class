@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -6,16 +6,12 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.responses import fail, ok
+from app.core.timeutil import now as _utcnow
 from app.models.todo import TodoItem
 from app.models.user import User
 from app.modules.todos.schemas import TodoCreate, TodoUpdate
 
 router = APIRouter(prefix="/todos", tags=["todos"])
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
 
 def _ser(t: TodoItem) -> dict:
     return {
@@ -27,7 +23,6 @@ def _ser(t: TodoItem) -> dict:
         "created_at": t.created_at,
         "completed_at": t.completed_at,
     }
-
 
 @router.get("")
 def list_todos(
@@ -41,7 +36,6 @@ def list_todos(
         .all()
     )
     return ok([_ser(t) for t in rows])
-
 
 @router.post("")
 def create_todo(
@@ -62,7 +56,6 @@ def create_todo(
     db.commit()
     db.refresh(item)
     return ok(_ser(item), status_code=201)
-
 
 @router.patch("/{todo_id}")
 def patch_todo(
@@ -88,7 +81,6 @@ def patch_todo(
     db.commit()
     db.refresh(item)
     return ok(_ser(item))
-
 
 @router.delete("/{todo_id}")
 def delete_todo(

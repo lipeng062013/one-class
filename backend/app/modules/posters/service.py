@@ -145,9 +145,9 @@ def _friendly_image_error(exc: BaseException) -> str:
 
 
 def generate_poster(db: Session, user: User, body: GeneratePosterRequest) -> dict[str, Any]:
-    if user.role == "teacher":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-    if user.role not in {"admin", "operator"}:
+    from app.core.permissions import has_permission
+
+    if not has_permission(user, "posters.use"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
     mode = body.mode or "layout"
@@ -242,9 +242,9 @@ def upload_poster(
     filename: str | None = None,
 ) -> dict[str, Any]:
     """Manually add a poster image to the list (no layout/AI generation)."""
-    if user.role == "teacher":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-    if user.role not in {"admin", "operator"}:
+    from app.core.permissions import has_permission
+
+    if not has_permission(user, "posters.use"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     if not content:
         raise HTTPException(status_code=400, detail="文件为空")
@@ -285,8 +285,27 @@ def upload_poster(
     return serialize_poster(poster)
 
 
-def list_posters(db: Session) -> list[GeneratedPoster]:
-    return db.query(GeneratedPoster).order_by(GeneratedPoster.id.desc()).all()
+def list_posters(
+    db: Session,
+    *,
+    q: str | None = None,
+    mode: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> dict:
+    from app.core.pagination import clamp_page, clamp_page_size, page_payload, paginate_query
+
+    page = clamp_page(page)
+    page_size = clamp_page_size(page_size)
+    query = db.query(GeneratedPoster)
+    if mode:
+        query = query.filter(GeneratedPoster.mode == mode)
+    if q and q.strip():
+        query = query.filter(GeneratedPoster.title.contains(q.strip()))
+    query = query.order_by(GeneratedPoster.id.desc())
+    rows, total = paginate_query(query, page=page, page_size=page_size)
+    items = [serialize_poster(p) for p in rows]
+    return page_payload(items, total=total, page=page, page_size=page_size)
 
 
 def get_poster(db: Session, poster_id: int) -> GeneratedPoster:

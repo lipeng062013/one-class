@@ -21,7 +21,8 @@ Vue 3 + **Element Plus** 前端，FastAPI 后端。当前以 **master** 为准�
 |--------|------|------|
 | `admin` | `admin123` | 负责人 |
 | `ops` | `ops123` | 运营 |
-| `teacher1` | `t123` | 老师 |
+| `teacher1` | `teacher1` | 老师（演示账号：用户名=密码） |
+| `cr1` | `cr1` | 学管师 / CR（演示账号：用户名=密码） |
 
 ## 启动（开发：本机 Python + Node）
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createTodoApi,
@@ -8,9 +9,14 @@ import {
   patchTodoApi,
   type TodoItem,
 } from '../api/todos'
+import { listTodayTodosApi, type TodayTodo } from '../api/dashboard'
+
+type WorkbenchTodo = TodoItem &
+  Partial<Pick<TodayTodo, 'path' | 'source' | 'ref_id' | 'kind'>>
 
 const loading = ref(false)
-const rows = ref<TodoItem[]>([])
+const router = useRouter()
+const rows = ref<WorkbenchTodo[]>([])
 const newTitle = ref('')
 const newContent = ref('')
 const adding = ref(false)
@@ -20,10 +26,16 @@ const done = computed(() => rows.value.filter((t) => t.is_done))
 const doneCount = computed(() => done.value.length)
 const totalCount = computed(() => rows.value.length)
 
+function isSystemTodo(item: WorkbenchTodo) {
+  return item.id < 0 || item.kind === 'system'
+}
+
 async function load() {
   loading.value = true
   try {
-    rows.value = await listTodosApi()
+    const [manual, system] = await Promise.all([listTodosApi(), listTodayTodosApi()])
+    // 系统课表待办（含已点名完成）在前，手写待办在后
+    rows.value = [...system, ...manual] as WorkbenchTodo[]
   } finally {
     loading.value = false
   }
@@ -49,12 +61,25 @@ async function addTodo() {
   }
 }
 
-async function toggleDone(item: TodoItem) {
+function openSystemTodo(item: WorkbenchTodo) {
+  if (item.path) void router.push(item.path)
+}
+
+async function toggleDone(item: WorkbenchTodo) {
+  // 系统课表待办：点名后自动完成，不可手勾；点击跳转业务页
+  if (isSystemTodo(item)) {
+    openSystemTodo(item)
+    return
+  }
   await patchTodoApi(item.id, { is_done: !item.is_done })
   await load()
 }
 
-async function remove(item: TodoItem) {
+async function remove(item: WorkbenchTodo) {
+  if (isSystemTodo(item)) {
+    openSystemTodo(item)
+    return
+  }
   try {
     await ElMessageBox.confirm(`删除待办「${item.title}」？`, '确认', { type: 'warning' })
     await deleteTodoApi(item.id)
@@ -77,7 +102,7 @@ onMounted(load)
         </span>
         <div>
           <h2 class="todo-title">今日待办</h2>
-          <p class="todo-sub">把今天要跟进的事记下来</p>
+          <p class="todo-sub">课表点名后自动完成 · 也可手写待办</p>
         </div>
       </div>
       <div class="todo-stats">
@@ -116,26 +141,99 @@ onMounted(load)
     />
 
     <ul v-else class="todo-list">
-      <li v-for="item in pending" :key="item.id" class="todo-item">
-        <el-checkbox :model-value="false" @change="toggleDone(item)" />
+      <li
+        v-for="item in pending"
+        :key="item.id"
+        class="todo-item"
+        :class="{ 'is-system': isSystemTodo(item) }"
+        @click="isSystemTodo(item) && openSystemTodo(item)"
+      >
+        <el-checkbox
+          :model-value="false"
+          :disabled="isSystemTodo(item)"
+          @click.stop
+          @change="toggleDone(item)"
+        />
         <div class="body">
-          <div class="title">{{ item.title }}</div>
+          <div class="title-row">
+            <div class="title">{{ item.title }}</div>
+            <el-tag
+              v-if="item.source === 'schedule'"
+              size="small"
+              effect="plain"
+              type="warning"
+              round
+              class="src-tag"
+            >
+              课表
+            </el-tag>
+            <el-tag
+              v-else-if="item.source === 'lead'"
+              size="small"
+              effect="plain"
+              round
+              class="src-tag"
+            >
+              线索
+            </el-tag>
+          </div>
           <div v-if="item.content" class="note">{{ item.content }}</div>
         </div>
-        <el-button class="del-btn" link type="danger" @click="remove(item)">删除</el-button>
+        <el-button
+          v-if="!isSystemTodo(item)"
+          class="del-btn"
+          link
+          type="danger"
+          @click.stop="remove(item)"
+        >
+          删除
+        </el-button>
       </li>
-      <li v-for="item in done" :key="'d-' + item.id" class="todo-item done">
-        <el-checkbox :model-value="true" @change="toggleDone(item)" />
+      <li
+        v-for="item in done"
+        :key="'d-' + item.id"
+        class="todo-item done"
+        :class="{ 'is-system': isSystemTodo(item) }"
+        @click="isSystemTodo(item) && openSystemTodo(item)"
+      >
+        <el-checkbox
+          :model-value="true"
+          :disabled="isSystemTodo(item)"
+          @click.stop
+          @change="toggleDone(item)"
+        />
         <div class="body">
-          <div class="title">{{ item.title }}</div>
+          <div class="title-row">
+            <div class="title">{{ item.title }}</div>
+            <el-tag
+              v-if="item.source === 'schedule'"
+              size="small"
+              effect="plain"
+              type="warning"
+              round
+              class="src-tag"
+            >
+              课表
+            </el-tag>
+          </div>
           <div v-if="item.content" class="note">{{ item.content }}</div>
         </div>
         <el-tag size="small" type="success" effect="plain" class="done-tag">已完成</el-tag>
-        <el-button class="del-btn" link type="danger" @click="remove(item)">删除</el-button>
+        <el-button
+          v-if="!isSystemTodo(item)"
+          class="del-btn"
+          link
+          type="danger"
+          @click.stop="remove(item)"
+        >
+          删除
+        </el-button>
       </li>
     </ul>
 
-    <p v-if="totalCount > 0" class="todo-foot">共 {{ totalCount }} 条 · 勾选即可完成</p>
+    <p v-if="totalCount > 0" class="todo-foot">
+      共 {{ totalCount }} 条 · 手写待办可勾选完成 · 课表待办点名后自动完成
+    </p>
   </section>
 </template>
 
@@ -146,6 +244,7 @@ onMounted(load)
   background: var(--oc-card, #fffdf8);
   padding: 16px;
   box-shadow: 0 4px 14px rgba(41, 37, 36, 0.03);
+  box-sizing: border-box;
 }
 
 .todo-head {
@@ -259,9 +358,20 @@ onMounted(load)
   color: var(--oc-muted, #78716c);
 }
 
+.todo-item.is-system {
+  cursor: pointer;
+}
+
 .body {
   flex: 1;
   min-width: 0;
+}
+
+.title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
 .title {
@@ -269,6 +379,10 @@ onMounted(load)
   font-weight: 550;
   color: var(--oc-ink, #44403c);
   line-height: 1.4;
+}
+
+.src-tag {
+  flex-shrink: 0;
 }
 
 .note {

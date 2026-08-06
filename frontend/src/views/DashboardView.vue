@@ -1,11 +1,22 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { getSummary, type DashboardSummary } from '../api/dashboard'
 import { getIntegrationsStatus, type IntegrationsStatus } from '../api/system'
 import { listMaterialsApi, type Material } from '../api/materials'
 import { useAuthStore } from '../stores/auth'
 import TodayTodos from '../components/TodayTodos.vue'
+import {
+  defaultSelectedIds,
+  filterCatalogForRole,
+  groupCatalog,
+  loadQuickLinkIds,
+  quickLinksStorageKey,
+  resolveQuickLinks,
+  saveQuickLinkIds,
+  type QuickLinkDef,
+} from '../constants/quickLinks'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -18,6 +29,8 @@ const roleLabel: Record<string, string> = {
   admin: '负责人',
   operator: '运营',
   teacher: '老师',
+  cr: 'CR（班主任，学管师）',
+  academic_manager: 'CR（班主任，学管师）',
 }
 
 const displayName = computed(
@@ -41,74 +54,244 @@ const todayLabel = computed(() => {
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 · 周${week}`
 })
 
-const stats = computed(() => [
-  {
-    key: 'materials',
-    title: '待处理素材',
-    value: summary.value?.materials_new ?? 0,
-    hint: '进入素材库处理',
-    path: '/materials',
-    icon: 'Picture',
-    tone: 'amber',
-  },
-  {
-    key: 'leads',
-    title: '今日待跟进',
-    value: summary.value?.leads_follow_today ?? 0,
-    hint: '查看线索跟进',
-    path: '/leads',
-    icon: 'Phone',
-    tone: 'rose',
-  },
-  {
-    key: 'copies',
-    title: '已生成文案',
-    value: summary.value?.recent_copies ?? 0,
-    hint: '查看文案列表',
-    path: '/copies',
-    icon: 'Document',
-    tone: 'sage',
-  },
-])
+const stats = computed(() => {
+  const all = [
+    {
+      key: 'materials',
+      title: '待处理素材',
+      value: summary.value?.materials_new ?? 0,
+      hint: '进入素材库处理',
+      path: '/materials',
+      icon: 'Picture',
+      tone: 'amber',
+      permission: 'materials.read',
+    },
+    {
+      key: 'leads',
+      title: '今日待跟进',
+      value: summary.value?.leads_follow_today ?? 0,
+      hint: '查看线索跟进',
+      path: '/leads',
+      icon: 'Phone',
+      tone: 'rose',
+      permission: 'leads.read',
+    },
+    {
+      key: 'copies',
+      title: '已生成文案',
+      value: summary.value?.recent_copies ?? 0,
+      hint: '查看文案列表',
+      path: '/copies',
+      icon: 'Document',
+      tone: 'sage',
+      permission: 'copies.use',
+    },
+  ]
+  return all.filter((s) => auth.hasPermission(s.permission))
+})
 
-type QuickLink = {
-  title: string
-  desc: string
-  path: string
-  icon: string
-  primary?: boolean
-  /** 仅负责人 */
-  adminOnly?: boolean
-  /** 标记运营向入口（老师工作台不用） */
-  opsOnly?: boolean
-  teacherOk?: boolean
+/** 顶栏是否展示 AI 侧栏（无权限时欢迎区拉满） */
+const showAiPanel = computed(
+  () => !auth.isTeacher && auth.hasPermission('system.read') && Boolean(integrations.value),
+)
+
+/** 是否展示待处理素材（无权限时工作区两列拉伸，不留空位） */
+const showPendingPanel = computed(
+  () => !auth.isTeacher && auth.hasPermission('materials.read'),
+)
+
+/**
+ * 主工作区布局：
+ * - teacher：待办 | 快捷
+ * - ops-full：待办 + 快捷 + 素材
+ * - ops-simple：待办 + 快捷（无素材权限时两列铺满）
+ */
+const workLayout = computed(() => {
+  if (auth.isTeacher) return 'teacher'
+  return showPendingPanel.value ? 'ops-full' : 'ops-simple'
+})
+
+const catalog = computed(() =>
+  filterCatalogForRole({
+    isAdmin: auth.isAdmin,
+    isTeacher: auth.isTeacher,
+    hasPermission: (code) => auth.hasPermission(code),
+  }),
+)
+
+const storageKey = computed(() =>
+  quickLinksStorageKey(auth.user?.id, auth.user?.role || ''),
+)
+
+const selectedIds = ref<string[]>([])
+
+function reloadQuickSelection() {
+  selectedIds.value = loadQuickLinkIds(storageKey.value, catalog.value)
 }
 
-const quickLinks = computed((): QuickLink[] => {
-  if (auth.isTeacher) {
-    return [
-      { title: '学生信息', desc: '我的 / 全部学员', path: '/students', icon: 'Avatar', primary: true, teacherOk: true },
-      { title: '上传素材', desc: '课堂照片与场景', path: '/upload', icon: 'Upload', teacherOk: true },
-      { title: '素材', desc: '我的素材库', path: '/materials', icon: 'Picture', teacherOk: true },
-      { title: '学情', desc: '记录与查看', path: '/learning', icon: 'EditPen', teacherOk: true },
-      { title: '写学情', desc: '新建一条学情', path: '/learning/new', icon: 'EditPen', teacherOk: true },
-    ]
+const quickLinks = computed((): QuickLinkDef[] =>
+  resolveQuickLinks(selectedIds.value, catalog.value),
+)
+
+/** 自定义弹窗：图标勾选 + 拖拽排序（无长列表） */
+const customVisible = ref(false)
+const draftIds = ref<string[]>([])
+const MAX_QUICK = 12
+
+const draftSelected = computed(() => resolveQuickLinks(draftIds.value, catalog.value))
+const catalogGroups = computed(() => groupCatalog(catalog.value))
+
+/** 正在拖拽的已选 id（PC HTML5 / 触控 pointer 共用） */
+const draggingId = ref<string | null>(null)
+const dragOverId = ref<string | null>(null)
+/** 触控待激活：按下但未超过位移阈值（避免挡弹层滚动） */
+const touchPendingId = ref<string | null>(null)
+const touchStart = ref<{ x: number; y: number } | null>(null)
+const TOUCH_DRAG_PX = 8
+
+function openCustomQuick() {
+  draftIds.value = [...selectedIds.value]
+  draggingId.value = null
+  dragOverId.value = null
+  touchPendingId.value = null
+  touchStart.value = null
+  customVisible.value = true
+}
+
+function isDraftSelected(id: string) {
+  return draftIds.value.includes(id)
+}
+
+function toggleDraft(id: string) {
+  const idx = draftIds.value.indexOf(id)
+  if (idx >= 0) {
+    draftIds.value = draftIds.value.filter((x) => x !== id)
+    return
   }
-  const links: QuickLink[] = [
-    { title: '素材', desc: '上传与管理', path: '/materials', icon: 'Picture', primary: true },
-    { title: '生成文案', desc: '模板 / AI', path: '/copies/generate', icon: 'EditPen', opsOnly: true },
-    { title: '生成海报', desc: '版式 / 生图', path: '/posters/generate', icon: 'PictureFilled', opsOnly: true },
-    { title: '线索', desc: '跟进转化', path: '/leads', icon: 'Phone', opsOnly: true },
-    { title: '成长中心', desc: '话术与异议', path: '/knowledge/scripts', icon: 'Reading', opsOnly: true },
-    { title: '综合办公', desc: '表格协作', path: '/office', icon: 'Grid', opsOnly: true },
-    { title: '用户管理', desc: '账号权限', path: '/users', icon: 'User', adminOnly: true },
-    { title: '学生信息', desc: '学员档案', path: '/students', icon: 'Avatar', adminOnly: true },
-  ]
-  return links.filter((l) => {
-    if (l.adminOnly) return auth.isAdmin
-    return true
-  })
-})
+  if (draftIds.value.length >= MAX_QUICK) {
+    ElMessage.warning(`最多选择 ${MAX_QUICK} 个快捷入口`)
+    return
+  }
+  draftIds.value = [...draftIds.value, id]
+}
+
+function removeDraft(id: string, e?: Event) {
+  e?.stopPropagation()
+  e?.preventDefault()
+  draftIds.value = draftIds.value.filter((x) => x !== id)
+  if (draggingId.value === id) {
+    draggingId.value = null
+    dragOverId.value = null
+  }
+}
+
+/** 把 fromId 插到 toId 的位置（保持相对顺序） */
+function reorderDraft(fromId: string, toId: string) {
+  if (fromId === toId) return
+  const from = draftIds.value.indexOf(fromId)
+  const to = draftIds.value.indexOf(toId)
+  if (from < 0 || to < 0) return
+  const arr = [...draftIds.value]
+  arr.splice(from, 1)
+  arr.splice(to, 0, fromId)
+  draftIds.value = arr
+}
+
+function onSelDragStart(id: string, e: DragEvent) {
+  draggingId.value = id
+  e.dataTransfer?.setData('text/plain', id)
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+  }
+}
+
+function onSelDragOver(id: string, e: DragEvent) {
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  if (!draggingId.value || draggingId.value === id) return
+  dragOverId.value = id
+  reorderDraft(draggingId.value, id)
+}
+
+function onSelDragEnd() {
+  draggingId.value = null
+  dragOverId.value = null
+}
+
+function onSelDrop(e: DragEvent) {
+  e.preventDefault()
+  onSelDragEnd()
+}
+
+/** 触控：超过位移阈值后才拖拽换序，短滑仍可滚弹层 */
+function onSelPointerDown(id: string, e: PointerEvent) {
+  if ((e.target as HTMLElement | null)?.closest?.('.qc-sel-x')) return
+  // 仅触控 / 笔；鼠标走 HTML5 drag
+  if (e.pointerType === 'mouse') return
+  touchPendingId.value = id
+  touchStart.value = { x: e.clientX, y: e.clientY }
+  const el = e.currentTarget as HTMLElement
+  try {
+    el.setPointerCapture(e.pointerId)
+  } catch {
+    /* ignore */
+  }
+}
+
+function onSelPointerMove(e: PointerEvent) {
+  if (e.pointerType === 'mouse') return
+  if (!touchPendingId.value && !draggingId.value) return
+
+  if (touchPendingId.value && touchStart.value && !draggingId.value) {
+    const dx = e.clientX - touchStart.value.x
+    const dy = e.clientY - touchStart.value.y
+    if (Math.hypot(dx, dy) < TOUCH_DRAG_PX) return
+    // 以横向为主才开启排序，竖向优先交给弹层滚动
+    if (Math.abs(dy) > Math.abs(dx) * 1.2) {
+      touchPendingId.value = null
+      touchStart.value = null
+      try {
+        ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+      } catch {
+        /* ignore */
+      }
+      return
+    }
+    draggingId.value = touchPendingId.value
+    touchPendingId.value = null
+  }
+
+  if (!draggingId.value) return
+  e.preventDefault()
+  const under = document.elementFromPoint(e.clientX, e.clientY)
+  const hit = under?.closest?.('[data-qc-id]') as HTMLElement | null
+  const toId = hit?.dataset?.qcId
+  if (!toId || toId === draggingId.value) return
+  dragOverId.value = toId
+  reorderDraft(draggingId.value, toId)
+}
+
+function onSelPointerUp() {
+  draggingId.value = null
+  dragOverId.value = null
+  touchPendingId.value = null
+  touchStart.value = null
+}
+
+function resetDraftDefaults() {
+  draftIds.value = defaultSelectedIds(catalog.value)
+}
+
+function saveCustomQuick() {
+  if (!draftIds.value.length) {
+    ElMessage.warning('请至少保留一个快捷入口')
+    return
+  }
+  saveQuickLinkIds(storageKey.value, draftIds.value)
+  selectedIds.value = [...draftIds.value]
+  customVisible.value = false
+  ElMessage.success('快捷入口已保存')
+}
 
 const authStatusLabel: Record<string, string> = {
   pending: '待授权',
@@ -124,10 +307,21 @@ async function load() {
   if (auth.isTeacher) return
   loading.value = true
   try {
+    // system.integrations 需 system.read；学管师默认无此权限，勿请求以免弹「无权限」
+    const canSystem = auth.hasPermission('system.read')
+    const canMaterials = auth.hasPermission('materials.read')
+    const canDashboard = auth.hasPermission('dashboard.read')
+
     const [s, pendingPage, integ] = await Promise.all([
-      getSummary(),
-      listMaterialsApi({ status: 'new', page: 1, page_size: 8 }),
-      getIntegrationsStatus().catch(() => null),
+      canDashboard ? getSummary().catch(() => null) : Promise.resolve(null),
+      canMaterials
+        ? listMaterialsApi({ status: 'new', page: 1, page_size: 8 }).catch(() => ({
+            items: [] as Material[],
+          }))
+        : Promise.resolve({ items: [] as Material[] }),
+      canSystem
+        ? getIntegrationsStatus({ silent: true }).catch(() => null)
+        : Promise.resolve(null),
     ])
     summary.value = s
     integrations.value = integ
@@ -137,16 +331,26 @@ async function load() {
   }
 }
 
+watch(
+  () => [auth.user?.id, auth.user?.role, auth.isAdmin, auth.isTeacher] as const,
+  () => reloadQuickSelection(),
+  { immediate: true },
+)
+
 onMounted(load)
 </script>
 
 <template>
   <div
     class="dashboard oc-page-shell"
-    :class="{ 'is-ops': !auth.isTeacher, 'is-teacher': auth.isTeacher }"
+    :class="{
+      'is-ops': !auth.isTeacher,
+      'is-teacher': auth.isTeacher,
+      [`work-${workLayout}`]: true,
+    }"
   >
-    <!-- 顶栏：欢迎 + AI（宽屏并排） -->
-    <header class="top-band">
+    <!-- 顶栏：欢迎 + AI（有 AI 时并排，无则欢迎区拉满） -->
+    <header class="top-band" :class="{ 'has-ai': showAiPanel }">
       <section class="hero">
         <div class="hero-ornament" aria-hidden="true" />
         <div class="hero-body">
@@ -171,7 +375,10 @@ onMounted(load)
         </div>
       </section>
 
-      <section v-if="!auth.isTeacher && integrations" class="ai-panel">
+      <section
+        v-if="!auth.isTeacher && auth.hasPermission('system.read') && integrations"
+        class="ai-panel"
+      >
         <div class="ai-panel-head">
           <el-icon :size="18"><MagicStick /></el-icon>
           <span>AI 能力</span>
@@ -199,8 +406,12 @@ onMounted(load)
       </section>
     </header>
 
-    <!-- 运营：数据概览（全宽） -->
-    <section v-if="!auth.isTeacher" class="section stats-section" v-loading="loading">
+    <!-- 运营：数据概览（全宽；按权限展示卡片） -->
+    <section
+      v-if="!auth.isTeacher && stats.length"
+      class="section stats-section"
+      v-loading="loading"
+    >
       <div class="section-head">
         <h2 class="section-title">运营概览</h2>
         <p class="section-desc">点击卡片可直达对应模块</p>
@@ -229,115 +440,175 @@ onMounted(load)
       </div>
     </section>
 
-    <!-- 主工作区：宽屏多列铺开 -->
-    <div class="work-grid">
+    <!-- 主工作区：按可见模块自适应列数，避免权限缺口留白 -->
+    <div class="work-grid" :class="`layout-${workLayout}`">
       <TodayTodos class="todo-block" />
 
-      <template v-if="!auth.isTeacher">
-        <section class="panel quick-panel">
-          <div class="panel-head">
-            <h2 class="panel-title">快捷入口</h2>
+      <section class="panel quick-panel">
+        <div class="panel-head">
+          <h2 class="panel-title">快捷入口</h2>
+          <div class="panel-head-actions">
             <span class="panel-extra">常用功能一键直达</span>
-          </div>
-          <div class="quick-grid">
-            <button
-              v-for="link in quickLinks"
-              :key="link.path"
-              type="button"
-              class="quick-item"
-              :class="{ 'is-primary': link.primary }"
-              @click="router.push(link.path)"
+            <el-button
+              class="quick-customize-btn"
+              text
+              type="primary"
+              @click="openCustomQuick"
             >
-              <span class="quick-icon" aria-hidden="true">
-                <el-icon :size="20"><component :is="link.icon" /></el-icon>
-              </span>
-              <span class="quick-text">
-                <span class="quick-title">{{ link.title }}</span>
-                <span class="quick-desc">{{ link.desc }}</span>
-              </span>
-            </button>
+              <el-icon><Setting /></el-icon>
+              自定义
+            </el-button>
           </div>
-        </section>
+        </div>
+        <div class="quick-grid" :class="`count-${Math.min(quickLinks.length, 6)}`">
+          <button
+            v-for="link in quickLinks"
+            :key="link.id"
+            type="button"
+            class="quick-item"
+            :class="{ 'is-primary': link.primary }"
+            @click="router.push(link.path)"
+          >
+            <span class="quick-icon" aria-hidden="true">
+              <el-icon :size="20"><component :is="link.icon" /></el-icon>
+            </span>
+            <span class="quick-text">
+              <span class="quick-title">{{ link.title }}</span>
+              <span class="quick-desc">{{ link.desc }}</span>
+            </span>
+          </button>
+        </div>
+      </section>
 
-        <section class="panel pending-panel">
-          <div class="panel-head">
-            <h2 class="panel-title">
-              待处理素材
-              <el-tag v-if="pending.length" size="small" effect="plain" class="count-tag">
-                {{ pending.length }}
-              </el-tag>
-            </h2>
-            <el-button link type="primary" @click="router.push('/materials')">查看全部</el-button>
-          </div>
+      <section v-if="showPendingPanel" class="panel pending-panel">
+        <div class="panel-head">
+          <h2 class="panel-title">
+            待处理素材
+            <el-tag v-if="pending.length" size="small" effect="plain" class="count-tag">
+              {{ pending.length }}
+            </el-tag>
+          </h2>
+          <el-button link type="primary" @click="router.push('/materials')">查看全部</el-button>
+        </div>
 
-          <el-empty
-            v-if="!loading && !pending.length"
-            description="暂无待处理素材，辛苦啦"
-            :image-size="72"
-          />
+        <el-empty
+          v-if="!loading && !pending.length"
+          description="暂无待处理素材，辛苦啦"
+          :image-size="72"
+        />
 
-          <div v-else class="pending-list">
-            <button
-              v-for="row in pending"
-              :key="row.id"
-              type="button"
-              class="pending-item"
-              @click="router.push(`/materials/${row.id}`)"
-            >
-              <span class="pending-mark" aria-hidden="true" />
-              <span class="pending-main">
-                <span class="pending-title">{{ row.title }}</span>
-                <span class="pending-meta">
-                  <span v-if="row.grade">{{ row.grade }}</span>
-                  <span v-if="row.subject">{{ row.subject }}</span>
-                  <span>{{ authStatusLabel[row.auth_status] || row.auth_status }}</span>
-                </span>
+        <div v-else class="pending-list">
+          <button
+            v-for="row in pending"
+            :key="row.id"
+            type="button"
+            class="pending-item"
+            @click="router.push(`/materials/${row.id}`)"
+          >
+            <span class="pending-mark" aria-hidden="true" />
+            <span class="pending-main">
+              <span class="pending-title">{{ row.title }}</span>
+              <span class="pending-meta">
+                <span v-if="row.grade">{{ row.grade }}</span>
+                <span v-if="row.subject">{{ row.subject }}</span>
+                <span>{{ authStatusLabel[row.auth_status] || row.auth_status }}</span>
               </span>
-              <el-icon class="pending-go"><ArrowRight /></el-icon>
-            </button>
-          </div>
-        </section>
-      </template>
-
-      <template v-else>
-        <section class="panel quick-panel">
-          <div class="panel-head">
-            <h2 class="panel-title">快捷入口</h2>
-            <span class="panel-extra">常用功能一键直达</span>
-          </div>
-          <div class="quick-grid">
-            <button
-              v-for="link in quickLinks"
-              :key="link.path"
-              type="button"
-              class="quick-item"
-              :class="{ 'is-primary': link.primary }"
-              @click="router.push(link.path)"
-            >
-              <span class="quick-icon" aria-hidden="true">
-                <el-icon :size="20"><component :is="link.icon" /></el-icon>
-              </span>
-              <span class="quick-text">
-                <span class="quick-title">{{ link.title }}</span>
-                <span class="quick-desc">{{ link.desc }}</span>
-              </span>
-            </button>
-          </div>
-        </section>
-
-        <section class="teacher-tip panel">
-          <div class="teacher-tip-icon" aria-hidden="true">
-            <el-icon :size="28"><Reading /></el-icon>
-          </div>
-          <div>
-            <h2 class="panel-title">使用提示</h2>
-            <p class="teacher-tip-text">
-              手机底栏可快速切换上传 / 素材 / 学生 / 学情。学生列表默认「我的学生」，详情中可编写学情与导出报告。
-            </p>
-          </div>
-        </section>
-      </template>
+            </span>
+            <el-icon class="pending-go"><ArrowRight /></el-icon>
+          </button>
+        </div>
+      </section>
     </div>
+
+    <!-- 自定义快捷入口：已选图标网格（拖拽排序）+ 下方勾选目录 -->
+    <el-dialog
+      v-model="customVisible"
+      title="自定义快捷入口"
+      width="560px"
+      align-center
+      destroy-on-close
+      append-to-body
+      class="quick-custom-dialog"
+      :close-on-click-modal="false"
+    >
+      <div class="qc-body">
+        <section class="qc-section">
+          <div class="qc-section-title">
+            已选功能
+            <span class="qc-section-hint">拖拽排序 · {{ draftIds.length }}/{{ MAX_QUICK }}</span>
+          </div>
+          <div v-if="!draftSelected.length" class="qc-empty">尚未选择，请从下方添加</div>
+          <div v-else class="qc-sel-grid" @dragover.prevent>
+            <div
+              v-for="item in draftSelected"
+              :key="item.id"
+              class="qc-sel"
+              :class="{
+                'is-dragging': draggingId === item.id,
+                'is-over': dragOverId === item.id && draggingId !== item.id,
+              }"
+              :data-qc-id="item.id"
+              draggable="true"
+              @dragstart="onSelDragStart(item.id, $event)"
+              @dragover="onSelDragOver(item.id, $event)"
+              @dragend="onSelDragEnd"
+              @drop="onSelDrop"
+              @pointerdown="onSelPointerDown(item.id, $event)"
+              @pointermove="onSelPointerMove"
+              @pointerup="onSelPointerUp"
+              @pointercancel="onSelPointerUp"
+            >
+              <button
+                type="button"
+                class="qc-sel-x"
+                title="移除"
+                aria-label="移除"
+                @click="removeDraft(item.id, $event)"
+                @pointerdown.stop
+              >
+                <el-icon :size="11"><Close /></el-icon>
+              </button>
+              <span class="qc-sel-icon" aria-hidden="true">
+                <el-icon :size="22"><component :is="item.icon" /></el-icon>
+              </span>
+              <span class="qc-sel-title">{{ item.title }}</span>
+            </div>
+          </div>
+        </section>
+
+        <section v-for="g in catalogGroups" :key="g.group" class="qc-section">
+          <div class="qc-section-title">{{ g.group }}</div>
+          <div class="qc-catalog-grid">
+            <button
+              v-for="item in g.items"
+              :key="item.id"
+              type="button"
+              class="qc-pick"
+              :class="{ 'is-on': isDraftSelected(item.id) }"
+              @click="toggleDraft(item.id)"
+            >
+              <span class="qc-pick-icon">
+                <el-icon :size="20"><component :is="item.icon" /></el-icon>
+              </span>
+              <span class="qc-pick-title">{{ item.title }}</span>
+              <span v-if="isDraftSelected(item.id)" class="qc-pick-check" aria-hidden="true">
+                <el-icon :size="12"><Check /></el-icon>
+              </span>
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <template #footer>
+        <div class="qc-footer">
+          <el-button text type="primary" @click="resetDraftDefaults">恢复默认</el-button>
+          <div class="qc-footer-right">
+            <el-button @click="customVisible = false">取消</el-button>
+            <el-button type="primary" @click="saveCustomQuick">保存</el-button>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -576,9 +847,10 @@ onMounted(load)
   color: var(--oc-muted, #78716c);
 }
 
+/* 按可见卡片数量自动拉伸，1/2/3 张都铺满不留空列 */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: 14px;
 }
 
@@ -674,17 +946,15 @@ onMounted(load)
   display: grid;
   grid-template-columns: 1fr;
   gap: 14px;
+  /* 各模块按内容高度，避免快捷入口被待办列表「拉高」出大片空白 */
   align-items: start;
 }
 
 .todo-block {
   min-width: 0;
-  height: 100%;
 }
 
-/* 待办卡片在宽屏列中拉满高度，避免左侧「半截空」 */
 .todo-block :deep(.todo-panel) {
-  height: 100%;
   box-sizing: border-box;
 }
 
@@ -695,6 +965,18 @@ onMounted(load)
   padding: 16px 18px 14px;
   box-shadow: 0 4px 14px rgba(41, 37, 36, 0.03);
   min-width: 0;
+  height: auto;
+  box-sizing: border-box;
+}
+
+/* 快捷入口：高度完全跟随内容（最多 12 个入口，不人为撑高） */
+.quick-panel {
+  height: auto;
+  align-self: start;
+}
+
+.quick-panel .quick-grid {
+  flex: none;
 }
 
 .panel-head {
@@ -703,6 +985,243 @@ onMounted(load)
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 14px;
+}
+
+.panel-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.quick-customize-btn {
+  font-weight: 600;
+  padding: 4px 6px !important;
+}
+
+.quick-customize-btn .el-icon {
+  margin-right: 2px;
+}
+
+/* 自定义快捷入口：内容区（scoped 仍作用于 teleport 内节点） */
+.qc-body {
+  min-height: 0;
+}
+
+.qc-section {
+  margin-bottom: 16px;
+}
+
+.qc-section:last-of-type {
+  margin-bottom: 0;
+}
+
+.qc-section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--oc-ink, #44403c);
+  margin-bottom: 10px;
+}
+
+.qc-section-hint {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--oc-muted, #78716c);
+}
+
+.qc-empty {
+  padding: 14px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--oc-muted, #78716c);
+  border: 1px dashed var(--oc-border, #e8e0d0);
+  border-radius: 12px;
+  background: #faf6ee;
+}
+
+/* 已选：仅图标网格，可拖拽 */
+.qc-sel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 10px;
+}
+
+.qc-sel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 6px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  background: linear-gradient(160deg, #fffdf8, #f5e6c8);
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: box-shadow 0.15s, transform 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.qc-sel:active {
+  cursor: grabbing;
+}
+
+.qc-sel.is-dragging {
+  touch-action: none;
+  opacity: 0.55;
+  box-shadow: 0 8px 18px rgba(41, 37, 36, 0.12);
+  transform: scale(1.03);
+  z-index: 2;
+}
+
+.qc-sel.is-over {
+  border-color: var(--oc-primary, #a16207);
+  box-shadow: 0 0 0 2px rgba(161, 98, 7, 0.18);
+}
+
+.qc-sel-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--oc-primary, #a16207);
+  color: #fffdf8;
+  pointer-events: none;
+}
+
+.qc-sel-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--oc-ink, #44403c);
+  text-align: center;
+  line-height: 1.25;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.qc-sel-x {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(41, 37, 36, 0.55);
+  color: #fff;
+  cursor: pointer;
+  z-index: 3;
+}
+
+.qc-sel-x:hover {
+  background: #b91c1c;
+}
+
+.qc-catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 10px;
+}
+
+.qc-pick {
+  appearance: none;
+  position: relative;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 12px;
+  background: #fff;
+  padding: 12px 6px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  min-height: 84px;
+  box-sizing: border-box;
+}
+
+.qc-pick:hover {
+  border-color: var(--el-color-primary-light-5);
+  background: #faf6ee;
+}
+
+.qc-pick.is-on {
+  border-color: var(--el-color-primary-light-5);
+  background: linear-gradient(160deg, #fffdf8, #f5e6c8);
+  box-shadow: 0 0 0 1px rgba(161, 98, 7, 0.12);
+}
+
+.qc-pick-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f5f0e6;
+  color: var(--oc-primary, #a16207);
+}
+
+.qc-pick.is-on .qc-pick-icon {
+  background: var(--oc-primary, #a16207);
+  color: #fffdf8;
+}
+
+.qc-pick-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--oc-ink, #44403c);
+  text-align: center;
+  line-height: 1.25;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qc-pick-check {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--oc-primary, #a16207);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.qc-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.qc-footer-right {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .count-tag {
@@ -715,6 +1234,24 @@ onMounted(load)
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+  align-content: start;
+}
+
+/* 入口很少时单列拉满，避免半边空 */
+.quick-grid.count-1 {
+  grid-template-columns: 1fr;
+}
+
+/*
+ * 老师右栏比运营窄：始终最多 2 列，且单卡有最小宽度，
+ * 避免被运营的 3 列规则挤成「一字一行」竖排。
+ */
+.is-teacher .quick-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.is-teacher .quick-grid.count-1 {
+  grid-template-columns: 1fr;
 }
 
 .quick-item {
@@ -724,6 +1261,7 @@ onMounted(load)
   background: #fff;
   padding: 12px 14px;
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 12px;
   text-align: left;
@@ -732,6 +1270,8 @@ onMounted(load)
   font: inherit;
   color: inherit;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .quick-item:hover {
@@ -767,18 +1307,29 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 2px;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
 }
 
 .quick-title {
   font-size: 14px;
   font-weight: 650;
   color: var(--oc-ink, #44403c);
+  /* 窄卡时省略，绝不竖排拆字 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: keep-all;
 }
 
 .quick-desc {
   font-size: 12px;
   color: var(--oc-muted, #78716c);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: keep-all;
 }
 
 .pending-list {
@@ -857,49 +1408,20 @@ onMounted(load)
   transform: translateX(2px);
 }
 
-.teacher-tip {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-}
-
-.teacher-tip-icon {
-  width: 52px;
-  height: 52px;
-  border-radius: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(145deg, #f5e6c8, #f2e8d6);
-  color: var(--oc-primary, #a16207);
-  flex-shrink: 0;
-}
-
-.teacher-tip-text {
-  margin: 6px 0 12px;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--oc-muted, #78716c);
-}
-
-.teacher-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-/* ── ≥1100：顶栏欢迎+AI 并排；工作区 待办 | 右侧堆叠 ── */
+/* ── ≥1100：顶栏 / 工作区按可见模块自适应 ── */
 @media (min-width: 1100px) {
-  /* 运营：欢迎 | AI；老师无 AI，hero 拉满内容宽 */
-  .is-ops .top-band {
+  /* 有 AI 侧栏才两列；无权限时欢迎区整行拉满 */
+  .is-ops .top-band.has-ai {
     grid-template-columns: minmax(0, 1.55fr) minmax(260px, 0.55fr);
     align-items: stretch;
   }
 
+  .is-ops .top-band:not(.has-ai),
   .is-teacher .top-band {
     grid-template-columns: 1fr;
   }
 
+  .is-ops .top-band:not(.has-ai) .hero-body,
   .is-teacher .hero-body {
     padding: 24px 32px;
     min-height: 120px;
@@ -909,38 +1431,64 @@ onMounted(load)
     min-height: 100%;
   }
 
-  .is-ops .work-grid {
+  /* 完整：待办 | 右栏（快捷+素材上下叠） */
+  .work-grid.layout-ops-full {
     grid-template-columns: minmax(320px, 0.92fr) minmax(0, 1.28fr);
     gap: 16px;
   }
 
-  /* 快捷 + 待处理 叠在右栏 */
-  .is-ops .todo-block {
+  .work-grid.layout-ops-full .todo-block {
     grid-row: 1 / span 2;
   }
 
-  .is-ops .quick-panel {
+  .work-grid.layout-ops-full .quick-panel {
     grid-column: 2;
     grid-row: 1;
+    height: auto;
+    align-self: start;
   }
 
-  .is-ops .pending-panel {
+  .work-grid.layout-ops-full .pending-panel {
     grid-column: 2;
     grid-row: 2;
+    align-self: start;
   }
 
-  .is-teacher .work-grid {
-    grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.7fr);
+  /* 无素材权限：待办 | 快捷 两列等分拉满，不留第三空列 */
+  .work-grid.layout-ops-simple {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    gap: 16px;
   }
 
-  .quick-grid {
+  .work-grid.layout-ops-simple .todo-block,
+  .work-grid.layout-ops-simple .quick-panel {
+    grid-row: auto;
+    grid-column: auto;
+  }
+
+  /* 老师：待办 | 快捷 */
+  .work-grid.layout-teacher {
+    grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.85fr);
+  }
+
+  /* 运营右栏较宽可用 3 列；入口少时由 count-* 覆盖 */
+  .work-grid.layout-ops-full .quick-grid:not(.count-1):not(.count-2) {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .work-grid.layout-ops-simple .quick-grid:not(.count-1) {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+
+  .work-grid.layout-ops-full .quick-grid.count-2,
+  .work-grid.layout-teacher .quick-grid:not(.count-1) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-/* ── ≥1480：真正的宽屏三列 ── */
+/* ── ≥1480：宽屏 ── */
 @media (min-width: 1480px) {
-  .is-ops .top-band {
+  .is-ops .top-band.has-ai {
     grid-template-columns: minmax(0, 1.7fr) minmax(300px, 0.5fr);
     gap: 16px;
   }
@@ -950,6 +1498,7 @@ onMounted(load)
     min-height: 120px;
   }
 
+  .is-ops .top-band:not(.has-ai) .hero-body,
   .is-teacher .hero-body {
     padding: 28px 36px;
     min-height: 128px;
@@ -963,47 +1512,74 @@ onMounted(load)
     padding: 22px 24px;
   }
 
-  .is-ops .work-grid {
+  /* 三模块：真正三列横铺 */
+  .work-grid.layout-ops-full {
     grid-template-columns: minmax(340px, 0.9fr) minmax(0, 1.15fr) minmax(300px, 0.85fr);
     gap: 16px;
   }
 
-  .is-ops .todo-block {
+  .work-grid.layout-ops-full .todo-block {
     grid-row: 1;
     grid-column: 1;
   }
 
-  .is-ops .quick-panel {
+  .work-grid.layout-ops-full .quick-panel {
     grid-column: 2;
     grid-row: 1;
+    height: auto;
+    align-self: start;
   }
 
-  .is-ops .pending-panel {
+  .work-grid.layout-ops-full .pending-panel {
     grid-column: 3;
     grid-row: 1;
+    align-self: start;
   }
 
-  .quick-grid {
+  /* 两模块：两列更均衡拉满 */
+  .work-grid.layout-ops-simple {
+    grid-template-columns: minmax(360px, 0.95fr) minmax(0, 1.25fr);
+    gap: 16px;
+  }
+
+  .work-grid.layout-ops-full .quick-grid:not(.count-1):not(.count-2) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  /* 三列时快捷入口用 2×n，视觉更稳；超宽再 3 列 */
-  .pending-list {
+  .work-grid.layout-ops-simple .quick-grid:not(.count-1) {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+
+  .work-grid.layout-teacher {
+    grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr);
+  }
+
+  .work-grid.layout-ops-full .pending-list {
     max-height: min(62vh, 560px);
     overflow-y: auto;
     padding-right: 2px;
   }
 }
 
-/* ── ≥1720：超宽再拉开（内容 max-width 由 .dashboard.oc-page-shell 统一） ── */
+/* ── ≥1720：超宽再拉开 ── */
 @media (min-width: 1720px) {
-  .is-ops .work-grid {
+  .work-grid.layout-ops-full {
     grid-template-columns: minmax(360px, 0.85fr) minmax(0, 1.2fr) minmax(320px, 0.9fr);
     gap: 18px;
   }
 
-  .quick-grid {
+  .work-grid.layout-ops-simple {
+    grid-template-columns: minmax(380px, 0.9fr) minmax(0, 1.3fr);
+    gap: 18px;
+  }
+
+  .work-grid.layout-ops-full .quick-grid:not(.count-1):not(.count-2),
+  .work-grid.layout-ops-simple .quick-grid:not(.count-1):not(.count-2) {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .work-grid.layout-teacher .quick-grid:not(.count-1) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .hero-title {
@@ -1013,8 +1589,9 @@ onMounted(load)
 
 /* ── 平板 / 窄屏 ── */
 @media (max-width: 1099px) {
+  /* 窄屏仍 auto-fit：两张卡可并排，一张则拉满 */
   .stats-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
   }
 }
 
@@ -1048,6 +1625,94 @@ onMounted(load)
 
   .stat-value {
     font-size: 1.5rem;
+  }
+}
+</style>
+
+<!-- append-to-body 弹层：壳层样式必须非 scoped -->
+<style>
+/* 遮罩用 flex 把弹窗摆到视口正中（PC 不再贴顶） */
+.el-overlay-dialog:has(.quick-custom-dialog) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+
+/* align-center + margin:auto：垂直/水平居中 */
+.quick-custom-dialog.el-dialog {
+  max-width: min(560px, calc(100vw - 24px));
+  margin: auto !important;
+  border-radius: 14px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: min(86vh, 86dvh);
+  position: relative;
+  top: auto;
+}
+
+.quick-custom-dialog .el-dialog__header {
+  flex-shrink: 0;
+  padding: 14px 16px 10px;
+  margin-right: 0;
+}
+
+.quick-custom-dialog .el-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 4px 16px 12px;
+  touch-action: pan-y;
+}
+
+.quick-custom-dialog .el-dialog__footer {
+  flex-shrink: 0;
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--oc-border, #e8e0d0);
+  background: #fffdf8;
+}
+
+/* wap / pad：更矮可视区，保证正文可滚、目录可见 */
+@media (max-width: 991px) {
+  .quick-custom-dialog.el-dialog {
+    width: calc(100vw - 20px) !important;
+    max-width: calc(100vw - 20px) !important;
+    max-height: min(88vh, 88dvh);
+  }
+
+  .quick-custom-dialog .el-dialog__body {
+    /* 给 header+footer 留空，正文独立滚动 */
+    max-height: min(62vh, 62dvh);
+  }
+
+  .quick-custom-dialog .qc-sel-grid {
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  }
+
+  .quick-custom-dialog .qc-catalog-grid {
+    grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .quick-custom-dialog .el-dialog__footer .qc-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .quick-custom-dialog .el-dialog__footer .qc-footer-right {
+    margin-left: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .quick-custom-dialog .el-dialog__footer .qc-footer-right .el-button {
+    margin: 0;
   }
 }
 </style>

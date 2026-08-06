@@ -18,6 +18,7 @@ import {
 } from '../../api/materials'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useCardAccordion } from '../../composables/useCardAccordion'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
 
 const LIST_STATE_KEY = 'oc-material-list-state'
@@ -119,9 +120,11 @@ const pagedRows = computed(() => rows.value)
 const infiniteRows = computed(() => rows.value)
 const hasMoreInfinite = computed(() => rows.value.length < total.value)
 
+const { isExpanded, toggle: toggleCard, toggleForce, collapseAll } = useCardAccordion()
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('materials', {
   visibleCount,
   enabled: isCompact,
+  stateStorageKey: LIST_STATE_KEY,
 })
 
 function listQuery(pageNum: number, size: number) {
@@ -199,6 +202,7 @@ function saveListState() {
 
 function runQuery() {
   clearSnapshot()
+  collapseAll()
   page.value = 1
   filterExpanded.value = false
   saveListState()
@@ -207,6 +211,7 @@ function runQuery() {
 
 function resetFilters() {
   clearSnapshot()
+  collapseAll()
   filters.status = ''
   filters.q = ''
   filters.grade = ''
@@ -469,38 +474,53 @@ onUnmounted(() => teardownScrollObserver())
       </div>
     </div>
 
-    <!-- 移动卡片 -->
+    <!-- 移动卡片（互斥折叠） -->
     <div v-loading="loading" class="mat-m mat-card-list">
       <div v-if="!total && !loading" class="mat-card mat-card--empty">暂无素材</div>
-      <div v-for="row in infiniteRows" :key="row.id" class="mat-card">
-        <div class="mat-card__top">
-          <div class="mat-card__title" @click="router.push(`/materials/${row.id}`)">
-            {{ row.title }}
-          </div>
+      <div
+        v-for="row in infiniteRows"
+        :key="row.id"
+        class="mat-card"
+        :class="{ 'is-expanded': isExpanded(row.id) }"
+      >
+        <div class="mat-card__top" @click="toggleCard(row.id, $event)">
+          <div class="mat-card__title">{{ row.title }}</div>
           <el-tag :type="statusTagType(row.status)" size="small" effect="plain" round>
             {{ statusLabel[row.status] || row.status }}
           </el-tag>
-        </div>
-        <div class="mat-card__meta">
-          <span v-if="row.grade"><span class="k">年级</span>{{ row.grade }}</span>
-          <span v-if="row.subject"><span class="k">科目</span>{{ row.subject }}</span>
-          <span><span class="k">授权</span>{{ authLabel[row.auth_status] || row.auth_status }}</span>
-          <span><span class="k">图片</span>{{ row.files?.length || 0 }}</span>
-        </div>
-        <div class="mat-card__actions">
-          <el-button type="primary" size="small" @click="router.push(`/materials/${row.id}`)">
-            详情
-          </el-button>
-          <el-button
-            v-if="!auth.isTeacher && row.status === 'new'"
-            size="small"
-            type="success"
-            plain
-            @click="markUsable(row)"
+          <button
+            type="button"
+            class="m-card-acc-toggle"
+            :aria-expanded="isExpanded(row.id)"
+            @click.stop="toggleForce(row.id)"
           >
-            标为可用
-          </el-button>
-          <el-button size="small" type="danger" plain @click="onDelete(row)">删除</el-button>
+            <el-icon class="m-card-acc-chevron" :class="{ 'is-open': isExpanded(row.id) }">
+              <ArrowDown />
+            </el-icon>
+          </button>
+        </div>
+        <div v-show="isExpanded(row.id)" class="m-card-acc-body">
+          <div class="mat-card__meta">
+            <span v-if="row.grade"><span class="k">年级</span>{{ row.grade }}</span>
+            <span v-if="row.subject"><span class="k">科目</span>{{ row.subject }}</span>
+            <span><span class="k">授权</span>{{ authLabel[row.auth_status] || row.auth_status }}</span>
+            <span><span class="k">图片</span>{{ row.files?.length || 0 }}</span>
+          </div>
+          <div class="mat-card__actions">
+            <el-button type="primary" size="small" @click="router.push(`/materials/${row.id}`)">
+              详情
+            </el-button>
+            <el-button
+              v-if="!auth.isTeacher && row.status === 'new'"
+              size="small"
+              type="success"
+              plain
+              @click="markUsable(row)"
+            >
+              标为可用
+            </el-button>
+            <el-button size="small" type="danger" plain @click="onDelete(row)">删除</el-button>
+          </div>
         </div>
       </div>
       <div v-if="total" ref="sentinelRef" class="scroll-sentinel">
@@ -602,19 +622,28 @@ onUnmounted(() => teardownScrollObserver())
       v-model="uploadDialog"
       title="上传素材"
       width="90%"
-      style="max-width: 560px"
+      class="mat-upload-dialog"
+      align-center
       destroy-on-close
     >
-      <el-form ref="uploadFormRef" :model="uploadForm" :rules="uploadRules" label-position="top">
+      <el-form
+        ref="uploadFormRef"
+        class="mat-upload-form"
+        :model="uploadForm"
+        :rules="uploadRules"
+        label-position="top"
+      >
         <el-form-item label="场景标题" prop="title">
           <el-input v-model="uploadForm.title" placeholder="例如：课堂进步 / 试听反馈" />
         </el-form-item>
-        <el-form-item label="年级">
-          <el-input v-model="uploadForm.grade" placeholder="如 四年级" />
-        </el-form-item>
-        <el-form-item label="科目">
-          <el-input v-model="uploadForm.subject" placeholder="如 数学" />
-        </el-form-item>
+        <div class="mat-upload-row">
+          <el-form-item label="年级">
+            <el-input v-model="uploadForm.grade" placeholder="如 四年级" />
+          </el-form-item>
+          <el-form-item label="科目">
+            <el-input v-model="uploadForm.subject" placeholder="如 数学" />
+          </el-form-item>
+        </div>
         <el-form-item label="家长痛点">
           <el-input v-model="uploadForm.pain_point" type="textarea" :rows="2" />
         </el-form-item>
@@ -849,6 +878,9 @@ onUnmounted(() => teardownScrollObserver())
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
 
 .mat-card__title {
@@ -914,6 +946,59 @@ onUnmounted(() => teardownScrollObserver())
   .tb-btn--primary {
     width: 100%;
     height: 40px;
+  }
+
+  .mat-upload-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 10px;
+  }
+
+  .mat-upload-form :deep(.el-form-item) {
+    margin-bottom: 12px;
+  }
+
+  .mat-upload-form :deep(.el-form-item__label) {
+    margin-bottom: 4px;
+  }
+}
+
+@media (min-width: 992px) {
+  .mat-upload-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 12px;
+  }
+}
+</style>
+
+<!-- dialog 传送到 body，需非 scoped -->
+<style>
+.mat-upload-dialog.el-dialog {
+  max-width: 560px;
+  width: min(90vw, 560px);
+}
+
+@media (max-width: 991px) {
+  /*
+   * 素材上传字段多，pad 再压一档高度，避免贴底滚动时底部闪空白。
+   * 全局 dialog 规则见 style.css；此处仅本弹窗更严。
+   */
+  .mat-upload-dialog.el-dialog {
+    max-height: calc(100vh - 64px) !important;
+    max-height: calc(100dvh - 64px) !important;
+    max-height: calc(100svh - 64px) !important;
+  }
+
+  .mat-upload-dialog .el-dialog__body {
+    overscroll-behavior: none;
+    overscroll-behavior-y: none;
+  }
+
+  .mat-upload-dialog .el-upload--picture-card,
+  .mat-upload-dialog .el-upload-list--picture-card .el-upload-list__item {
+    width: 72px;
+    height: 72px;
   }
 }
 </style>

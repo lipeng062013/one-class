@@ -4,6 +4,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
+from app.core.timeutil import now_aware
 
 
 class KnowledgeEntry(Base):
@@ -18,6 +19,7 @@ class KnowledgeEntry(Base):
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
+        default=now_aware,
         server_default=func.now(),
-        onupdate=func.now(),
+        onupdate=now_aware,
     )

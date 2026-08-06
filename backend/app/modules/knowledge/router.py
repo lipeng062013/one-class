@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.deps import require_roles
+from app.core.deps import require_permissions
 from app.core.responses import ok
 from app.models.knowledge import KnowledgeEntry
 from app.models.user import User
@@ -27,7 +27,7 @@ def _validate_category(category: str) -> None:
 def list_knowledge(
     category: str | None = None,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles("admin", "operator")),
+    _: User = Depends(require_permissions("knowledge.read")),
 ):
     q = db.query(KnowledgeEntry).order_by(KnowledgeEntry.id.desc())
     if category is not None:
@@ -41,7 +41,7 @@ def list_knowledge(
 def create_knowledge(
     body: KnowledgeCreate,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles("admin")),
+    user: User = Depends(require_permissions("knowledge.write")),
 ):
     _validate_category(body.category)
     entry = KnowledgeEntry(
@@ -63,7 +63,7 @@ def patch_knowledge(
     entry_id: int,
     body: KnowledgeUpdate,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles("admin")),
+    user: User = Depends(require_permissions("knowledge.write")),
 ):
     entry = db.get(KnowledgeEntry, entry_id)
     if not entry:
@@ -87,7 +87,7 @@ def patch_knowledge(
 def delete_knowledge(
     entry_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles("admin")),
+    _: User = Depends(require_permissions("knowledge.write")),
 ):
     entry = db.get(KnowledgeEntry, entry_id)
     if not entry:

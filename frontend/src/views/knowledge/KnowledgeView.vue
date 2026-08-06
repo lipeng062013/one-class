@@ -11,6 +11,7 @@ import {
 } from '../../api/knowledge'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useCardAccordion } from '../../composables/useCardAccordion'
 import { useInfiniteScroll } from '../../composables/useInfiniteScroll'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
 
@@ -22,6 +23,7 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const { isCompact } = useBreakpoint()
+const { isExpanded, toggle: toggleCard, toggleForce, collapseAll } = useCardAccordion()
 
 const pcHeaderStyle = {
   background: '#f5f0e6',
@@ -170,6 +172,7 @@ const {
 const { finishListEnter, clearSnapshot } = useListScrollRestore('knowledge', {
   visibleCount,
   enabled: isCompact,
+  stateStorageKey: LIST_STATE_KEY,
 })
 
 const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize.value) || 1))
@@ -271,6 +274,7 @@ async function load(opts?: { resetPage?: boolean }) {
 
 function runQuery() {
   clearSnapshot()
+  collapseAll()
   page.value = 1
   filterExpanded.value = false
   saveListState()
@@ -280,6 +284,7 @@ function runQuery() {
 
 function resetFilters() {
   clearSnapshot()
+  collapseAll()
   filters.q = ''
   filters.status = ''
   page.value = 1
@@ -356,7 +361,11 @@ watch(
     filters.status = ''
     page.value = 1
     filterExpanded.value = false
-    restoreListState()
+    try {
+      sessionStorage.removeItem(LIST_STATE_KEY)
+    } catch {
+      /* ignore */
+    }
     load({ resetPage: true })
   },
 )
@@ -376,7 +385,7 @@ onMounted(() => {
     <div class="page-toolbar know-toolbar" :class="{ 'is-compact': isCompact }">
       <el-page-header class="is-title-only" :content="section.title" />
       <el-button
-        v-if="auth.isAdmin"
+        v-if="auth.hasPermission('knowledge.write')"
         class="create-btn tb-btn tb-btn--primary"
         type="primary"
         @click="openCreate"
@@ -387,7 +396,7 @@ onMounted(() => {
     </div>
 
     <el-alert
-      v-if="!auth.isAdmin"
+      v-if="!auth.hasPermission('knowledge.write')"
       class="know-readonly-tip"
       type="info"
       :closable="false"
@@ -489,13 +498,18 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- 移动卡片（CSS 控制显隐） -->
+    <!-- 移动卡片（互斥折叠；CSS 控制显隐） -->
     <div v-loading="loading" class="know-m know-card-list">
       <div v-if="!filtered.length && !loading" class="know-card know-card--empty">
         暂无{{ section.title }}
       </div>
-      <div v-for="row in infiniteRows" :key="`${section.category}-${row.id}`" class="know-card">
-        <div class="know-card__top">
+      <div
+        v-for="row in infiniteRows"
+        :key="`${section.category}-${row.id}`"
+        class="know-card"
+        :class="{ 'is-expanded': isExpanded(row.id) }"
+      >
+        <div class="know-card__top" @click="toggleCard(row.id, $event)">
           <div class="know-card__who">
             <div class="know-card__name">{{ row.title }}</div>
           </div>
@@ -507,29 +521,41 @@ onMounted(() => {
           >
             {{ row.is_active ? '启用' : '停用' }}
           </el-tag>
+          <button
+            type="button"
+            class="m-card-acc-toggle"
+            :aria-expanded="isExpanded(row.id)"
+            @click.stop="toggleForce(row.id)"
+          >
+            <el-icon class="m-card-acc-chevron" :class="{ 'is-open': isExpanded(row.id) }">
+              <ArrowDown />
+            </el-icon>
+          </button>
         </div>
 
-        <div class="know-card__body">{{ row.content }}</div>
+        <div v-show="isExpanded(row.id)" class="m-card-acc-body">
+          <div class="know-card__body">{{ row.content }}</div>
 
-        <div class="know-card__tags">
-          <template v-if="rowTags[row.id]?.length">
-            <el-tag
-              v-for="tag in rowTags[row.id]"
-              :key="`${row.id}-${tag}`"
-              size="small"
-              effect="plain"
-              type="warning"
-              class="tag-chip"
-            >
-              {{ tag }}
-            </el-tag>
-          </template>
-          <span v-else class="tag-empty">无标签</span>
-        </div>
+          <div class="know-card__tags">
+            <template v-if="rowTags[row.id]?.length">
+              <el-tag
+                v-for="tag in rowTags[row.id]"
+                :key="`${row.id}-${tag}`"
+                size="small"
+                effect="plain"
+                type="warning"
+                class="tag-chip"
+              >
+                {{ tag }}
+              </el-tag>
+            </template>
+            <span v-else class="tag-empty">无标签</span>
+          </div>
 
-        <div v-if="auth.isAdmin" class="know-card__actions">
-          <el-button size="small" type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button size="small" type="danger" plain @click="remove(row)">删除</el-button>
+          <div v-if="auth.hasPermission('knowledge.write')" class="know-card__actions">
+            <el-button size="small" type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button size="small" type="danger" plain @click="remove(row)">删除</el-button>
+          </div>
         </div>
       </div>
       <div v-if="filtered.length" ref="sentinelRef" class="scroll-sentinel">
@@ -596,7 +622,7 @@ onMounted(() => {
               </template>
             </el-table-column>
             <el-table-column
-              v-if="auth.isAdmin"
+              v-if="auth.hasPermission('knowledge.write')"
               label="操作"
               width="120"
               align="center"
@@ -984,6 +1010,9 @@ onMounted(() => {
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
 
 .know-card__who {

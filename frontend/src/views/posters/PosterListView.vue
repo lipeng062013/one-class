@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile, UploadRawFile } from 'element-plus'
@@ -14,13 +14,13 @@ import {
   type GeneratedPoster,
 } from '../../api/posters'
 import { useBreakpoint } from '../../composables/useBreakpoint'
-import { useInfiniteScroll } from '../../composables/useInfiniteScroll'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
+import { SCROLL_CHUNK } from '../../composables/useServerPagedList'
 import { asyncPool } from '../../utils/asyncPool'
+import PcPagerBar from '../../components/PcPagerBar.vue'
 
 const LIST_STATE_KEY = 'oc-poster-list-state'
 const PAGE_SIZES = [10, 20, 50, 100]
-const SCROLL_CHUNK = 10
 
 type ViewMode = 'table' | 'grid'
 
@@ -28,10 +28,14 @@ const route = useRoute()
 const router = useRouter()
 const { isCompact } = useBreakpoint()
 const loading = ref(false)
+const loadingMore = ref(false)
 const bulkLoading = ref(false)
 const rows = ref<GeneratedPoster[]>([])
+const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
+const hasMoreInfinite = computed(() => rows.value.length < total.value)
+const visibleCount = computed(() => rows.value.length)
 const viewMode = ref<ViewMode>('table')
 const selectedIds = ref<number[]>([])
 const previewMap = ref<Record<number, string>>({})
@@ -48,29 +52,22 @@ const uploadTitleError = ref('')
 const uploadFileError = ref('')
 
 const sentinelRef = ref<HTMLElement | null>(null)
-const {
-  displayRows: infiniteRows,
-  hasMore: hasMoreInfinite,
-  loadingMore,
-  visibleCount,
-  resetVisible: resetInfinite,
-  ensureVisible,
-} = useInfiniteScroll(rows, { chunk: SCROLL_CHUNK, enabled: isCompact, sentinelRef })
+let scrollObserver: IntersectionObserver | null = null
 
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('posters', {
   visibleCount,
   enabled: isCompact,
 })
 
-const totalPages = computed(() => Math.max(1, Math.ceil(rows.value.length / pageSize.value) || 1))
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value) || 1))
 
-const pagedRows = computed(() => {
-  const start = (page.value - 1) * pageSize.value
-  return rows.value.slice(start, start + pageSize.value)
-})
+const pagedRows = computed(() => rows.value)
 
-/** Desktop grid uses current page; compact always uses infinite rows. */
-const gridRows = computed(() => (isCompact.value ? infiniteRows.value : pagedRows.value))
+/**
+ * PC：当前服务端页；wap/pad：rows 为已 append 的累计数据。
+ * 注意：不可对「仅一页服务端数据」再做 useInfiniteScroll 内存切片。
+ */
+const gridRows = computed(() => rows.value)
 
 const previewSrcList = computed(() =>
   gridRows.value.map((r) => previewMap.value[r.id]).filter(Boolean),
@@ -168,23 +165,15 @@ function clampPage() {
   if (page.value < 1) page.value = 1
 }
 
-function goFirstPage() {
-  page.value = 1
-  saveListState()
-}
-
-function goLastPage() {
-  page.value = totalPages.value
-  saveListState()
-}
-
 function onPageSizeChange() {
   page.value = 1
   saveListState()
+  void load({ fromQuery: true })
 }
 
 function onPageChange() {
   saveListState()
+  void load()
 }
 
 function setViewMode(mode: ViewMode) {
@@ -209,25 +198,86 @@ function isSelected(id: number) {
   return selectedIds.value.includes(id)
 }
 
-async function load(opts?: { fromQuery?: boolean }) {
-  const snap = opts?.fromQuery ? null : takeSnapshotForLoad(route.path)
+async function load(opts?: { fromQuery?: boolean; append?: boolean }) {
+  const snap = opts?.fromQuery || opts?.append ? null : takeSnapshotForLoad(route.path)
   if (opts?.fromQuery) clearSnapshot()
 
-  loading.value = true
+  const compact = isCompact.value
+  const append = !!opts?.append && compact
+
+  if (append) {
+    if (loadingMore.value || loading.value || rows.value.length >= total.value) return
+    loadingMore.value = true
+  } else {
+    loading.value = true
+  }
+
   try {
-    rows.value = await listPosters()
-    selectedIds.value = selectedIds.value.filter((id) => rows.value.some((r) => r.id === id))
-    if (snap?.visibleCount != null && isCompact.value) {
-      ensureVisible(snap.visibleCount)
-    } else if (isCompact.value) {
-      resetInfinite()
+    if (compact) {
+      if (!append) page.value = 1
+      const res = await listPosters({
+        page: page.value,
+        page_size: SCROLL_CHUNK,
+      })
+      rows.value = append ? [...rows.value, ...res.items] : res.items
+      total.value = res.total
+      if (!append && snap?.visibleCount != null) {
+        const need = Math.max(SCROLL_CHUNK, snap.visibleCount)
+        while (rows.value.length < need && rows.value.length < total.value) {
+          page.value += 1
+          const more = await listPosters({ page: page.value, page_size: SCROLL_CHUNK })
+          rows.value = [...rows.value, ...more.items]
+          total.value = more.total
+          if (!more.items.length) break
+        }
+      }
+    } else {
+      const res = await listPosters({
+        page: page.value,
+        page_size: pageSize.value,
+      })
+      rows.value = res.items
+      total.value = res.total
+      if (page.value > 1 && res.items.length === 0 && res.total > 0) {
+        page.value = Math.max(1, Math.ceil(res.total / pageSize.value))
+        const again = await listPosters({ page: page.value, page_size: pageSize.value })
+        rows.value = again.items
+        total.value = again.total
+      }
     }
-    clampPage()
+    selectedIds.value = selectedIds.value.filter((id) => rows.value.some((r) => r.id === id))
     saveListState()
   } finally {
     loading.value = false
+    loadingMore.value = false
   }
-  void finishListEnter({ snap, forceTop: !!opts?.fromQuery })
+  if (!append) void finishListEnter({ snap, forceTop: !!opts?.fromQuery })
+}
+
+async function loadMorePosters() {
+  if (!isCompact.value || loadingMore.value || loading.value) return
+  if (rows.value.length >= total.value) return
+  page.value += 1
+  await load({ append: true })
+}
+
+function setupScrollObserver() {
+  teardownScrollObserver()
+  if (!isCompact.value) return
+  const el = sentinelRef.value
+  if (!el) return
+  scrollObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((e) => e.isIntersecting)) void loadMorePosters()
+    },
+    { root: null, rootMargin: '160px 0px', threshold: 0 },
+  )
+  scrollObserver.observe(el)
+}
+
+function teardownScrollObserver() {
+  scrollObserver?.disconnect()
+  scrollObserver = null
 }
 
 async function download(row: GeneratedPoster) {
@@ -390,12 +440,20 @@ watch(
 
 watch(pageSize, () => clampPage())
 
-onMounted(() => {
+watch(isCompact, async () => {
+  await nextTick()
+  setupScrollObserver()
+})
+
+onMounted(async () => {
   restoreListState()
-  load()
+  await load()
+  await nextTick()
+  setupScrollObserver()
 })
 
 onUnmounted(() => {
+  teardownScrollObserver()
   revokeAllPreviews()
 })
 </script>
@@ -516,7 +574,7 @@ onUnmounted(() => {
     <div v-if="isCompact" v-loading="loading" class="m-card-list">
       <div v-if="!rows.length && !loading" class="m-card m-card-empty">暂无海报</div>
       <div
-        v-for="row in infiniteRows"
+        v-for="row in rows"
         :key="row.id"
         class="m-card"
         :class="{ 'is-selected': isSelected(row.id) }"
@@ -557,7 +615,7 @@ onUnmounted(() => {
       <div ref="sentinelRef" class="scroll-sentinel">
         <span v-if="loadingMore" class="scroll-hint">加载中…</span>
         <span v-else-if="hasMoreInfinite" class="scroll-hint">上滑加载更多</span>
-        <span v-else-if="rows.length" class="scroll-hint">已全部加载</span>
+        <span v-else-if="rows.length" class="scroll-hint">已加载 {{ rows.length }} / {{ total }} 条</span>
       </div>
     </div>
 
@@ -570,7 +628,7 @@ onUnmounted(() => {
         <div class="pc-list-summary">
           <span class="pc-list-summary__label">生成海报</span>
           <span class="pc-list-summary__count">
-            共 <strong>{{ rows.length }}</strong> 条
+            共 <strong>{{ total }}</strong> 条
           </span>
           <span v-if="selectedCount" class="pc-list-summary__sel">
             已选 <strong>{{ selectedCount }}</strong>
@@ -685,21 +743,14 @@ onUnmounted(() => {
       </div>
     </template>
 
-    <div v-if="!isCompact && rows.length" class="pager-bar pc-pager">
-      <el-button size="small" plain :disabled="page <= 1" @click="goFirstPage">首页</el-button>
-      <el-pagination
-        v-model:current-page="page"
-        v-model:page-size="pageSize"
-        :page-sizes="PAGE_SIZES"
-        :total="rows.length"
-        :pager-count="5"
-        background
-        layout="total, sizes, prev, pager, next, jumper"
-        @current-change="onPageChange"
-        @size-change="onPageSizeChange"
-      />
-      <el-button size="small" plain :disabled="page >= totalPages" @click="goLastPage">末页</el-button>
-    </div>
+    <PcPagerBar
+      v-if="!isCompact"
+      v-model:page="page"
+      v-model:page-size="pageSize"
+      :total="total"
+      @change="onPageChange"
+      @size-change="onPageSizeChange"
+    />
   </div>
 </template>
 

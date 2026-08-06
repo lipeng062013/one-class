@@ -14,7 +14,12 @@ export interface IntegrationsStatus {
   notes: Record<string, string>
 }
 
-export async function getIntegrationsStatus(): Promise<IntegrationsStatus> {
-  const res = await client.get('/system/integrations')
+/** @param opts.silent 失败时不弹全局 toast（如学管师无 system.read 时工作台静默跳过） */
+export async function getIntegrationsStatus(opts?: {
+  silent?: boolean
+}): Promise<IntegrationsStatus> {
+  const res = await client.get('/system/integrations', {
+    skipErrorToast: opts?.silent === true,
+  } as Parameters<typeof client.get>[1])
   return res.data.data
 }

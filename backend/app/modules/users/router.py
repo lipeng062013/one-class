@@ -2,16 +2,39 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.deps import require_roles
+from app.core.deps import require_permissions
+from app.core.permissions import (
+    catalog_grouped,
+    effective_permissions,
+    parse_extra_permissions,
+    user_permission_payload,
+)
 from app.core.responses import fail, ok
 from app.models.user import User
-from app.modules.users.schemas import ResetPasswordRequest, UserCreate, UserPublic, UserUpdate
-from app.modules.users.service import create_user, delete_user, list_users, reset_password, update_user
+from app.modules.users.schemas import (
+    ResetPasswordRequest,
+    UserCreate,
+    UserPermissionsUpdate,
+    UserUpdate,
+)
+from app.modules.users.service import (
+    create_user,
+    delete_user,
+    list_users,
+    reset_password,
+    set_user_permissions,
+    update_user,
+)
 
 router = APIRouter(prefix="/users", tags=["users"])
 
+_manage = require_permissions("users.manage")
+
 
 def _public(user: User) -> dict:
+    extra = parse_extra_permissions(getattr(user, "extra_permissions", None))
+    if user.role == "admin":
+        extra = []
     return {
         "id": user.id,
         "username": user.username,
@@ -19,7 +42,15 @@ def _public(user: User) -> dict:
         "role": user.role,
         "is_active": user.is_active,
         "created_at": user.created_at.isoformat() if user.created_at else None,
+        "extra_permissions": extra,
+        "permissions": sorted(effective_permissions(user)),
     }
+
+
+@router.get("/permissions/catalog")
+def get_permission_catalog(_: User = Depends(_manage)):
+    """Full permission list for grant UI (grouped)."""
+    return ok({"groups": catalog_grouped()})
 
 
 @router.get("")
@@ -28,24 +59,33 @@ def get_users(
     is_active: bool | None = None,
     username: str | None = None,
     display_name: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles("admin")),
+    _: User = Depends(_manage),
 ):
-    users = list_users(
+    result = list_users(
         db,
         role=role,
         is_active=is_active,
         username=username,
         display_name=display_name,
+        page=page,
+        page_size=page_size,
     )
-    return ok([_public(u) for u in users])
+    return ok(
+        {
+            **result,
+            "items": [_public(u) for u in result["items"]],
+        }
+    )
 
 
 @router.post("")
 def post_user(
     body: UserCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles("admin")),
+    _: User = Depends(_manage),
 ):
     result = create_user(
         db,
@@ -53,10 +93,39 @@ def post_user(
         display_name=body.display_name,
         role=body.role,
         password=body.password,
+        extra_permissions=body.extra_permissions,
     )
     if isinstance(result, str):
         return fail("USER_CREATE_FAILED", result, status_code=400)
     return ok(_public(result), status_code=201)
+
+
+@router.get("/{user_id}/permissions")
+def get_user_permissions(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(_manage),
+):
+    user = db.get(User, user_id)
+    if not user or user.deleted_at is not None:
+        return fail("NOT_FOUND", "用户不存在", status_code=404)
+    return ok(user_permission_payload(user))
+
+
+@router.put("/{user_id}/permissions")
+def put_user_permissions(
+    user_id: int,
+    body: UserPermissionsUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(_manage),
+):
+    user = db.get(User, user_id)
+    if not user or user.deleted_at is not None:
+        return fail("NOT_FOUND", "用户不存在", status_code=404)
+    result = set_user_permissions(db, user, body.extra_permissions)
+    if isinstance(result, str):
+        return fail("USER_PERMISSIONS_FAILED", result, status_code=400)
+    return ok(user_permission_payload(result))
 
 
 @router.patch("/{user_id}")
@@ -64,7 +133,7 @@ def patch_user(
     user_id: int,
     body: UserUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles("admin")),
+    _: User = Depends(_manage),
 ):
     user = db.get(User, user_id)
     if not user or user.deleted_at is not None:
@@ -75,6 +144,7 @@ def patch_user(
         display_name=body.display_name,
         role=body.role,
         is_active=body.is_active,
+        extra_permissions=body.extra_permissions,
     )
     if isinstance(result, str):
         return fail("USER_UPDATE_FAILED", result, status_code=400)
@@ -86,7 +156,7 @@ def post_reset_password(
     user_id: int,
     body: ResetPasswordRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles("admin")),
+    _: User = Depends(_manage),
 ):
     user = db.get(User, user_id)
     if not user or user.deleted_at is not None:
@@ -101,7 +171,7 @@ def post_reset_password(
 def remove_user(
     user_id: int,
     db: Session = Depends(get_db),
-    actor: User = Depends(require_roles("admin")),
+    actor: User = Depends(_manage),
 ):
     user = db.get(User, user_id)
     if not user or user.deleted_at is not None:

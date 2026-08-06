@@ -1,4 +1,5 @@
 import client from './client'
+import { asPageResult, type PageResult } from './paging'
 
 export type CopyMode = 'template' | 'template_then_llm' | 'llm'
 
@@ -43,9 +44,23 @@ function unwrap<T>(res: { data: ApiResponse<T> }, fallback: string): T {
   return res.data.data
 }
 
-export async function listCopies(): Promise<GeneratedCopy[]> {
-  const res = await client.get<ApiResponse<GeneratedCopy[]>>('/copies')
-  return unwrap(res, 'Failed to list copies')
+export async function listCopies(params: {
+  q?: string
+  mode?: string
+  platform?: string
+  page?: number
+  page_size?: number
+} = {}): Promise<PageResult<GeneratedCopy>> {
+  const res = await client.get('/copies', {
+    params: {
+      q: params.q || undefined,
+      mode: params.mode || undefined,
+      platform: params.platform || undefined,
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 20,
+    },
+  })
+  return asPageResult<GeneratedCopy>(res.data.data, params.page ?? 1, params.page_size ?? 20)
 }
 
 export async function getCopy(id: number): Promise<GeneratedCopy> {

@@ -7,10 +7,13 @@ from app.core.db import Base, SessionLocal, engine, ensure_data_dir
 from app.core.responses import ok
 from app.models import (  # noqa: F401 — register models
     CopyTemplate,
+    EnrollmentRecord,
     GeneratedCopy,
     GeneratedPoster,
     KnowledgeEntry,
     Lead,
+    LeadActivity,
+    LeadCollaborator,
     LearningRecord,
     LearningRecordFile,
     Material,
@@ -20,9 +23,31 @@ from app.models import (  # noqa: F401 — register models
     TodoItem,
     User,
 )
+from app.models.academic import (  # noqa: F401
+    ClassAttendance,
+    ClassMember,
+    ClassRecord,
+    ClassRecordOperationLog,
+    ClassRoom,
+    ClassTeacher,
+    Course,
+    ScheduleLesson,
+    StudentCoursePackage,
+)
+from app.models.finance import (  # noqa: F401
+    CourseConsumption,
+    FinanceOrder,
+    FinanceTransaction,
+    OrderOperationLog,
+    RechargeRecord,
+    StudentAccount,
+)
+from app.modules.academic.router import router as academic_router
 from app.modules.auth.router import router as auth_router
 from app.modules.content.router import router as content_router
 from app.modules.dashboard.router import router as dashboard_router
+from app.modules.enrollments.router import router as enrollments_router
+from app.modules.finance.router import router as finance_router
 from app.modules.knowledge.router import router as knowledge_router
 from app.modules.leads.router import router as leads_router
 from app.modules.materials.router import router as materials_router
@@ -70,6 +95,9 @@ app.include_router(content_router, prefix="/api/v1")
 app.include_router(posters_router, prefix="/api/v1")
 app.include_router(leads_router, prefix="/api/v1")
 app.include_router(students_router, prefix="/api/v1")
+app.include_router(enrollments_router, prefix="/api/v1")
+app.include_router(academic_router, prefix="/api/v1")
+app.include_router(finance_router, prefix="/api/v1")
 app.include_router(todos_router, prefix="/api/v1")
 app.include_router(dashboard_router, prefix="/api/v1")
 app.include_router(system_router, prefix="/api/v1")

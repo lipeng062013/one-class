@@ -58,6 +58,9 @@
 | `--oc-border` / `--oc-ink` / `--oc-muted` | 边框与文字 |
 | `--oc-primary` | 琥珀金主色 |
 | `--oc-content-max` | **内容最大宽度** |
+| `--oc-dialog-footer-gap` | 弹窗底部按钮间距（见列表规范 §1.1） |
+
+详情页内的 `el-dialog` / `AppSheet` 底部「取消 / 保存」**不要**在 scoped 里写间距；统一走 `style.css` 的弹窗 footer 规则（`docs/ui-list-page-pattern.md` §1.1）。
 
 ---
 

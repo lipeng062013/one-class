@@ -8,6 +8,7 @@ import {
   patchCopy,
   type GeneratedCopy,
 } from '../../api/copies'
+import { useListDetailStateCleanup } from '../../composables/useListScrollRestore'
 import { usePageBack } from '../../composables/usePageBack'
 
 const MODE_LABELS: Record<string, string> = {
@@ -27,6 +28,7 @@ const PLATFORM_LABELS: Record<string, string> = {
 const route = useRoute()
 const router = useRouter()
 const { goBack } = usePageBack('/copies')
+useListDetailStateCleanup('copies', 'oc-copy-list-state')
 
 const loading = ref(false)
 const saving = ref(false)

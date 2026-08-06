@@ -1,14 +1,11 @@
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.core.db import Base
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
+from app.core.phone import validate_phone_value
+from app.core.timeutil import now as _utcnow
 
 class Student(Base):
     """在读/在管学生名册（与线索 leads 分表）。"""
@@ -21,7 +18,7 @@ class Student(Base):
     school: Mapped[str] = mapped_column(String(255), default="")
     phone: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     parent_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    # 学管师 / 班主任（users.id，通常 role=teacher）
+    # 学管师 / 班主任（users.id，role=cr 或 academic_manager）
     academic_manager_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"), nullable=True, index=True
     )
@@ -29,6 +26,8 @@ class Student(Base):
     # active | paused | graduated | quit
     source_lead_id: Mapped[int | None] = mapped_column(ForeignKey("leads.id"), nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
+    # JSON 关联课程快照：[{"id":1,"name":"…","type":"…","price_label":"…"}]
+    linked_courses: Mapped[str] = mapped_column(Text, default="[]")
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
@@ -40,6 +39,9 @@ class Student(Base):
         order_by="LearningRecord.class_date.desc()",
     )
 
+    @validates("phone")
+    def validate_phone(self, _key: str, value: str | None) -> str | None:
+        return validate_phone_value(value)
 
 class LearningRecord(Base):
     """学情档案：一次上课/跟进记录。"""
@@ -66,7 +68,6 @@ class LearningRecord(Base):
         cascade="all, delete-orphan",
         order_by="LearningRecordFile.sort_order",
     )
-
 
 class LearningRecordFile(Base):
     __tablename__ = "learning_record_files"

@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import {
   bulkDeleteStudentsApi,
-  createStudentApi,
   deleteStudentApi,
   listManagersApi,
   listStudentsApi,
@@ -14,9 +13,16 @@ import {
   type Student,
   type StudentStatus,
 } from '../../api/students'
+import { listCoursesApi, type Course } from '../../api/academic'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useCardAccordion } from '../../composables/useCardAccordion'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
+import {
+  isValidOptionalPhone,
+  PHONE_INPUT_MESSAGE,
+  sanitizePhoneInput,
+} from '../../utils/phone'
 
 const LIST_STATE_KEY = 'oc-student-list-state'
 const PAGE_SIZES = [10, 20, 50, 100]
@@ -44,7 +50,9 @@ let scrollObserver: IntersectionObserver | null = null
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('students', {
   visibleCount,
   enabled: isCompact,
+  stateStorageKey: LIST_STATE_KEY,
 })
+const { isExpanded, toggle: toggleCard, toggleForce, collapseAll } = useCardAccordion()
 
 const filters = reactive({
   grade: '',
@@ -55,16 +63,9 @@ const filters = reactive({
   academic_manager_id: undefined as number | undefined,
 })
 
-/** 老师：我的学生 / 全部学生；负责人不展示，始终看全部并可按学管筛 */
-type ListScope = 'mine' | 'all'
-const listScope = ref<ListScope>('mine')
-const showMineAllScope = computed(() => auth.isTeacher)
-const listSummaryLabel = computed(() => {
-  if (auth.isTeacher) {
-    return listScope.value === 'mine' ? '我的学生' : '全部学生'
-  }
-  return '在读学员档案'
-})
+/** 老师与负责人均看全部学生；负责人可再按学管师筛选。老师列表不展示电话。 */
+const listSummaryLabel = computed(() => (auth.isTeacher ? '全部学生' : '在读学员档案'))
+const showPhoneColumn = computed(() => !auth.isTeacher)
 
 /** wap/pad：筛选默认收起，避免占满首屏 */
 const filterExpanded = ref(false)
@@ -75,16 +76,17 @@ const activeFilterCount = computed(() => {
   if (filters.status && filters.status !== 'active') n += 1
   if (!auth.isTeacher && filters.academic_manager_id != null) n += 1
   if (filters.name.trim()) n += 1
-  if (filters.phone.trim()) n += 1
+  if (!auth.isTeacher && filters.phone.trim()) n += 1
   if (filters.school.trim()) n += 1
   return n
 })
 
 const formVisible = ref(false)
-const formMode = ref<'create' | 'edit'>('create')
 const editingId = ref<number | null>(null)
 const formRef = ref<FormInstance>()
 const saving = ref(false)
+/** 与报名页一致：真实课程目录 */
+const courseOptions = ref<Course[]>([])
 const form = reactive({
   name: '',
   grade: '',
@@ -94,7 +96,10 @@ const form = reactive({
   academic_manager_id: undefined as number | undefined,
   status: 'active' as StudentStatus,
   notes: '',
+  /** 编辑时须关联至少一门课程 */
+  course_ids: [] as number[],
 })
+const originalPhone = ref('')
 
 const reassignVisible = ref(false)
 const reassignSaving = ref(false)
@@ -127,15 +132,47 @@ const gradeOptions = [
   '其他',
 ]
 
-const rules: FormRules = {
+function validateEditedPhone(
+  _rule: unknown,
+  value: unknown,
+  callback: (error?: Error) => void,
+) {
+  const phone = String(value ?? '')
+  if (phone === originalPhone.value && !isValidOptionalPhone(phone)) {
+    callback()
+    return
+  }
+  callback(isValidOptionalPhone(phone) ? undefined : new Error(PHONE_INPUT_MESSAGE))
+}
+
+const rules = computed<FormRules>(() => ({
   name: [{ required: true, message: '请填写学生姓名', trigger: 'blur' }],
   grade: [{ required: true, message: '请填写年级', trigger: 'change' }],
   school: [{ required: true, message: '请填写学校', trigger: 'blur' }],
   academic_manager_id: [{ required: true, message: '请选择学管师', trigger: 'change' }],
-}
+  phone: [{ required: true, validator: validateEditedPhone, trigger: 'blur' }],
+  // 编辑须关联课程（建档在报名页完成）
+  course_ids: [
+    {
+      type: 'array',
+      required: true,
+      min: 1,
+      message: '请至少选择一门关联课程',
+      trigger: 'change',
+    },
+  ],
+}))
 
-const canReassign = computed(() => auth.isAdmin)
-const canDelete = computed(() => auth.isAdmin)
+const canReassign = computed(() => auth.hasPermission('students.delete'))
+const canDelete = computed(() => auth.hasPermission('students.delete'))
+/** 操作列宽随可见按钮数变化：详情+编辑 必有；转交/删除仅负责人 */
+const opsColumnWidth = computed(() => {
+  // link 二字按钮约 44px，gap 2px，右内边距 8px
+  let n = 2
+  if (canReassign.value) n += 1
+  if (canDelete.value) n += 1
+  return n * 46 + 12
+})
 const reassignStudentQuery = ref('')
 
 const activeManagers = computed(() => managers.value.filter((m) => m.is_active))
@@ -171,7 +208,6 @@ function restoreListState() {
       filters.status = s.filters.status ?? 'active'
       filters.academic_manager_id = s.filters.academic_manager_id
     }
-    // 我的/全部：每次进入默认「我的学生」，不恢复历史选中
     if (typeof s.page === 'number' && s.page > 0) page.value = s.page
     if (typeof s.pageSize === 'number' && PAGE_SIZES.includes(s.pageSize)) {
       pageSize.value = s.pageSize
@@ -208,12 +244,11 @@ function buildStudentParams(pageNum: number, size: number) {
   }
   if (filters.grade) params.grade = filters.grade
   if (filters.name) params.name = filters.name
-  if (filters.phone) params.phone = filters.phone
+  // 老师端不展示/不按电话筛
+  if (!auth.isTeacher && filters.phone) params.phone = filters.phone
   if (filters.school) params.school = filters.school
   if (filters.status) params.status = filters.status
-  if (auth.isTeacher && listScope.value === 'mine' && auth.user?.id != null) {
-    params.academic_manager_id = auth.user.id
-  } else if (!auth.isTeacher && filters.academic_manager_id != null) {
+  if (!auth.isTeacher && filters.academic_manager_id != null) {
     params.academic_manager_id = filters.academic_manager_id
   }
   return params
@@ -244,6 +279,13 @@ function onPageChange() {
 
 async function loadManagers() {
   managers.value = await listManagersApi(true)
+}
+
+async function loadCourses() {
+  const page = await listCoursesApi({ enabled: true, page: 1, page_size: 100 }).catch(() => ({
+    items: [] as Course[],
+  }))
+  courseOptions.value = page.items
 }
 
 async function load(opts?: { resetPage?: boolean; append?: boolean }) {
@@ -316,43 +358,34 @@ function teardownScrollObserver() {
   scrollObserver = null
 }
 
-function resetForm() {
-  form.name = ''
-  form.grade = ''
-  form.school = ''
-  form.phone = ''
-  form.parent_name = ''
-  form.academic_manager_id = undefined
-  form.status = 'active'
-  form.notes = ''
-  editingId.value = null
-}
-
-async function openCreate() {
-  formMode.value = 'create'
-  resetForm()
-  // 打开时刷新，避免用户管理里刚删除的老师仍出现在学管下拉
-  await loadManagers()
-  // 老师新建默认自己为学管
-  if (auth.isTeacher && auth.user?.id != null) {
-    const me = managers.value.find((m) => m.id === auth.user?.id && m.is_active)
-    if (me) form.academic_manager_id = me.id
-  }
-  formVisible.value = true
+function buildCoursesPayload() {
+  return courseOptions.value
+    .filter((c) => form.course_ids.includes(c.id))
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      type: c.type_label,
+      price_label: c.price_label,
+    }))
 }
 
 async function openEdit(row: Student) {
-  formMode.value = 'edit'
   editingId.value = row.id
   form.name = row.name
   form.grade = row.grade
   form.school = row.school
   form.phone = row.phone || ''
+  originalPhone.value = row.phone || ''
   form.parent_name = row.parent_name || ''
   form.academic_manager_id = row.academic_manager_id ?? undefined
   form.status = (row.status as StudentStatus) || 'active'
   form.notes = row.notes || ''
-  await loadManagers()
+  // 回填已关联课程 id
+  const linked = row.linked_courses || []
+  form.course_ids = linked
+    .map((c) => (c.id != null ? Number(c.id) : NaN))
+    .filter((id) => Number.isFinite(id))
+  await Promise.all([loadManagers(), loadCourses()])
   // 已删除账号不在可选列表；若当前仍挂着已删学管，清空以免脏值提交
   if (
     form.academic_manager_id != null &&
@@ -360,31 +393,62 @@ async function openEdit(row: Student) {
   ) {
     form.academic_manager_id = undefined
   }
+  // 关联课程可能已停用：把已选但未在 options 里的项补进去，避免标签空白
+  for (const c of linked) {
+    if (c.id == null) continue
+    const id = Number(c.id)
+    if (!Number.isFinite(id)) continue
+    if (!courseOptions.value.some((x) => x.id === id)) {
+      courseOptions.value.push({
+        id,
+        name: c.name,
+        course_type: 'group',
+        type_label: c.type || '课程',
+        grade: '',
+        subject: '',
+        term: '',
+        billing_mode: 'hour',
+        billing_label: '按课时',
+        unit_price: 0,
+        price_label: c.price_label || '',
+        leave_rule: 'no_deduct',
+        absent_rule: 'no_deduct',
+        color: '#a16207',
+        enabled: true,
+        student_count: 0,
+        remark: '',
+      })
+    }
+  }
   formVisible.value = true
 }
 
 async function submitForm() {
   const ok = await formRef.value?.validate().catch(() => false)
-  if (!ok) return
+  if (!ok || editingId.value == null) return
+  if (!form.course_ids.length) {
+    ElMessage.warning('请至少选择一门关联课程')
+    return
+  }
+  const courses = buildCoursesPayload()
+  if (!courses.length) {
+    ElMessage.warning('请至少选择一门关联课程')
+    return
+  }
   saving.value = true
   try {
-    const payload = {
+    await patchStudentApi(editingId.value, {
       name: form.name,
       grade: form.grade,
       school: form.school,
-      phone: form.phone || null,
+      ...(form.phone === originalPhone.value ? {} : { phone: form.phone || null }),
       parent_name: form.parent_name || null,
       academic_manager_id: form.academic_manager_id ?? null,
       status: form.status,
       notes: form.notes,
-    }
-    if (formMode.value === 'create') {
-      await createStudentApi(payload)
-      ElMessage.success('学生已创建')
-    } else if (editingId.value != null) {
-      await patchStudentApi(editingId.value, payload)
-      ElMessage.success('学生已更新')
-    }
+      courses,
+    })
+    ElMessage.success('学生已更新')
     formVisible.value = false
     await load()
     await loadManagers()
@@ -548,17 +612,13 @@ function resetFilters() {
   filters.school = ''
   filters.status = 'active'
   filters.academic_manager_id = undefined
+  collapseAll()
   load({ resetPage: true })
 }
 
 function runQuery() {
   if (isCompact.value) filterExpanded.value = false
-  load({ resetPage: true })
-}
-
-function onListScopeChange() {
-  // 切换 scope 时清掉负责人用的学管筛选，避免状态串扰
-  filters.academic_manager_id = undefined
+  collapseAll()
   load({ resetPage: true })
 }
 
@@ -580,11 +640,9 @@ watch(sentinelRef, () => {
 
 onMounted(async () => {
   restoreListState()
-  // 每次进入固定默认「我的学生」，不记忆上次切换
-  if (auth.isTeacher) {
-    listScope.value = 'mine'
-  }
-  await loadManagers()
+  // 老师端不再按电话筛，避免恢复旧状态带入
+  if (auth.isTeacher) filters.phone = ''
+  await Promise.all([loadManagers(), loadCourses()])
   await load()
   await nextTick()
   setupScrollObserver()
@@ -597,7 +655,7 @@ onUnmounted(() => teardownScrollObserver())
   <div class="student-list-page">
     <div class="page-toolbar student-toolbar" :class="{ 'is-compact': isCompact }">
       <el-page-header class="is-title-only" content="学生信息" />
-      <div class="toolbar-right">
+      <div v-if="canDelete || canReassign" class="toolbar-right">
         <el-button
           v-if="canDelete"
           class="tb-btn"
@@ -611,19 +669,7 @@ onUnmounted(() => teardownScrollObserver())
         <el-button v-if="canReassign" class="tb-btn" plain @click="openReassign()">
           转交{{ selectedIds.length ? ` ${selectedIds.length}` : '' }}
         </el-button>
-        <el-button class="tb-btn tb-btn--primary" type="primary" @click="openCreate">
-          <el-icon><Plus /></el-icon>
-          新建
-        </el-button>
       </div>
-    </div>
-
-    <!-- 老师：我的 / 全部 -->
-    <div v-if="showMineAllScope" class="scope-bar" :class="{ 'is-compact': isCompact }">
-      <el-radio-group v-model="listScope" size="default" @change="onListScopeChange">
-        <el-radio-button value="mine">我的学生</el-radio-button>
-        <el-radio-button value="all">全部学生</el-radio-button>
-      </el-radio-group>
     </div>
 
     <!-- PC 筛选 + 列表摘要（档案说明放在这里，不挤在标题下） -->
@@ -673,7 +719,7 @@ onUnmounted(() => teardownScrollObserver())
         <el-form-item label="姓名">
           <el-input v-model="filters.name" clearable placeholder="搜索姓名" style="width: 130px" />
         </el-form-item>
-        <el-form-item label="电话">
+        <el-form-item v-if="showPhoneColumn" label="电话">
           <el-input v-model="filters.phone" clearable placeholder="搜索电话" style="width: 140px" />
         </el-form-item>
         <el-form-item label="学校">
@@ -757,8 +803,19 @@ onUnmounted(() => teardownScrollObserver())
             :value="m.id"
           />
         </el-select>
-        <el-input v-model="filters.phone" class="m-filter-panel__half" clearable placeholder="电话" />
-        <el-input v-model="filters.school" class="m-filter-panel__half" clearable placeholder="学校" />
+        <el-input
+          v-if="showPhoneColumn"
+          v-model="filters.phone"
+          class="m-filter-panel__half"
+          clearable
+          placeholder="电话"
+        />
+        <el-input
+          v-model="filters.school"
+          :class="showPhoneColumn ? 'm-filter-panel__half' : 'm-filter-panel__full'"
+          clearable
+          placeholder="学校"
+        />
         <div class="m-filter-panel__actions">
           <button type="button" class="m-filter-link" @click="resetFilters">重置</button>
           <button type="button" class="m-filter-apply" @click="runQuery">完成</button>
@@ -769,19 +826,18 @@ onUnmounted(() => teardownScrollObserver())
     <!-- 平板 / 手机：学生卡片 -->
     <div v-if="isCompact" v-loading="loading" class="stu-card-list">
       <div v-if="!total && !loading" class="stu-card stu-card--empty">
-        {{
-          auth.isTeacher && listScope === 'mine'
-            ? '暂无我的学生，可点「新建」'
-            : '暂无学生，可点「新建」'
-        }}
+        暂无学生，请到报名管理建档
       </div>
       <div
         v-for="row in infiniteRows"
         :key="row.id"
         class="stu-card"
-        :class="{ 'is-selected': selectedIds.includes(row.id) }"
+        :class="{
+          'is-selected': selectedIds.includes(row.id),
+          'is-expanded': isExpanded(row.id),
+        }"
       >
-        <div class="stu-card__top">
+        <div class="stu-card__top" @click="toggleCard(row.id, $event)">
           <el-checkbox
             v-if="canDelete || canReassign"
             class="stu-card__check"
@@ -789,7 +845,7 @@ onUnmounted(() => teardownScrollObserver())
             @change="(v: boolean | string | number) => toggleCardSelect(row.id, v)"
             @click.stop
           />
-          <div class="stu-card__identity" @click="goDetail(row)">
+          <div class="stu-card__identity">
             <div class="stu-card__avatar">{{ (row.name || '?').slice(0, 1) }}</div>
             <div class="stu-card__who">
               <div class="stu-card__name">{{ row.name }}</div>
@@ -807,36 +863,51 @@ onUnmounted(() => teardownScrollObserver())
           >
             {{ statusLabels[row.status] || row.status }}
           </el-tag>
+          <button
+            type="button"
+            class="m-card-acc-toggle"
+            :aria-expanded="isExpanded(row.id)"
+            :aria-label="isExpanded(row.id) ? '收起' : '展开'"
+            @click.stop="toggleForce(row.id)"
+          >
+            <el-icon class="m-card-acc-chevron" :class="{ 'is-open': isExpanded(row.id) }">
+              <ArrowDown />
+            </el-icon>
+          </button>
         </div>
 
-        <div class="stu-card__meta">
-          <div class="stu-meta-item">
-            <span class="stu-meta-k">学管</span>
-            <span class="stu-meta-v">{{ row.academic_manager_name || '—' }}</span>
+        <div v-show="isExpanded(row.id)" class="m-card-acc-body">
+          <div class="stu-card__meta">
+            <div class="stu-meta-item">
+              <span class="stu-meta-k">学管</span>
+              <span class="stu-meta-v">{{ row.academic_manager_name || '—' }}</span>
+            </div>
+            <div v-if="showPhoneColumn && row.phone" class="stu-meta-item">
+              <span class="stu-meta-k">电话</span>
+              <span class="stu-meta-v">{{ row.phone }}</span>
+            </div>
+            <div v-if="row.parent_name" class="stu-meta-item">
+              <span class="stu-meta-k">家长</span>
+              <span class="stu-meta-v">{{ row.parent_name }}</span>
+            </div>
+            <div v-if="row.latest_learning_at" class="stu-meta-item stu-meta-item--full">
+              <span class="stu-meta-k">学情</span>
+              <span class="stu-meta-v">{{ formatTime(row.latest_learning_at) }}</span>
+            </div>
           </div>
-          <div v-if="row.phone" class="stu-meta-item">
-            <span class="stu-meta-k">电话</span>
-            <span class="stu-meta-v">{{ row.phone }}</span>
-          </div>
-          <div v-if="row.parent_name" class="stu-meta-item">
-            <span class="stu-meta-k">家长</span>
-            <span class="stu-meta-v">{{ row.parent_name }}</span>
-          </div>
-          <div v-if="row.latest_learning_at" class="stu-meta-item stu-meta-item--full">
-            <span class="stu-meta-k">学情</span>
-            <span class="stu-meta-v">{{ formatTime(row.latest_learning_at) }}</span>
-          </div>
-        </div>
 
-        <p v-if="row.notes" class="stu-card__notes">{{ row.notes }}</p>
+          <p v-if="row.notes" class="stu-card__notes">{{ row.notes }}</p>
 
-        <div class="stu-card__actions">
-          <el-button type="primary" size="small" @click="goDetail(row)">详情</el-button>
-          <el-button size="small" plain @click="openEdit(row)">编辑</el-button>
-          <el-button v-if="canReassign" size="small" plain @click="openReassign([row.id])">转交</el-button>
-          <el-button v-if="canDelete" size="small" type="danger" plain @click="onDelete(row)">
-            删除
-          </el-button>
+          <div class="stu-card__actions">
+            <el-button type="primary" size="small" @click="goDetail(row)">详情</el-button>
+            <el-button size="small" plain @click="openEdit(row)">编辑</el-button>
+            <el-button v-if="canReassign" size="small" plain @click="openReassign([row.id])">
+              转交
+            </el-button>
+            <el-button v-if="canDelete" size="small" type="danger" plain @click="onDelete(row)">
+              删除
+            </el-button>
+          </div>
         </div>
       </div>
       <div v-if="total" ref="sentinelRef" class="scroll-sentinel">
@@ -891,7 +962,7 @@ onUnmounted(() => teardownScrollObserver())
             </template>
           </el-table-column>
           <el-table-column prop="school" label="学校" min-width="120" show-overflow-tooltip />
-          <el-table-column prop="phone" label="电话" width="124">
+          <el-table-column v-if="showPhoneColumn" prop="phone" label="电话" width="124">
             <template #default="{ row }">
               <span class="pc-mono">{{ row.phone || '—' }}</span>
             </template>
@@ -939,7 +1010,12 @@ onUnmounted(() => teardownScrollObserver())
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="210" fixed="right" align="right">
+          <el-table-column
+            label="操作"
+            :width="opsColumnWidth"
+            fixed="right"
+            align="right"
+          >
             <template #default="{ row }">
               <div class="pc-ops">
                 <el-button link type="primary" @click="goDetail(row)">详情</el-button>
@@ -953,7 +1029,7 @@ onUnmounted(() => teardownScrollObserver())
           </el-table-column>
         </el-table>
       </div>
-      <div v-if="!total && !loading" class="pc-table-empty">暂无学生，可点右上角「新建」</div>
+      <div v-if="!total && !loading" class="pc-table-empty">暂无学生，请到报名管理建档</div>
     </el-card>
 
     <!-- 仅 PC 显示底部分页；wap/pad 用滚动加载 -->
@@ -973,10 +1049,10 @@ onUnmounted(() => teardownScrollObserver())
       <el-button size="small" plain :disabled="page >= totalPages" @click="goLastPage">末页</el-button>
     </div>
 
-    <!-- 新建 / 编辑 -->
+    <!-- 编辑学生（建档请到报名管理） -->
     <el-dialog
       v-model="formVisible"
-      :title="formMode === 'create' ? '新建学生' : '编辑学生'"
+      title="编辑学生"
       width="90%"
       style="max-width: 560px"
       destroy-on-close
@@ -1008,8 +1084,15 @@ onUnmounted(() => teardownScrollObserver())
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="联系电话">
-          <el-input v-model="form.phone" placeholder="多为家长手机" />
+        <el-form-item label="联系电话" prop="phone">
+          <el-input
+            v-model="form.phone"
+            inputmode="numeric"
+            autocomplete="tel"
+            maxlength="11"
+            placeholder="请输入11位手机号"
+            @input="form.phone = sanitizePhoneInput(form.phone)"
+          />
         </el-form-item>
         <el-form-item label="家长称呼">
           <el-input v-model="form.parent_name" placeholder="如：张妈妈" />
@@ -1019,8 +1102,27 @@ onUnmounted(() => teardownScrollObserver())
             <el-option v-for="(label, key) in statusLabels" :key="key" :label="label" :value="key" />
           </el-select>
         </el-form-item>
+        <el-form-item label="关联课程" prop="course_ids">
+          <el-select
+            v-model="form.course_ids"
+            multiple
+            filterable
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="请选择课程（可多选，至少一门）"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="c in courseOptions"
+              :key="c.id"
+              :label="`${c.name}（${c.type_label} · ${c.price_label}）`"
+              :value="c.id"
+            />
+          </el-select>
+          <p class="form-field-hint">须关联至少一门课程；新学员建档请到报名管理。</p>
+        </el-form-item>
         <el-form-item label="备注">
-          <el-input v-model="form.notes" type="textarea" :rows="2" />
+          <el-input v-model="form.notes" type="textarea" :rows="2" placeholder="选填，仅学员档案备注" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -1086,7 +1188,7 @@ onUnmounted(() => teardownScrollObserver())
           </el-select>
           <div class="hint">当前可选 {{ studentsForReassign.length }} 人（受列表筛选影响时可先「查询」放宽条件）</div>
         </el-form-item>
-        <el-form-item label="目标学管师（在职老师）" required>
+        <el-form-item label="目标学管师（在职学管）" required>
           <el-select
             v-model="reassign.to_manager_id"
             placeholder="转交给谁"
@@ -1111,28 +1213,14 @@ onUnmounted(() => teardownScrollObserver())
 </template>
 
 <style scoped>
+.form-field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--oc-muted, #78716c);
+  line-height: 1.4;
+}
+
 .student-list-page {
-  width: 100%;
-}
-
-.scope-bar {
-  margin-bottom: 12px;
-}
-
-.scope-bar.is-compact {
-  margin-bottom: 10px;
-}
-
-.scope-bar.is-compact :deep(.el-radio-group) {
-  display: flex;
-  width: 100%;
-}
-
-.scope-bar.is-compact :deep(.el-radio-button) {
-  flex: 1;
-}
-
-.scope-bar.is-compact :deep(.el-radio-button__inner) {
   width: 100%;
 }
 
@@ -1362,7 +1450,14 @@ onUnmounted(() => teardownScrollObserver())
   align-items: center;
   justify-content: flex-end;
   gap: 2px;
-  padding-right: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding-right: 4px;
+}
+
+.pc-ops :deep(.el-button.is-link) {
+  padding: 0 4px;
+  margin: 0;
 }
 
 .pc-table-empty {
@@ -1632,6 +1727,9 @@ onUnmounted(() => teardownScrollObserver())
   display: flex;
   align-items: center;
   gap: 10px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
 
 .stu-card__check {

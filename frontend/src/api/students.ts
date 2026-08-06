@@ -1,8 +1,17 @@
 import client from './client'
 import { asPageResult, type PageResult } from './paging'
+import { assertValidOptionalPhone } from '../utils/phone'
+// PageResult used by listStudentsApi / listLearningApi
 
 export type StudentStatus = 'active' | 'paused' | 'graduated' | 'quit'
 export type ClassStatus = 'attended' | 'absent' | 'late' | 'leave' | 'makeup'
+
+export interface StudentCourseLink {
+  id?: number | null
+  name: string
+  type?: string
+  price_label?: string
+}
 
 export interface Student {
   id: number
@@ -16,6 +25,7 @@ export interface Student {
   status: string
   source_lead_id: number | null
   notes: string
+  linked_courses?: StudentCourseLink[]
   created_by: number | null
   created_at?: string | null
   updated_at?: string | null
@@ -31,6 +41,8 @@ export interface StudentInput {
   academic_manager_id?: number | null
   status?: StudentStatus | string
   notes?: string
+  /** 新建时必选至少一门关联课程 */
+  courses: StudentCourseLink[]
 }
 
 export interface ManagerOption {
@@ -131,7 +143,175 @@ export async function getStudentApi(id: number): Promise<Student> {
   return res.data.data
 }
 
+/** 报读课程（课包聚合） */
+export interface StudentPackageOrderRow {
+  package_id: number
+  order_id?: number | null
+  order_no: string
+  purchase_hours: number
+  gift_hours: number
+  consumed_hours: number
+  refund_hours: number
+  remain_hours: number
+  valid_until?: string | null
+  priority_consume: boolean
+  status: string
+  unit_price: number
+  created_at?: string
+}
+
+export interface StudentCoursePackageGroup {
+  course_id?: number | null
+  course_name: string
+  course_type?: string
+  type_label?: string
+  remain_hours: number
+  consumed_hours: number
+  total_hours: number
+  class_id?: number | null
+  class_name: string
+  packages: StudentPackageOrderRow[]
+  from_link_only?: boolean
+}
+
+export interface StudentCoursePackagesResult {
+  summary: {
+    remain_hours: number
+    overtime_hours: number
+    consumed_hours: number
+    total_hours: number
+  }
+  courses: StudentCoursePackageGroup[]
+}
+
+export async function getStudentCoursePackagesApi(
+  studentId: number,
+): Promise<StudentCoursePackagesResult> {
+  const res = await client.get(`/students/${studentId}/course-packages`)
+  return res.data.data
+}
+
+export interface StudentOrdersResult {
+  summary: {
+    order_amount: number
+    received_amount: number
+    arrears_amount: number
+  }
+  items: {
+    id: number
+    order_no: string
+    order_type: string
+    order_type_label: string
+    item: string
+    receivable: number
+    received: number
+    arrears: number
+    status: string
+    status_label: string
+    source: string
+    performance_owner: string
+    handler: string
+    created_at?: string
+  }[]
+  total: number
+}
+
+export async function getStudentOrdersApi(
+  studentId: number,
+  params: { page?: number; page_size?: number } = {},
+): Promise<StudentOrdersResult & { page?: number; page_size?: number }> {
+  const res = await client.get(`/students/${studentId}/orders`, {
+    params: {
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 20,
+    },
+  })
+  return res.data.data
+}
+
+export interface StudentActivityEvent {
+  id: string
+  kind: string
+  kind_label: string
+  title: string
+  at?: string | null
+  lines: string[]
+  order_id?: number | null
+  order_no?: string
+  meta?: Record<string, unknown>
+}
+
+export async function getStudentActivityApi(
+  studentId: number,
+  limit = 50,
+): Promise<{ items: StudentActivityEvent[]; total: number }> {
+  const res = await client.get(`/students/${studentId}/activity`, { params: { limit } })
+  return res.data.data
+}
+
+export type StudentClassRecordView = 'completed' | 'pending'
+
+export interface StudentClassRecordRow {
+  id: number
+  row_type: StudentClassRecordView
+  schedule_id?: number | null
+  roll_at?: string | null
+  class_id: number
+  class_name: string
+  course_id?: number | null
+  course_name: string
+  class_start?: string | null
+  class_end?: string | null
+  teachers: string
+  teacher_ids: number[]
+  attendance_status: string
+  attendance_status_label: string
+  makeup_status_label: string
+  consumption_type: string
+  hours_consumed: number
+  amount: number
+  content: string
+  notes: string
+  record_status: string
+  record_status_label: string
+}
+
+export interface StudentClassRecordsResult {
+  items: StudentClassRecordRow[]
+  total: number
+  page: number
+  page_size: number
+  summary: { present: number; late: number; leave: number; absent: number }
+  filters: {
+    classes: { id: number; name: string }[]
+    courses: { id: number; name: string }[]
+    teachers: { id: number; name: string }[]
+  }
+}
+
+export interface StudentClassRecordParams {
+  view?: StudentClassRecordView
+  start?: string
+  end?: string
+  class_id?: number
+  course_id?: number
+  teacher_id?: number
+  attendance_status?: string
+  record_status?: string
+  page?: number
+  page_size?: number
+}
+
+export async function getStudentClassRecordsApi(
+  studentId: number,
+  params: StudentClassRecordParams = {},
+): Promise<StudentClassRecordsResult> {
+  const res = await client.get(`/students/${studentId}/class-records`, { params })
+  return res.data.data
+}
+
 export async function createStudentApi(payload: StudentInput): Promise<Student> {
+  assertValidOptionalPhone(payload.phone)
   const res = await client.post('/students', payload)
   return res.data.data
 }
@@ -140,6 +320,7 @@ export async function patchStudentApi(
   id: number,
   payload: Partial<StudentInput>,
 ): Promise<Student> {
+  if ('phone' in payload) assertValidOptionalPhone(payload.phone)
   const res = await client.patch(`/students/${id}`, payload)
   return res.data.data
 }
@@ -168,9 +349,21 @@ export async function listLearningApi(params: {
   student_id?: number
   teacher_id?: number
   mine?: boolean
-} = {}): Promise<LearningRecord[]> {
-  const res = await client.get('/learning-records', { params })
-  return res.data.data
+  q?: string
+  page?: number
+  page_size?: number
+} = {}): Promise<PageResult<LearningRecord>> {
+  const res = await client.get('/learning-records', {
+    params: {
+      student_id: params.student_id,
+      teacher_id: params.teacher_id,
+      mine: params.mine,
+      q: params.q || undefined,
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 20,
+    },
+  })
+  return asPageResult<LearningRecord>(res.data.data, params.page ?? 1, params.page_size ?? 20)
 }
 
 export async function getLearningApi(id: number): Promise<LearningRecord> {

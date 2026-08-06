@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.deps import require_roles
+from app.core.deps import require_permissions
 from app.core.responses import ok
 from app.models.user import User
 from app.modules.content import service
@@ -10,7 +10,7 @@ from app.modules.content.schemas import CopyBulkDelete, GenerateCopyRequest, Gen
 
 router = APIRouter(prefix="/copies", tags=["content"])
 
-_ops = require_roles("admin", "operator")
+_ops = require_permissions("copies.use")
 
 
 @router.post("/generate")
@@ -24,12 +24,19 @@ def generate_copy(
 
 @router.get("")
 def list_copies(
+    q: str | None = None,
+    mode: str | None = None,
+    platform: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
     db: Session = Depends(get_db),
     _: User = Depends(_ops),
 ):
-    items = service.list_copies(db)
-    # 列表也回填禁用词命中，便于列表角标与详情一致
-    return ok([service.serialize_copy_detail(db, c) for c in items])
+    return ok(
+        service.list_copies(
+            db, q=q, mode=mode, platform=platform, page=page, page_size=page_size
+        )
+    )
 
 
 @router.post("/bulk-delete")

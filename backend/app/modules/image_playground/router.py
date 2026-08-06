@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
-from app.core.deps import require_roles
+from app.core.deps import require_permissions
 from app.core.responses import ok
 from app.models.user import User
 
@@ -26,7 +26,7 @@ config_router = APIRouter(prefix="/image-playground", tags=["image-playground"])
 # Proxy is mounted at app root as /image-api/v1/* (see main.py).
 proxy_router = APIRouter(prefix="/image-api", tags=["image-playground"])
 
-_ops = require_roles("admin", "operator")
+_ops = require_permissions("ai_image.use")
 
 _ALLOWED_PREFIXES = (
     "images/",

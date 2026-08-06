@@ -133,13 +133,20 @@ function fillDemo(username: string, password: string) {
 
 <style scoped>
 .login-page {
+  box-sizing: border-box;
   min-height: 100vh;
+  min-height: 100dvh;
+  /* pad 上 html/body 锁高时，登录页自己可滚，避免小屏键盘顶起后裁切 */
+  height: 100%;
+  max-height: 100vh;
+  max-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
   position: relative;
-  overflow: hidden;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
   background:
     radial-gradient(ellipse 80% 60% at 10% 20%, rgba(245, 230, 200, 0.55), transparent 55%),
     radial-gradient(ellipse 70% 50% at 90% 80%, rgba(161, 98, 7, 0.12), transparent 50%),

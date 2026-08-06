@@ -87,6 +87,55 @@ CSS 变量（`style.css` `:root`，**仅工作台**使用）：
 | `--oc-primary-hover` | 主色悬停 | `#86530a` |
 | 表头底 | PC 表格 | `#f5f0e6` |
 | 行悬停 | 表格 | `#faf6ee` |
+| `--oc-dialog-footer-gap` | 弹窗/抽屉底部按钮间距 | `12px` |
+| `--oc-dialog-footer-pad-y` | 弹窗 footer 上下内边距 | `12px` |
+
+---
+
+## 1.1 弹窗 / 抽屉底部功能按钮（必做）
+
+> 全局实现：`frontend/src/style.css`（`.el-dialog__footer` / `.oc-dialog-footer` / `.oc-app-sheet__footer`）
+> **原因**：业务按钮常用 `class="tb-btn"`，其 `margin: 0 !important` 会清掉 Element Plus 默认的相邻按钮 `margin-left`，导致「取消」「保存」贴在一起。
+
+### 规则
+
+| 项 | 要求 |
+|----|------|
+| 间距 | 统一 **12px**（`--oc-dialog-footer-gap`），用 **flex + gap**，不用手写 `margin-left` |
+| 布局 | 底部操作默认 **右对齐**；危险操作可放左侧，右侧仍为取消 / 主按钮 |
+| 按钮 class | 主按钮 `tb-btn tb-btn--primary`；次按钮 `tb-btn` 或默认 `el-button` |
+| 禁止 | 单页 scoped 再写一套「取消/保存间距」；禁止 footer 里按钮 `margin: 0` 后又不加 gap |
+
+### 推荐写法
+
+```html
+<!-- el-dialog：#footer 直接放按钮即可，全局已 gap -->
+<template #footer>
+  <el-button class="tb-btn" @click="visible = false">取消</el-button>
+  <el-button type="primary" class="tb-btn tb-btn--primary" :loading="saving" @click="save">
+    保存
+  </el-button>
+</template>
+
+<!-- 自定义包裹 / 左右分区：加 oc-dialog-footer -->
+<template #footer>
+  <div class="oc-dialog-footer" style="width: 100%; justify-content: space-between">
+    <el-button type="danger" plain @click="onDelete">删除</el-button>
+    <div class="oc-dialog-footer">
+      <el-button class="tb-btn" @click="visible = false">取消</el-button>
+      <el-button type="primary" class="tb-btn tb-btn--primary" @click="save">保存</el-button>
+    </div>
+  </div>
+</template>
+
+<!-- AppSheet 侧栏：#footer 同样直接放按钮 -->
+<template #footer>
+  <el-button @click="close">取消</el-button>
+  <el-button type="primary" :loading="saving" @click="submit">确定</el-button>
+</template>
+```
+
+美化或新开弹窗时，**只改** `style.css` 里的 `--oc-dialog-footer-gap` 即可全站生效。
 
 ---
 

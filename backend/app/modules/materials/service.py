@@ -97,19 +97,25 @@ def get_material(db: Session, material_id: int) -> Material | None:
 
 
 def can_view(user: User, material: Material) -> bool:
-    if user.role in {"admin", "operator"}:
+    from app.core.permissions import has_permission
+
+    if has_permission(user, "materials.manage"):
         return True
     return material.uploader_id == user.id
 
 
 def can_upload_file(user: User, material: Material) -> bool:
-    if user.role in {"admin", "operator"}:
+    from app.core.permissions import has_permission
+
+    if has_permission(user, "materials.manage"):
         return True
     return material.uploader_id == user.id
 
 
 def can_patch(user: User, material: Material) -> bool:
-    if user.role in {"admin", "operator"}:
+    from app.core.permissions import has_permission
+
+    if has_permission(user, "materials.manage"):
         return True
     # teacher may update own material content but not status transitions freely —
     # allow teacher to patch own content fields only in router
@@ -163,7 +169,9 @@ def update_material(db: Session, user: User, material: Material, data: dict) -> 
 
 
 def can_delete(user: User, material: Material) -> bool:
-    if user.role in {"admin", "operator"}:
+    from app.core.permissions import has_permission
+
+    if has_permission(user, "materials.manage"):
         return True
     return material.uploader_id == user.id
 

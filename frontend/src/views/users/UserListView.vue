@@ -1,27 +1,32 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import {
   createUserApi,
   deleteUserApi,
+  getUserPermissionsApi,
+  listPermissionCatalogApi,
   listUsersApi,
   patchUserApi,
+  putUserPermissionsApi,
   resetPasswordApi,
+  type PermissionGroup,
   type UserRow,
 } from '../../api/users'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
-import { useInfiniteScroll } from '../../composables/useInfiniteScroll'
+import { useCardAccordion } from '../../composables/useCardAccordion'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
+import { useServerPagedList } from '../../composables/useServerPagedList'
+import PcPagerBar from '../../components/PcPagerBar.vue'
 
 const LIST_STATE_KEY = 'oc-user-list-state'
-const PAGE_SIZES = [10, 20, 50, 100]
-const SCROLL_CHUNK = 10
 
 const route = useRoute()
 const auth = useAuthStore()
 const { isCompact } = useBreakpoint()
+const { isExpanded, toggle: toggleCard, toggleForce, collapseAll } = useCardAccordion()
 
 const pcHeaderStyle = {
   background: '#f5f0e6',
@@ -30,10 +35,6 @@ const pcHeaderStyle = {
   borderBottomColor: '#e8e0d0',
 }
 
-const loading = ref(false)
-const rows = ref<UserRow[]>([])
-const page = ref(1)
-const pageSize = ref(20)
 const filterExpanded = ref(false)
 
 const filters = reactive({
@@ -43,12 +44,55 @@ const filters = reactive({
   display_name: '',
 })
 
+const {
+  page,
+  pageSize,
+  total,
+  rows,
+  loading,
+  loadingMore,
+  hasMore: hasMoreInfinite,
+  PAGE_SIZES,
+  sentinelRef,
+  load: loadPage,
+  resetAndLoad,
+  onPageChange,
+  onPageSizeChange,
+  setupScrollObserver,
+} = useServerPagedList<UserRow>({
+  isCompact,
+  getId: (r) => r.id,
+  fetchPage: (p, size) =>
+    listUsersApi({
+      role: filters.role || undefined,
+      is_active:
+        filters.is_active === 'true' ? true : filters.is_active === 'false' ? false : undefined,
+      username: filters.username.trim() || undefined,
+      display_name: filters.display_name.trim() || undefined,
+      page: p,
+      page_size: size,
+    }),
+})
+
+/** PC / 移动端共用当前服务端页数据 */
+const pagedRows = computed(() => rows.value)
+const infiniteRows = computed(() => rows.value)
+const visibleCount = computed(() => rows.value.length)
+
 const createVisible = ref(false)
 const resetVisible = ref(false)
 const revealVisible = ref(false)
 const revealTitle = ref('')
 const revealUsername = ref('')
 const revealPassword = ref('')
+const permVisible = ref(false)
+const permLoading = ref(false)
+const permSaving = ref(false)
+const permTarget = ref<UserRow | null>(null)
+const permCatalog = ref<PermissionGroup[]>([])
+const permRoleDefaults = ref<Set<string>>(new Set())
+const permSelected = ref<string[]>([])
+const permIsAdmin = ref(false)
 
 const createFormRef = ref<FormInstance>()
 const resetFormRef = ref<FormInstance>()
@@ -78,6 +122,7 @@ const createRules: FormRules = {
           callback()
           return
         }
+        // 仅校验当前页；最终以后端唯一性校验为准
         const taken = rows.value.some((u) => (u.display_name || '').trim() === name)
         if (taken) {
           callback(new Error('显示名已存在，请更换'))
@@ -106,12 +151,14 @@ const roleLabel: Record<string, string> = {
   admin: '负责人',
   operator: '运营',
   teacher: '老师',
+  cr: 'CR（班主任，学管师）',
+  academic_manager: 'CR（班主任，学管师）',
 }
 
 function roleTagType(role: string): 'danger' | 'warning' | 'info' | 'success' {
   if (role === 'admin') return 'danger'
   if (role === 'operator') return 'warning'
-  if (role === 'teacher') return 'success'
+  if (role === 'teacher' || role === 'cr' || role === 'academic_manager') return 'success'
   return 'info'
 }
 
@@ -124,55 +171,11 @@ const activeFilterCount = computed(() => {
   return n
 })
 
-const totalPages = computed(() => Math.max(1, Math.ceil(rows.value.length / pageSize.value) || 1))
-
-const pagedRows = computed(() => {
-  const start = (page.value - 1) * pageSize.value
-  return rows.value.slice(start, start + pageSize.value)
-})
-
-const sentinelRef = ref<HTMLElement | null>(null)
-const {
-  displayRows: infiniteRows,
-  hasMore: hasMoreInfinite,
-  loadingMore,
-  visibleCount,
-  resetVisible: resetInfinite,
-  ensureVisible,
-} = useInfiniteScroll(rows, {
-  chunk: SCROLL_CHUNK,
-  enabled: isCompact,
-  sentinelRef,
-})
-
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('users', {
   visibleCount,
   enabled: isCompact,
+  stateStorageKey: LIST_STATE_KEY,
 })
-
-function clampPage() {
-  if (page.value > totalPages.value) page.value = totalPages.value
-  if (page.value < 1) page.value = 1
-}
-
-function goFirstPage() {
-  page.value = 1
-  saveListState()
-}
-
-function goLastPage() {
-  page.value = totalPages.value
-  saveListState()
-}
-
-function onPageChange() {
-  saveListState()
-}
-
-function onPageSizeChange() {
-  page.value = 1
-  saveListState()
-}
 
 function restoreListState() {
   try {
@@ -189,9 +192,11 @@ function restoreListState() {
       filters.username = s.filters.username ?? ''
       filters.display_name = s.filters.display_name ?? ''
     }
-    if (typeof s.page === 'number' && s.page > 0) page.value = s.page
-    if (typeof s.pageSize === 'number' && PAGE_SIZES.includes(s.pageSize)) {
-      pageSize.value = s.pageSize
+    if (!isCompact.value) {
+      if (typeof s.page === 'number' && s.page > 0) page.value = s.page
+      if (typeof s.pageSize === 'number' && PAGE_SIZES.includes(s.pageSize)) {
+        pageSize.value = s.pageSize
+      }
     }
   } catch {
     /* ignore */
@@ -213,52 +218,42 @@ function saveListState() {
   }
 }
 
-async function load(opts?: { resetPage?: boolean }) {
-  const snap = opts?.resetPage ? null : takeSnapshotForLoad(route.path)
-  if (opts?.resetPage) clearSnapshot()
-
-  loading.value = true
-  if (opts?.resetPage) page.value = 1
-  try {
-    const params: {
-      role?: string
-      is_active?: boolean
-      username?: string
-      display_name?: string
-    } = {}
-    if (filters.role) params.role = filters.role
-    if (filters.is_active === 'true') params.is_active = true
-    if (filters.is_active === 'false') params.is_active = false
-    if (filters.username.trim()) params.username = filters.username.trim()
-    if (filters.display_name.trim()) params.display_name = filters.display_name.trim()
-    rows.value = await listUsersApi(params)
-    if (opts?.resetPage) {
-      resetInfinite()
-    } else if (snap?.visibleCount != null && isCompact.value) {
-      ensureVisible(snap.visibleCount)
-    } else if (isCompact.value) {
-      resetInfinite()
-    }
-    clampPage()
-    saveListState()
-  } finally {
-    loading.value = false
-  }
-  void finishListEnter({ snap, forceTop: !!opts?.resetPage })
+async function load(opts?: { fromQuery?: boolean }) {
+  const snap = opts?.fromQuery ? null : takeSnapshotForLoad(route.path)
+  if (opts?.fromQuery) clearSnapshot()
+  await (opts?.fromQuery ? resetAndLoad() : loadPage())
+  saveListState()
+  void finishListEnter({ snap, forceTop: !!opts?.fromQuery })
 }
 
 function runQuery() {
+  clearSnapshot()
+  collapseAll()
   filterExpanded.value = false
-  load({ resetPage: true })
+  saveListState()
+  void load({ fromQuery: true })
 }
 
 function resetFilters() {
+  clearSnapshot()
+  collapseAll()
   filters.role = ''
   filters.is_active = ''
   filters.username = ''
   filters.display_name = ''
   filterExpanded.value = false
-  load({ resetPage: true })
+  saveListState()
+  void load({ fromQuery: true })
+}
+
+function onPcPageChange() {
+  onPageChange()
+  saveListState()
+}
+
+function onPcPageSizeChange() {
+  onPageSizeChange()
+  saveListState()
 }
 
 function toggleFilterExpand() {
@@ -290,6 +285,88 @@ function openReset(row: UserRow) {
   resetForm.new_password = ''
   resetVisible.value = true
 }
+
+async function ensurePermCatalog() {
+  if (permCatalog.value.length) return
+  permCatalog.value = await listPermissionCatalogApi()
+}
+
+async function openPermissions(row: UserRow) {
+  permTarget.value = row
+  permVisible.value = true
+  permLoading.value = true
+  permSelected.value = []
+  permRoleDefaults.value = new Set()
+  permIsAdmin.value = row.role === 'admin'
+  try {
+    await ensurePermCatalog()
+    const detail = await getUserPermissionsApi(row.id)
+    permIsAdmin.value = detail.role === 'admin'
+    permRoleDefaults.value = new Set(detail.role_defaults)
+    // UI shows role defaults + extras as checked; only extras are saved
+    const selected = new Set<string>([...detail.role_defaults, ...detail.extra_permissions])
+    permSelected.value = [...selected]
+  } catch {
+    permVisible.value = false
+  } finally {
+    permLoading.value = false
+  }
+}
+
+function isRoleDefault(code: string) {
+  return permRoleDefaults.value.has(code)
+}
+
+function permChecked(code: string) {
+  return permSelected.value.includes(code)
+}
+
+function togglePerm(code: string, checked: boolean) {
+  if (permIsAdmin.value || isRoleDefault(code)) return
+  const set = new Set(permSelected.value)
+  if (checked) set.add(code)
+  else set.delete(code)
+  permSelected.value = [...set]
+}
+
+function onPermItemClick(code: string) {
+  if (permIsAdmin.value || isRoleDefault(code)) return
+  togglePerm(code, !permChecked(code))
+}
+
+function groupCheckedCount(g: PermissionGroup) {
+  return g.permissions.filter((p) => permChecked(p.code)).length
+}
+
+const permExtraSelectedCount = computed(
+  () => permSelected.value.filter((c) => !permRoleDefaults.value.has(c)).length,
+)
+
+const permTargetRoleLabel = computed(() => {
+  const role = permTarget.value?.role || ''
+  return roleLabel[role] || role
+})
+
+async function submitPermissions() {
+  if (!permTarget.value || permIsAdmin.value) {
+    permVisible.value = false
+    return
+  }
+  permSaving.value = true
+  try {
+    const extras = permSelected.value.filter((c) => !permRoleDefaults.value.has(c))
+    await putUserPermissionsApi(permTarget.value.id, extras)
+    ElMessage.success('权限已更新')
+    permVisible.value = false
+    await load()
+  } catch {
+    /* interceptor */
+  } finally {
+    permSaving.value = false
+  }
+}
+
+const extraPermCount = (row: UserRow) => (row.extra_permissions || []).length
 
 async function submitCreate() {
   const ok = await createFormRef.value?.validate().catch(() => false)
@@ -370,11 +447,10 @@ async function copyText(text: string) {
   }
 }
 
-watch(pageSize, () => clampPage())
-
-onMounted(() => {
+onMounted(async () => {
   restoreListState()
-  load()
+  await load()
+  if (sentinelRef.value) setupScrollObserver()
 })
 </script>
 
@@ -399,7 +475,7 @@ onMounted(() => {
           <div class="pc-list-summary">
             <span class="pc-list-summary__label">系统账号</span>
             <span class="pc-list-summary__count">
-              共 <strong>{{ rows.length }}</strong> 人
+              共 <strong>{{ total }}</strong> 人
             </span>
           </div>
         </div>
@@ -409,6 +485,7 @@ onMounted(() => {
               <el-option label="负责人" value="admin" />
               <el-option label="运营" value="operator" />
               <el-option label="老师" value="teacher" />
+              <el-option label="CR（班主任，学管师）" value="cr" />
             </el-select>
           </el-form-item>
           <el-form-item label="状态">
@@ -472,6 +549,7 @@ onMounted(() => {
           <el-option label="负责人" value="admin" />
           <el-option label="运营" value="operator" />
           <el-option label="老师" value="teacher" />
+          <el-option label="CR（班主任，学管师）" value="cr" />
         </el-select>
         <el-select
           v-model="filters.is_active"
@@ -506,11 +584,16 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- 移动卡片 -->
+    <!-- 移动卡片（互斥折叠） -->
     <div v-loading="loading" class="user-m user-card-list">
       <div v-if="!rows.length && !loading" class="user-card user-card--empty">暂无用户</div>
-      <div v-for="row in infiniteRows" :key="row.id" class="user-card">
-        <div class="user-card__top">
+      <div
+        v-for="row in infiniteRows"
+        :key="row.id"
+        class="user-card"
+        :class="{ 'is-expanded': isExpanded(row.id) }"
+      >
+        <div class="user-card__top" @click="toggleCard(row.id, $event)">
           <div class="user-card__avatar">{{ nameInitial(row) }}</div>
           <div class="user-card__who">
             <div class="user-card__name">{{ row.display_name || row.username }}</div>
@@ -526,29 +609,45 @@ onMounted(() => {
               {{ row.is_active ? '启用' : '停用' }}
             </el-tag>
           </div>
+          <button
+            type="button"
+            class="m-card-acc-toggle"
+            :aria-expanded="isExpanded(row.id)"
+            @click.stop="toggleForce(row.id)"
+          >
+            <el-icon class="m-card-acc-chevron" :class="{ 'is-open': isExpanded(row.id) }">
+              <ArrowDown />
+            </el-icon>
+          </button>
         </div>
 
-        <div class="user-card__actions">
-          <el-button size="small" type="primary" @click="openReset(row)">重置密码</el-button>
-          <el-button size="small" type="warning" plain @click="toggleActive(row)">
-            {{ row.is_active ? '停用' : '启用' }}
-          </el-button>
-          <el-button
-            size="small"
-            type="danger"
-            plain
-            :disabled="auth.user?.id === row.id"
-            @click="onDelete(row)"
-          >
-            删除
-          </el-button>
+        <div v-show="isExpanded(row.id)" class="m-card-acc-body">
+          <div class="user-card__actions user-card__actions--4">
+            <el-button size="small" type="primary" @click="openPermissions(row)">授权</el-button>
+            <el-button size="small" type="primary" plain @click="openReset(row)">重置密码</el-button>
+            <el-button size="small" type="warning" plain @click="toggleActive(row)">
+              {{ row.is_active ? '停用' : '启用' }}
+            </el-button>
+            <el-button
+              size="small"
+              type="danger"
+              plain
+              :disabled="auth.user?.id === row.id"
+              @click="onDelete(row)"
+            >
+              删除
+            </el-button>
+          </div>
+          <div v-if="extraPermCount(row)" class="user-card__perm-hint">
+            额外授权 {{ extraPermCount(row) }} 项
+          </div>
         </div>
       </div>
-      <div v-if="rows.length" ref="sentinelRef" class="scroll-sentinel">
+      <div v-if="rows.length || hasMoreInfinite" ref="sentinelRef" class="scroll-sentinel">
         <span v-if="hasMoreInfinite || loadingMore" class="scroll-hint">
           {{ loadingMore ? '加载中…' : '上拉加载更多' }}
         </span>
-        <span v-else class="scroll-hint">已加载全部 {{ rows.length }} 人</span>
+        <span v-else class="scroll-hint">已加载全部 {{ total }} 人</span>
       </div>
     </div>
 
@@ -584,6 +683,21 @@ onMounted(() => {
                 </el-tag>
               </template>
             </el-table-column>
+            <el-table-column label="额外权限" width="100" align="center">
+              <template #default="{ row }">
+                <span v-if="row.role === 'admin'" class="pc-perm-all">全部</span>
+                <el-tag
+                  v-else-if="extraPermCount(row)"
+                  type="warning"
+                  size="small"
+                  effect="plain"
+                  round
+                >
+                  +{{ extraPermCount(row) }}
+                </el-tag>
+                <span v-else class="pc-perm-none">—</span>
+              </template>
+            </el-table-column>
             <el-table-column label="状态" width="88" align="center">
               <template #default="{ row }">
                 <el-tag
@@ -596,9 +710,10 @@ onMounted(() => {
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="240" fixed="right" align="right">
+            <el-table-column label="操作" width="300" fixed="right" align="right">
               <template #default="{ row }">
                 <div class="pc-ops">
+                  <el-button link type="primary" @click="openPermissions(row)">授权</el-button>
                   <el-button link type="primary" @click="openReset(row)">重置密码</el-button>
                   <el-button link type="warning" @click="toggleActive(row)">
                     {{ row.is_active ? '停用' : '启用' }}
@@ -618,21 +733,14 @@ onMounted(() => {
         </div>
       </el-card>
 
-      <div v-if="rows.length" class="pager-bar pc-pager">
-        <el-button size="small" plain :disabled="page <= 1" @click="goFirstPage">首页</el-button>
-        <el-pagination
-          v-model:current-page="page"
-          v-model:page-size="pageSize"
-          :page-sizes="PAGE_SIZES"
-          :total="rows.length"
-          :pager-count="5"
-          background
-          layout="total, sizes, prev, pager, next, jumper"
-          @current-change="onPageChange"
-          @size-change="onPageSizeChange"
-        />
-        <el-button size="small" plain :disabled="page >= totalPages" @click="goLastPage">末页</el-button>
-      </div>
+      <PcPagerBar
+        v-model:page="page"
+        v-model:page-size="pageSize"
+        :total="total"
+        :page-sizes="PAGE_SIZES"
+        @change="onPcPageChange"
+        @size-change="onPcPageSizeChange"
+      />
     </div>
 
     <el-dialog
@@ -655,6 +763,7 @@ onMounted(() => {
             <el-option label="负责人" value="admin" />
             <el-option label="运营" value="operator" />
             <el-option label="老师" value="teacher" />
+            <el-option label="CR（班主任，学管师）" value="cr" />
           </el-select>
         </el-form-item>
         <el-form-item label="初始密码" prop="password">
@@ -709,6 +818,119 @@ onMounted(() => {
       <template #footer>
         <el-button @click="copyText(`${revealUsername} / ${revealPassword}`)">复制账号密码</el-button>
         <el-button type="primary" @click="revealVisible = false">已保存，关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="permVisible"
+      width="92%"
+      style="max-width: 720px"
+      align-center
+      destroy-on-close
+      class="user-dialog perm-dialog"
+    >
+      <template #header>
+        <div class="perm-head">
+          <div class="perm-head__title">授权管理</div>
+          <div v-if="permTarget" class="perm-head__sub">
+            <span class="perm-head__name">{{ permTarget.display_name || permTarget.username }}</span>
+            <el-tag
+              :type="roleTagType(permTarget.role)"
+              size="small"
+              effect="plain"
+              round
+            >
+              {{ permTargetRoleLabel }}
+            </el-tag>
+            <span class="perm-head__uname">@{{ permTarget.username }}</span>
+          </div>
+        </div>
+      </template>
+
+      <div v-loading="permLoading" class="perm-body">
+        <el-alert
+          v-if="permIsAdmin"
+          type="info"
+          :closable="false"
+          show-icon
+          title="负责人角色默认拥有全部权限，无需单独下发。"
+        />
+        <template v-else>
+          <div class="perm-summary">
+            <div class="perm-summary__item">
+              <span class="perm-summary__label">角色自带</span>
+              <b>{{ permRoleDefaults.size }}</b>
+              <span class="perm-summary__unit">项</span>
+            </div>
+            <span class="perm-summary__sep" aria-hidden="true" />
+            <div class="perm-summary__item">
+              <span class="perm-summary__label">额外授权</span>
+              <b>{{ permExtraSelectedCount }}</b>
+              <span class="perm-summary__unit">项</span>
+            </div>
+            <p class="perm-summary__tip">
+              勾选增加权限，取消收回额外授权。「角色自带」不可取消，需改角色。
+            </p>
+          </div>
+
+          <div v-for="g in permCatalog" :key="g.group" class="perm-group">
+            <div class="perm-group__head">
+              <span class="perm-group__title">{{ g.group_label }}</span>
+              <span class="perm-group__count">
+                {{ groupCheckedCount(g) }}/{{ g.permissions.length }}
+              </span>
+            </div>
+            <div class="perm-group__grid">
+              <div
+                v-for="p in g.permissions"
+                :key="p.code"
+                class="perm-item"
+                :class="{
+                  'is-default': isRoleDefault(p.code),
+                  'is-checked': permChecked(p.code) && !isRoleDefault(p.code),
+                  'is-disabled': isRoleDefault(p.code),
+                }"
+                role="button"
+                :tabindex="isRoleDefault(p.code) ? -1 : 0"
+                @click="onPermItemClick(p.code)"
+                @keydown.enter.prevent="onPermItemClick(p.code)"
+                @keydown.space.prevent="onPermItemClick(p.code)"
+              >
+                <el-checkbox
+                  :model-value="permChecked(p.code)"
+                  :disabled="isRoleDefault(p.code)"
+                  @click.stop
+                  @change="(v: boolean | string | number) => togglePerm(p.code, !!v)"
+                />
+                <div class="perm-item__main">
+                  <div class="perm-item__label">{{ p.label }}</div>
+                  <div v-if="p.description" class="perm-item__desc">{{ p.description }}</div>
+                </div>
+                <el-tag
+                  v-if="isRoleDefault(p.code)"
+                  size="small"
+                  effect="plain"
+                  type="info"
+                  round
+                  class="perm-item__badge"
+                >
+                  角色自带
+                </el-tag>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+      <template #footer>
+        <el-button @click="permVisible = false">{{ permIsAdmin ? '关闭' : '取消' }}</el-button>
+        <el-button
+          v-if="!permIsAdmin"
+          type="primary"
+          :loading="permSaving"
+          @click="submitPermissions"
+        >
+          保存授权
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -1007,6 +1229,9 @@ onMounted(() => {
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
 
 .user-card__avatar {
@@ -1062,9 +1287,19 @@ onMounted(() => {
   margin-top: 12px;
 }
 
+.user-card__actions--4 {
+  grid-template-columns: 1fr 1fr;
+}
+
 .user-card__actions .el-button {
   margin: 0;
   width: 100%;
+}
+
+.user-card__perm-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--oc-primary, #a16207);
 }
 
 .scroll-sentinel {
@@ -1162,6 +1397,16 @@ onMounted(() => {
   color: var(--oc-ink, #44403c);
 }
 
+.pc-perm-all {
+  font-size: 12px;
+  color: var(--oc-primary, #a16207);
+  font-weight: 600;
+}
+
+.pc-perm-none {
+  color: #a8a29e;
+}
+
 @media (max-width: 991px) {
   .user-toolbar {
     flex-wrap: wrap;
@@ -1180,5 +1425,245 @@ onMounted(() => {
 <style>
 .user-m-select-popper {
   z-index: 5000 !important;
+}
+
+/* 授权弹窗：非 scoped，避免 teleport 后布局样式偶发失效 */
+.perm-dialog .perm-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 28px;
+  min-width: 0;
+}
+
+.perm-dialog .perm-head__title {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--oc-ink, #44403c);
+  line-height: 1.3;
+}
+
+.perm-dialog .perm-head__sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.perm-dialog .perm-head__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--oc-ink, #44403c);
+}
+
+.perm-dialog .perm-head__uname {
+  font-size: 12px;
+  color: var(--oc-muted, #78716c);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.perm-dialog .perm-body {
+  min-height: 120px;
+  max-height: min(64vh, 560px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 2px 2px 4px 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+.perm-dialog .perm-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #faf6ee 0%, #f5f0e6 100%);
+  border: 1px solid var(--oc-border, #e8e0d0);
+}
+
+.perm-dialog .perm-summary__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--oc-muted, #78716c);
+}
+
+.perm-dialog .perm-summary__label {
+  font-weight: 500;
+}
+
+.perm-dialog .perm-summary__item b {
+  color: var(--oc-primary, #a16207);
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.perm-dialog .perm-summary__unit {
+  font-size: 12px;
+}
+
+.perm-dialog .perm-summary__sep {
+  width: 1px;
+  height: 14px;
+  background: #e0d5c4;
+  flex-shrink: 0;
+}
+
+.perm-dialog .perm-summary__tip {
+  flex: 1 1 100%;
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--oc-muted, #78716c);
+}
+
+.perm-dialog .perm-group {
+  margin-bottom: 12px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 12px;
+  background: var(--oc-card, #fffdf8);
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(41, 37, 36, 0.03);
+}
+
+.perm-dialog .perm-group:last-child {
+  margin-bottom: 0;
+}
+
+.perm-dialog .perm-group__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, #faf6ee 0%, #f5efe3 100%);
+  border-bottom: 1px solid var(--oc-border, #e8e0d0);
+}
+
+.perm-dialog .perm-group__title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--oc-ink, #44403c);
+  letter-spacing: 0.02em;
+}
+
+.perm-dialog .perm-group__count {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--oc-primary, #a16207);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(161, 98, 7, 0.1);
+}
+
+.perm-dialog .perm-group__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+
+@media (min-width: 640px) {
+  .perm-dialog .perm-group__grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .perm-dialog .perm-group__grid .perm-item:nth-child(odd) {
+    border-right: 1px solid #f0e9dc;
+  }
+}
+
+.perm-dialog .perm-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #f0e9dc;
+  cursor: pointer;
+  transition: background 0.12s ease;
+  min-width: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.perm-dialog .perm-item:last-child {
+  border-bottom: none;
+}
+
+@media (min-width: 640px) {
+  .perm-dialog .perm-group__grid .perm-item:nth-last-child(2):nth-child(odd) {
+    border-bottom: none;
+  }
+}
+
+.perm-dialog .perm-item:hover:not(.is-disabled) {
+  background: rgba(161, 98, 7, 0.05);
+}
+
+.perm-dialog .perm-item.is-checked {
+  background: rgba(161, 98, 7, 0.08);
+}
+
+.perm-dialog .perm-item.is-checked:hover:not(.is-disabled) {
+  background: rgba(161, 98, 7, 0.11);
+}
+
+.perm-dialog .perm-item.is-default,
+.perm-dialog .perm-item.is-disabled {
+  background: #faf8f3;
+  cursor: default;
+  opacity: 0.9;
+}
+
+.perm-dialog .perm-item__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.perm-dialog .perm-item__label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--oc-ink, #44403c);
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.perm-dialog .perm-item__desc {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--oc-muted, #78716c);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.perm-dialog .perm-item__badge {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.perm-dialog .perm-item .el-checkbox {
+  height: auto;
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+.perm-dialog .el-dialog__header {
+  padding-bottom: 12px;
+  margin-right: 0;
+}
+
+.perm-dialog .el-dialog__body {
+  padding-top: 8px;
+}
+
+.perm-dialog .el-dialog__footer {
+  padding-top: 12px;
 }
 </style>

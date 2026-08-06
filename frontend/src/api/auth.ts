@@ -6,6 +6,10 @@ export interface UserInfo {
   display_name: string
   role: string
   is_active: boolean
+  /** Effective permissions = role defaults ∪ extra grants */
+  permissions?: string[]
+  /** Extra grants beyond role (admin empty) */
+  extra_permissions?: string[]
 }
 
 export interface LoginResult {

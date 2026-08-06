@@ -1,11 +1,12 @@
 import json
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.security import hash_password
+from app.core.timeutil import now as _utcnow
 from app.models.knowledge import KnowledgeEntry
 from app.models.lead import Lead
 from app.models.student import Student
@@ -80,17 +81,13 @@ SOURCES = ["referral", "dianping", "wechat", "walkin", "other"]
 LEAD_STATUSES = ["new", "contacted", "visited", "enrolled", "lost"]
 NEEDS = ["数学提高", "英语口语", "语文阅读", "物理补弱", "试听咨询", "假期集训", "一对一"]
 
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
 def seed_demo_users(db: Session) -> None:
     """Idempotent: create demo users if missing; do not overwrite existing passwords."""
     settings = get_settings()
     demos = [
         (settings.seed_admin_username, settings.seed_admin_password, "负责人", "admin"),
         (settings.seed_ops_username, settings.seed_ops_password, "运营", "operator"),
+        # Keep the legacy demo login stable; new accounts should use CR.
         (settings.seed_teacher_username, settings.seed_teacher_password, "老师甲", "teacher"),
     ]
     for username, password, display_name, role in demos:
@@ -108,9 +105,8 @@ def seed_demo_users(db: Session) -> None:
         )
     db.commit()
 
-
 def seed_extra_teachers(db: Session, count: int = 10) -> None:
-    """Ensure at least `count` extra demo teachers (teacher2..)."""
+    """Ensure at least `count` extra demo teachers (teacher2..).密码与用户名相同。"""
     created = 0
     for i in range(2, count + 2):
         username = f"teacher{i}"
@@ -119,7 +115,7 @@ def seed_extra_teachers(db: Session, count: int = 10) -> None:
         db.add(
             User(
                 username=username,
-                password_hash=hash_password(f"t{i}1234"),
+                password_hash=hash_password(username),
                 display_name=f"老师{SURNAMES[i % len(SURNAMES)]}{GIVEN[i % len(GIVEN)][:1]}",
                 role="teacher",
                 is_active=True,
@@ -129,6 +125,124 @@ def seed_extra_teachers(db: Session, count: int = 10) -> None:
     if created:
         db.commit()
 
+def seed_extra_crs(db: Session, count: int = 10) -> None:
+    """Ensure cr1..crN demo 学管师 accounts (role=cr)。密码与用户名相同。"""
+    created = 0
+    for i in range(1, count + 1):
+        username = f"cr{i}"
+        if db.query(User).filter(User.username == username).first():
+            continue
+        surname = SURNAMES[(i * 3) % len(SURNAMES)]
+        given = GIVEN[(i * 5) % len(GIVEN)]
+        db.add(
+            User(
+                username=username,
+                password_hash=hash_password(username),
+                display_name=f"学管{surname}{given}",
+                role="cr",
+                is_active=True,
+            )
+        )
+        created += 1
+    if created:
+        db.commit()
+
+def _active_crs(db: Session) -> list[User]:
+    return (
+        db.query(User)
+        .filter(
+            User.role.in_(["cr", "academic_manager"]),
+            User.is_active.is_(True),
+            User.deleted_at.is_(None),
+        )
+        .order_by(User.id.asc())
+        .all()
+    )
+
+def reassign_students_to_crs(db: Session) -> int:
+    """把仍挂在老师/空学管上的学员改派到 CR（学管师）账号。"""
+    crs = _active_crs(db)
+    if not crs:
+        return 0
+    students = db.query(Student).order_by(Student.id.asc()).all()
+    changed = 0
+    for i, s in enumerate(students):
+        mgr = db.get(User, s.academic_manager_id) if s.academic_manager_id else None
+        if (
+            mgr
+            and mgr.deleted_at is None
+            and mgr.is_active
+            and mgr.role in {"cr", "academic_manager"}
+        ):
+            continue
+        s.academic_manager_id = crs[i % len(crs)].id
+        changed += 1
+    if changed:
+        db.commit()
+    return changed
+
+def cleanup_junk_demo_students(db: Session) -> int:
+    """清理明显脏数据学员名：无业务关联则删除，有关联则改成正常演示姓名。"""
+    from sqlalchemy import text
+
+    junk_names = {
+        "A",
+        "a",
+        "111",
+        "112",
+        "123",
+        "奥特曼",
+        "第阿萨大大",
+        "张三",
+        "思维英语学生1",
+        "小雨",
+    }
+    students = db.query(Student).order_by(Student.id.asc()).all()
+    changed = 0
+    rename_i = 0
+    for s in students:
+        name = (s.name or "").strip()
+        bare = name.removeprefix("【待整理】").strip() if name.startswith("【待整理】") else name
+        is_junk = (
+            bare in junk_names
+            or (bare.isdigit() and len(bare) <= 4)
+            or len(bare) <= 1
+            or name.startswith("【待整理】")
+        )
+        if not is_junk:
+            continue
+        linked = False
+        for sql in (
+            "SELECT 1 FROM enrollment_records WHERE student_id = :id LIMIT 1",
+            "SELECT 1 FROM student_course_packages WHERE student_id = :id LIMIT 1",
+            "SELECT 1 FROM course_consumptions WHERE student_id = :id LIMIT 1",
+            "SELECT 1 FROM finance_orders WHERE student_id = :id LIMIT 1",
+            "SELECT 1 FROM learning_records WHERE student_id = :id LIMIT 1",
+            "SELECT 1 FROM class_members WHERE student_id = :id LIMIT 1",
+        ):
+            try:
+                if db.execute(text(sql), {"id": s.id}).first():
+                    linked = True
+                    break
+            except Exception:
+                continue
+        if linked:
+            new_name = f"{SURNAMES[rename_i % len(SURNAMES)]}{GIVEN[rename_i % len(GIVEN)]}"
+            rename_i += 1
+            s.name = new_name
+            if s.notes and "[脏数据已标记]" in s.notes:
+                s.notes = s.notes.replace("[脏数据已标记]", "").strip()
+            changed += 1
+            continue
+        try:
+            db.query(Student).filter(Student.id == s.id).delete(synchronize_session=False)
+            changed += 1
+        except Exception:
+            db.rollback()
+            continue
+    if changed:
+        db.commit()
+    return changed
 
 def seed_system_templates(db: Session) -> None:
     has_system_copy = (
@@ -161,7 +275,6 @@ def seed_system_templates(db: Session) -> None:
             )
         )
     db.commit()
-
 
 def seed_sample_knowledge(db: Session) -> None:
     # 清理已废弃分类（tone / course / faq 等）
@@ -230,7 +343,6 @@ def seed_sample_knowledge(db: Session) -> None:
         )
     db.commit()
 
-
 def migrate_brand_name(db: Session, old: str = "壹号教室", new: str = "嘉壹启航") -> None:
     """Replace legacy brand string in stored text (knowledge, copies, posters, etc.)."""
     from sqlalchemy import text
@@ -260,7 +372,6 @@ def migrate_brand_name(db: Session, old: str = "壹号教室", new: str = "嘉�
     if changed:
         db.commit()
 
-
 def seed_demo_leads(db: Session, target: int = 20) -> None:
     current = db.query(Lead).count()
     if current >= target:
@@ -284,20 +395,19 @@ def seed_demo_leads(db: Session, target: int = 20) -> None:
         )
     db.commit()
 
-
 def seed_demo_students(db: Session, target: int = 40) -> None:
     current = db.query(Student).count()
     if current >= target:
         return
-    teachers = db.query(User).filter(User.role == "teacher", User.is_active.is_(True)).all()
-    if not teachers:
+    managers = _active_crs(db)
+    if not managers:
         return
     admin = db.query(User).filter(User.role == "admin").first()
     need = target - current
     rng = random.Random(99 + current)
     statuses = ["active", "active", "active", "paused", "graduated"]
     for i in range(need):
-        t = rng.choice(teachers)
+        m = managers[i % len(managers)]
         db.add(
             Student(
                 name=f"{rng.choice(SURNAMES)}{rng.choice(GIVEN)}",
@@ -305,14 +415,13 @@ def seed_demo_students(db: Session, target: int = 40) -> None:
                 school=rng.choice(SCHOOLS),
                 phone=f"138{rng.randint(10000000, 99999999)}",
                 parent_name=f"{rng.choice(SURNAMES)}妈妈",
-                academic_manager_id=t.id,
+                academic_manager_id=m.id,
                 status=rng.choice(statuses),
                 notes=rng.choice(["注意力需加强", "作业习惯好", "家长沟通顺畅", ""]),
-                created_by=admin.id if admin else t.id,
+                created_by=admin.id if admin else m.id,
             )
         )
     db.commit()
-
 
 def migrate_user_deleted_at(db: Session) -> None:
     """Add users.deleted_at for soft-delete (existing SQLite DBs won't get it from create_all)."""
@@ -328,22 +437,171 @@ def migrate_user_deleted_at(db: Session) -> None:
     db.execute(text("ALTER TABLE users ADD COLUMN deleted_at DATETIME"))
     db.commit()
 
+def migrate_enrollment_courses(db: Session) -> None:
+    """Add enrollment_records.courses JSON column for existing SQLite DBs."""
+    from sqlalchemy import text
+
+    try:
+        cols = db.execute(text("PRAGMA table_info(enrollment_records)")).fetchall()
+    except Exception:
+        return
+    if not cols:
+        return
+    names = {c[1] for c in cols}
+    if "courses" in names:
+        return
+    db.execute(text("ALTER TABLE enrollment_records ADD COLUMN courses TEXT DEFAULT '[]'"))
+    db.commit()
+
+def _sqlite_add_column(db: Session, table: str, column: str, ddl: str) -> None:
+    """Idempotent ALTER TABLE ADD COLUMN for SQLite."""
+    from sqlalchemy import text
+
+    try:
+        cols = db.execute(text(f"PRAGMA table_info({table})")).fetchall()
+    except Exception:
+        return
+    if not cols:
+        return
+    names = {c[1] for c in cols}
+    if column in names:
+        return
+    db.execute(text(f"ALTER TABLE {table} ADD COLUMN {ddl}"))
+    db.commit()
+
+def migrate_enrollment_order_pay(db: Session) -> None:
+    """报名记录：订单号 + 支付方式（既有库补列）。"""
+    _sqlite_add_column(db, "enrollment_records", "order_no", "order_no VARCHAR(32) DEFAULT ''")
+    _sqlite_add_column(db, "enrollment_records", "pay_methods", "pay_methods TEXT DEFAULT '[]'")
+    _sqlite_add_column(db, "enrollment_records", "pay_other", "pay_other VARCHAR(128) DEFAULT ''")
+
+def migrate_student_linked_courses(db: Session) -> None:
+    """学员档案：关联课程快照。"""
+    _sqlite_add_column(db, "students", "linked_courses", "linked_courses TEXT DEFAULT '[]'")
+
+def migrate_lead_contact_fields(db: Session) -> None:
+    """线索：最近联系信息（既有库补列；协作/动态表由 create_all 新建）。"""
+    _sqlite_add_column(db, "leads", "last_contact_at", "last_contact_at DATETIME")
+    _sqlite_add_column(db, "leads", "last_contact_by", "last_contact_by INTEGER")
+    _sqlite_add_column(db, "leads", "last_contact_method", "last_contact_method VARCHAR(32) DEFAULT ''")
+
+def migrate_class_default_room(db: Session) -> None:
+    """班级默认上课教室。"""
+    _sqlite_add_column(db, "class_rooms", "default_room", "default_room VARCHAR(128) DEFAULT ''")
+
+def migrate_class_record_salary_hours(db: Session) -> None:
+    """点名记录新增计薪课时；历史数据按原授课课时回填。"""
+    from sqlalchemy import text
+
+    try:
+        cols = db.execute(text("PRAGMA table_info(class_records)")).fetchall()
+    except Exception:
+        return
+    if not cols:
+        return
+    names = {c[1] for c in cols}
+    if "salary_hours" in names:
+        return
+    db.execute(text("ALTER TABLE class_records ADD COLUMN salary_hours FLOAT DEFAULT 1"))
+    db.execute(text("UPDATE class_records SET salary_hours = 1"))
+    db.commit()
+
+def migrate_course_package_metadata(db: Session) -> None:
+    """课包购买明细与课消分配（兼容既有 SQLite 数据库）。"""
+    _sqlite_add_column(
+        db,
+        "student_course_packages",
+        "purchased_hours",
+        "purchased_hours FLOAT DEFAULT 0",
+    )
+    _sqlite_add_column(
+        db,
+        "student_course_packages",
+        "gift_hours",
+        "gift_hours FLOAT DEFAULT 0",
+    )
+    _sqlite_add_column(
+        db,
+        "student_course_packages",
+        "valid_until",
+        "valid_until DATE",
+    )
+    _sqlite_add_column(
+        db,
+        "course_consumptions",
+        "package_allocations",
+        "package_allocations TEXT DEFAULT '[]'",
+    )
+    _sqlite_add_column(
+        db,
+        "course_consumptions",
+        "uncovered_hours",
+        "uncovered_hours FLOAT DEFAULT 0",
+    )
+
+def migrate_user_extra_permissions(db: Session) -> None:
+    """用户额外授权码列表（JSON 数组；既有库补列）。"""
+    _sqlite_add_column(db, "users", "extra_permissions", "extra_permissions TEXT DEFAULT '[]'")
 
 def seed_essentials(db: Session) -> None:
     """Always: login accounts, system templates, sample knowledge, brand fix."""
     migrate_user_deleted_at(db)
+    migrate_user_extra_permissions(db)
+    migrate_enrollment_courses(db)
+    migrate_enrollment_order_pay(db)
+    migrate_student_linked_courses(db)
+    migrate_lead_contact_fields(db)
+    migrate_class_default_room(db)
+    migrate_class_record_salary_hours(db)
+    migrate_course_package_metadata(db)
     seed_demo_users(db)
     seed_system_templates(db)
     seed_sample_knowledge(db)
     migrate_brand_name(db)
 
+def seed_demo_courses(db: Session) -> None:
+    """Idempotent sample courses for 教务/报名联调."""
+    from app.models.academic import Course
+
+    samples = [
+        ("初一物理一对一", "one_to_one", "初一", "物理", 1000),
+        ("初一数学一对一", "one_to_one", "初一", "数学", 1000),
+        ("高一英语一对一", "one_to_one", "高一", "英语", 2000),
+        ("初二英语班课", "group", "初二", "英语", 220),
+        ("初二数学班课", "group", "初二", "数学", 240),
+        ("新高一物理班课", "group", "高一", "物理", 350),
+        ("新高一数学班课", "group", "高一", "数学", 500),
+        ("预初数学班课", "group", "预初", "数学", 300),
+    ]
+    for name, ctype, grade, subject, price in samples:
+        exists = db.query(Course).filter(Course.name == name).first()
+        if exists:
+            continue
+        db.add(
+            Course(
+                name=name,
+                course_type=ctype,
+                grade=grade,
+                subject=subject,
+                term="2026暑假",
+                billing_mode="hour",
+                unit_price=float(price),
+                leave_rule="no_deduct",
+                absent_rule="no_deduct",
+                enabled=True,
+            )
+        )
+    db.commit()
 
 def seed_demo_business(db: Session) -> None:
-    """Development/test only: fake teachers, leads, students for UI 联调."""
+    """Development/test only: fake teachers/CRs, leads, students for UI 联调."""
     seed_extra_teachers(db, count=10)
+    seed_extra_crs(db, count=10)
     seed_demo_leads(db, target=20)
+    cleanup_junk_demo_students(db)
+    reassign_students_to_crs(db)
     seed_demo_students(db, target=40)
-
+    seed_demo_courses(db)
 
 def seed_all(db: Session) -> None:
     """

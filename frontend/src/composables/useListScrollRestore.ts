@@ -23,8 +23,9 @@ const DETAIL_MATCHERS: Record<string, (toPath: string) => boolean> = {
   copies: (p) => /^\/copies\/\d+\/?$/.test(p),
   materials: (p) => /^\/materials\/\d+\/?$/.test(p),
   posters: () => false,
-  leads: () => false,
+  leads: (p) => /^\/leads\/\d+\/?$/.test(p),
   students: (p) => /^\/students\/\d+\/?$/.test(p),
+  orders: (p) => /^\/finance\/orders\/\d+\/?$/.test(p),
   users: () => false,
   knowledge: () => false,
   templates: (p) =>
@@ -44,6 +45,7 @@ const LIST_PATH_MATCHERS: Record<string, (path: string) => boolean> = {
   posters: (p) => p === '/posters' || p === '/posters/',
   leads: (p) => p === '/leads' || p === '/leads/',
   students: (p) => p === '/students' || p === '/students/',
+  orders: (p) => p === '/finance/orders' || p === '/finance/orders/',
   users: (p) => p === '/users' || p === '/users/',
   knowledge: (p) => p.startsWith('/knowledge'),
   templates: (p) => p === '/templates' || p === '/templates/',
@@ -103,6 +105,23 @@ export function clearListScrollSnapshot(listKey: string) {
   }
 }
 
+function clearSessionState(stateStorageKey: string) {
+  try {
+    sessionStorage.removeItem(stateStorageKey)
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 详情页仅在返回原列表时保留筛选，转去其他模块则清除。 */
+export function useListDetailStateCleanup(listKey: string, stateStorageKey: string) {
+  onBeforeRouteLeave((to) => {
+    if (isCurrentListPath(listKey, to.path)) return
+    clearListScrollSnapshot(listKey)
+    clearSessionState(stateStorageKey)
+  })
+}
+
 /**
  * wap/pad 列表滚动恢复：
  * - 仅「列表 → 本模块详情 → 返回列表」恢复
@@ -113,10 +132,13 @@ export function useListScrollRestore(
   options?: {
     visibleCount?: Ref<number>
     enabled?: Ref<boolean>
+    /** 列表筛选/分页状态键；切换到其他模块时与滚动快照一起清除。 */
+    stateStorageKey?: string
   },
 ) {
   const visibleCount = options?.visibleCount
   const enabled = options?.enabled
+  const stateStorageKey = options?.stateStorageKey
 
   function isEnabled() {
     return !enabled || enabled.value
@@ -160,6 +182,11 @@ export function useListScrollRestore(
 
   function clearSnapshot() {
     clearListScrollSnapshot(listKey)
+  }
+
+  function clearStoredListState() {
+    if (!stateStorageKey) return
+    clearSessionState(stateStorageKey)
   }
 
   /** 切换模块 / 查询：主区强制回顶（.main 跨路由不卸载，会带着旧 scrollTop） */
@@ -214,17 +241,21 @@ export function useListScrollRestore(
   }
 
   onBeforeRouteLeave((to, from) => {
+    const enteringDetail =
+      isListDetailNavigation(listKey, to.path) && isCurrentListPath(listKey, from.path)
     if (!isEnabled()) {
       clearSnapshot()
+      if (!enteringDetail) clearStoredListState()
       return
     }
     // 只有进入「本列表的详情」才记位置
-    if (isListDetailNavigation(listKey, to.path) && isCurrentListPath(listKey, from.path)) {
+    if (enteringDetail) {
       saveSnapshot(from.path)
       return
     }
     // 侧栏切换到其它模块 / 工作台等：清掉，禁止下次误恢复
     clearSnapshot()
+    clearStoredListState()
   })
 
   return {
@@ -233,6 +264,7 @@ export function useListScrollRestore(
     finishListEnter,
     resetScrollToTop,
     clearSnapshot,
+    clearStoredListState,
     /** @deprecated 使用 finishListEnter */
     restoreScroll: async (overrideTop?: number) => {
       const snap = readListScrollSnapshot(listKey)

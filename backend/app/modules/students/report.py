@@ -13,6 +13,7 @@ from PIL import Image
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.storage import Storage, get_storage
+from app.core.timeutil import now as business_now
 from app.models.student import LearningRecord, LearningRecordFile, Student
 from app.models.user import User
 
@@ -290,7 +291,7 @@ def build_growth_report_pdf(
     pdf.set_x(20)
     pdf.set_font(font_family, "", 9)
     pdf.set_muted()
-    generated_at = datetime.now().strftime("%Y年%m月%d日 %H:%M")
+    generated_at = business_now().strftime("%Y年%m月%d日 %H:%M")
     pdf.cell(
         0,
         6,

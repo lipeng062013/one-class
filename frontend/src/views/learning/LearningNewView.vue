@@ -4,26 +4,22 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules, type UploadUserFile } from 'element-plus'
 import {
   createLearningApi,
-  listStudentsForPicker,
+  getStudentApi,
+  listStudentsApi,
   uploadLearningFileApi,
   type ClassStatus,
   type Student,
 } from '../../api/students'
-import { useAuthStore } from '../../stores/auth'
 import { usePageBack } from '../../composables/usePageBack'
-
-type StudentScope = 'mine' | 'all'
 
 const route = useRoute()
 const router = useRouter()
 const { goBack } = usePageBack('/learning')
-const auth = useAuthStore()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
+const studentLoading = ref(false)
 const students = ref<Student[]>([])
 const fileList = ref<UploadUserFile[]>([])
-/** 老师默认选「我的学生」 */
-const studentScope = ref<StudentScope>('mine')
 
 const form = reactive({
   student_id: undefined as number | undefined,
@@ -54,24 +50,50 @@ const prefilled = computed(() => {
   return raw ? Number(raw) : undefined
 })
 
-const showStudentScope = computed(() => auth.isTeacher)
-
-async function loadStudents() {
-  const params: { status: string; academic_manager_id?: number } = { status: 'active' }
-  if (auth.isTeacher && studentScope.value === 'mine' && auth.user?.id != null) {
-    params.academic_manager_id = auth.user.id
+function mergeStudents(items: Student[]) {
+  const map = new Map(students.value.map((s) => [s.id, s]))
+  for (const s of items) map.set(s.id, s)
+  // 已选学员始终保留在选项中，避免远程搜索后选中项消失
+  if (form.student_id != null && !map.has(form.student_id)) {
+    const kept = students.value.find((s) => s.id === form.student_id)
+    if (kept) map.set(kept.id, kept)
   }
-  students.value = await listStudentsForPicker(params, 100)
-  if (prefilled.value && students.value.some((s) => s.id === prefilled.value)) {
-    form.student_id = prefilled.value
-  } else if (form.student_id != null && !students.value.some((s) => s.id === form.student_id)) {
-    form.student_id = undefined
+  students.value = Array.from(map.values())
+}
+
+async function searchStudents(q: string) {
+  studentLoading.value = true
+  try {
+    const res = await listStudentsApi({
+      status: 'active',
+      q: q.trim() || undefined,
+      page: 1,
+      page_size: 30,
+    }).catch(() => ({ items: [] as Student[] }))
+    // 远程结果替换列表，但保留已选
+    const selected = form.student_id != null
+      ? students.value.find((s) => s.id === form.student_id)
+      : undefined
+    students.value = res.items
+    if (selected && !students.value.some((s) => s.id === selected.id)) {
+      students.value = [selected, ...students.value]
+    }
+  } finally {
+    studentLoading.value = false
   }
 }
 
-async function onStudentScopeChange() {
-  form.student_id = undefined
-  await loadStudents()
+async function ensurePrefilledStudent() {
+  const id = prefilled.value
+  if (!id || !Number.isFinite(id)) return
+  form.student_id = id
+  if (students.value.some((s) => s.id === id)) return
+  try {
+    const s = await getStudentApi(id)
+    mergeStudents([s])
+  } catch {
+    /* ignore */
+  }
 }
 
 async function submit() {
@@ -100,7 +122,10 @@ async function submit() {
   }
 }
 
-onMounted(loadStudents)
+onMounted(async () => {
+  await searchStudents('')
+  await ensurePrefilledStudent()
+})
 </script>
 
 <template>
@@ -112,23 +137,22 @@ onMounted(loadStudents)
 
     <el-card class="form-card" shadow="never">
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top" size="large">
-        <el-form-item v-if="showStudentScope" label="学生范围">
-          <el-radio-group v-model="studentScope" @change="onStudentScopeChange">
-            <el-radio-button value="mine">我的学生</el-radio-button>
-            <el-radio-button value="all">全部学生</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
         <el-form-item label="选择学生" prop="student_id">
           <el-select
             v-model="form.student_id"
             filterable
-            placeholder="搜索姓名"
+            remote
+            reserve-keyword
+            clearable
+            :remote-method="searchStudents"
+            :loading="studentLoading"
+            placeholder="搜索姓名 / 手机号"
             style="width: 100%"
           >
             <el-option
               v-for="s in students"
               :key="s.id"
-              :label="`${s.name} · ${s.grade} · ${s.school || ''}`"
+              :label="`${s.name} · ${s.grade}${s.school ? ' · ' + s.school : ''}`"
               :value="s.id"
             />
           </el-select>

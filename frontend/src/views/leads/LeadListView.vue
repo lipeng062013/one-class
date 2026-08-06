@@ -1,25 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, nextTick, onActivated, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import {
   createLead,
   listLeads,
   patchLead,
+  peekLeadListCache,
   type Lead,
+  type LeadListParams,
   type LeadSource,
   type LeadStatus,
 } from '../../api/leads'
 import { useBreakpoint } from '../../composables/useBreakpoint'
-import { useInfiniteScroll } from '../../composables/useInfiniteScroll'
+import { useCardAccordion } from '../../composables/useCardAccordion'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
+import { useServerPagedList } from '../../composables/useServerPagedList'
+import PcPagerBar from '../../components/PcPagerBar.vue'
+import { sanitizePhoneInput, validateRequiredPhone } from '../../utils/phone'
 
 const LIST_STATE_KEY = 'oc-lead-list-state'
-const PAGE_SIZES = [10, 20, 50, 100]
-const SCROLL_CHUNK = 10
 
 const route = useRoute()
+const router = useRouter()
 const { isCompact } = useBreakpoint()
+const { isExpanded, toggle: toggleCard, toggleForce, collapseAll } = useCardAccordion()
 
 const pcHeaderStyle = {
   background: '#f5f0e6',
@@ -28,13 +33,9 @@ const pcHeaderStyle = {
   borderBottomColor: '#e8e0d0',
 }
 
-const loading = ref(false)
-const rows = ref<Lead[]>([])
 const createVisible = ref(false)
 const formRef = ref<FormInstance>()
 const saving = ref(false)
-const page = ref(1)
-const pageSize = ref(20)
 const filterExpanded = ref(false)
 
 const filters = reactive({
@@ -43,6 +44,50 @@ const filters = reactive({
   name: '',
   phone: '',
 })
+
+function buildListParams(p: number, size: number): LeadListParams {
+  return {
+    source: filters.source || undefined,
+    status: filters.status || undefined,
+    name: filters.name.trim() || undefined,
+    phone: filters.phone.trim() || undefined,
+    page: p,
+    page_size: size,
+  }
+}
+
+const {
+  page,
+  pageSize,
+  total,
+  rows,
+  loading,
+  loadingMore,
+  hasMore: hasMoreInfinite,
+  PAGE_SIZES,
+  sentinelRef,
+  load: loadPage,
+  onPageChange,
+  onPageSizeChange,
+  setupScrollObserver,
+} = useServerPagedList<Lead>({
+  isCompact,
+  getId: (r) => r.id,
+  fetchPage: (p, size) => listLeads(buildListParams(p, size)),
+})
+
+/** 当前已加载数据上的轻量排序（仅本批，不跨页） */
+const pagedRows = computed(() =>
+  [...rows.value].sort((a, b) => {
+    const aToday = isToday(a.next_follow_at) || a.status === 'new' ? 1 : 0
+    const bToday = isToday(b.next_follow_at) || b.status === 'new' ? 1 : 0
+    if (aToday !== bToday) return bToday - aToday
+    return (b.id || 0) - (a.id || 0)
+  }),
+)
+/** wap/pad 卡片直接用已 append 的 rows（服务端追加），不再二次内存切片 */
+const infiniteRows = computed(() => pagedRows.value)
+const visibleCount = computed(() => rows.value.length)
 
 const form = reactive({
   student_or_parent_name: '',
@@ -57,6 +102,7 @@ const form = reactive({
 const rules: FormRules = {
   student_or_parent_name: [{ required: true, message: '请填写姓名', trigger: 'blur' }],
   source: [{ required: true, message: '请选择来源', trigger: 'change' }],
+  phone: [{ required: true, validator: validateRequiredPhone, trigger: 'blur' }],
 }
 
 const sourceLabels: Record<string, string> = {
@@ -103,6 +149,24 @@ function isToday(value?: string | null) {
   )
 }
 
+function formatTime(value?: string | null) {
+  if (!value) return '—'
+  try {
+    return new Date(value).toLocaleString()
+  } catch {
+    return value
+  }
+}
+
+function teamLabel(row: Lead) {
+  const owner = row.owner_name?.trim()
+  const n = row.collaborator_count || 0
+  if (owner && n > 0) return `${owner} · 协作 ${n}`
+  if (owner) return owner
+  if (n > 0) return `协作 ${n} 人`
+  return '未指定主责'
+}
+
 const activeFilterCount = computed(() => {
   let n = 0
   if (filters.source) n += 1
@@ -112,40 +176,10 @@ const activeFilterCount = computed(() => {
   return n
 })
 
-const sorted = computed(() =>
-  [...rows.value].sort((a, b) => {
-    const aToday = isToday(a.next_follow_at) || a.status === 'new' ? 1 : 0
-    const bToday = isToday(b.next_follow_at) || b.status === 'new' ? 1 : 0
-    if (aToday !== bToday) return bToday - aToday
-    return (b.id || 0) - (a.id || 0)
-  }),
-)
-
-const sentinelRef = ref<HTMLElement | null>(null)
-const {
-  displayRows: infiniteRows,
-  hasMore: hasMoreInfinite,
-  loadingMore,
-  visibleCount,
-  resetVisible: resetInfinite,
-  ensureVisible,
-} = useInfiniteScroll(sorted, {
-  chunk: SCROLL_CHUNK,
-  // 与 CSS 断点一致：≤991 启用滚动加载（不依赖首帧 isCompact 误判）
-  enabled: isCompact,
-  sentinelRef,
-})
-
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('leads', {
   visibleCount,
   enabled: isCompact,
-})
-
-const totalPages = computed(() => Math.max(1, Math.ceil(sorted.value.length / pageSize.value) || 1))
-
-const pagedRows = computed(() => {
-  const start = (page.value - 1) * pageSize.value
-  return sorted.value.slice(start, start + pageSize.value)
+  stateStorageKey: LIST_STATE_KEY,
 })
 
 function restoreListState() {
@@ -163,13 +197,41 @@ function restoreListState() {
       filters.name = s.filters.name ?? ''
       filters.phone = s.filters.phone ?? ''
     }
-    if (typeof s.page === 'number' && s.page > 0) page.value = s.page
-    if (typeof s.pageSize === 'number' && PAGE_SIZES.includes(s.pageSize)) {
-      pageSize.value = s.pageSize
+    // 仅 PC 恢复页码；紧凑端始终从第 1 页滚动加载
+    if (!isCompact.value) {
+      if (typeof s.page === 'number' && s.page > 0) page.value = s.page
+      if (typeof s.pageSize === 'number' && PAGE_SIZES.includes(s.pageSize)) {
+        pageSize.value = s.pageSize
+      }
     }
   } catch {
     /* ignore */
   }
+}
+
+function hasStoredListState() {
+  try {
+    return sessionStorage.getItem(LIST_STATE_KEY) != null
+  } catch {
+    return false
+  }
+}
+
+function clearFilterValues() {
+  filters.source = ''
+  filters.status = ''
+  filters.name = ''
+  filters.phone = ''
+}
+
+function seedCachedRows() {
+  const cached = peekLeadListCache(
+    buildListParams(isCompact.value ? 1 : page.value, isCompact.value ? 10 : pageSize.value),
+  )
+  if (!cached) return false
+  rows.value = cached.items
+  total.value = cached.total
+  return true
 }
 
 function saveListState() {
@@ -187,78 +249,49 @@ function saveListState() {
   }
 }
 
-function clampPage() {
-  if (page.value > totalPages.value) page.value = totalPages.value
-  if (page.value < 1) page.value = 1
-}
-
-function goFirstPage() {
-  page.value = 1
-  saveListState()
-}
-
-function goLastPage() {
-  page.value = totalPages.value
-  saveListState()
-}
-
-function onPageSizeChange() {
-  page.value = 1
-  saveListState()
-}
-
-function onPageChange() {
-  saveListState()
-}
-
-async function load(opts?: { resetPage?: boolean }) {
+async function load(opts?: { resetPage?: boolean; preserveRows?: boolean }) {
   const snap = opts?.resetPage ? null : takeSnapshotForLoad(route.path)
   if (opts?.resetPage) {
     clearSnapshot()
-    page.value = 1
-    resetInfinite()
-  }
-  loading.value = true
-  try {
-    const params: Record<string, string> = {}
-    if (filters.source) params.source = filters.source
-    if (filters.status) params.status = filters.status
-    if (filters.name) params.name = filters.name
-    if (filters.phone) params.phone = filters.phone
-    rows.value = await listLeads(params)
-    if (opts?.resetPage) {
-      resetInfinite()
-    } else if (snap?.visibleCount != null && isCompact.value) {
-      ensureVisible(snap.visibleCount)
-    } else if (isCompact.value) {
-      resetInfinite()
+    if (!opts.preserveRows) {
+      rows.value = []
+      total.value = 0
     }
-    clampPage()
-    saveListState()
-  } finally {
-    loading.value = false
   }
+  await loadPage(opts?.resetPage ? { reset: true } : undefined)
+  saveListState()
   void finishListEnter({ snap, forceTop: !!opts?.resetPage })
 }
 
 function resetFilters() {
-  filters.source = ''
-  filters.status = ''
-  filters.name = ''
-  filters.phone = ''
-  load({ resetPage: true })
+  clearFilterValues()
+  collapseAll()
+  void load({ resetPage: true })
 }
 
 function runQuery() {
   if (isCompact.value) filterExpanded.value = false
-  load({ resetPage: true })
+  collapseAll()
+  void load({ resetPage: true })
 }
 
 function toggleFilterExpand() {
   filterExpanded.value = !filterExpanded.value
 }
 
-watch(pageSize, () => clampPage())
+function onPcPageChange() {
+  onPageChange()
+  saveListState()
+}
+
+function onPcPageSizeChange() {
+  onPageSizeChange()
+  saveListState()
+}
+
+function goDetail(row: Lead) {
+  void router.push(`/leads/${row.id}`)
+}
 
 function openCreate() {
   form.student_or_parent_name = ''
@@ -283,7 +316,7 @@ async function submitCreate() {
   if (!ok) return
   saving.value = true
   try {
-    await createLead({
+    const created = await createLead({
       student_or_parent_name: form.student_or_parent_name,
       phone: form.phone || null,
       source: form.source,
@@ -294,7 +327,8 @@ async function submitCreate() {
     })
     ElMessage.success('线索已创建')
     createVisible.value = false
-    await load()
+    // 新建后进入详情，便于立刻写跟进 / 指定主责
+    void router.push(`/leads/${created.id}`)
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '创建失败')
   } finally {
@@ -308,15 +342,39 @@ async function changeStatus(row: Lead, status: LeadStatus) {
   await load()
 }
 
-async function patchFollow(row: Lead, value: Date | null) {
-  await patchLead(row.id, { next_follow_at: toIso(value) })
-  ElMessage.success('跟进时间已更新')
-  await load()
+function onPcStatusChange(row: Lead, event: Event) {
+  const value = (event.target as HTMLSelectElement).value as LeadStatus
+  void changeStatus(row, value)
 }
 
-onMounted(() => {
+onMounted(async () => {
   restoreListState()
-  load()
+  const hasCachedRows = seedCachedRows()
+  await load({ resetPage: isCompact.value, preserveRows: hasCachedRows })
+  await nextTick()
+  if (sentinelRef.value) setupScrollObserver()
+})
+
+let activationCount = 0
+onActivated(() => {
+  activationCount += 1
+  if (activationCount === 1) return
+
+  if (hasStoredListState()) {
+    restoreListState()
+  } else {
+    clearFilterValues()
+    page.value = 1
+    pageSize.value = 20
+    collapseAll()
+  }
+
+  const hasCachedRows = seedCachedRows()
+  if (!hasCachedRows) {
+    rows.value = []
+    total.value = 0
+  }
+  void load({ resetPage: isCompact.value, preserveRows: hasCachedRows })
 })
 </script>
 
@@ -331,7 +389,7 @@ onMounted(() => {
     </div>
 
     <!-- PC 筛选：与学生信息列表同一套米金筛选卡 -->
-    <div class="lead-pc">
+    <div v-if="!isCompact" class="lead-pc">
       <el-card class="filters pc-filters" shadow="never">
         <div class="pc-filters-head">
           <div class="pc-filters-head-main">
@@ -341,7 +399,8 @@ onMounted(() => {
           <div class="pc-list-summary">
             <span class="pc-list-summary__label">获客线索</span>
             <span class="pc-list-summary__count">
-              共 <strong>{{ sorted.length }}</strong> 条
+              共 <strong>{{ total }}</strong> 条
+
             </span>
           </div>
         </div>
@@ -371,7 +430,7 @@ onMounted(() => {
     </div>
 
     <!-- wap/pad 筛选 -->
-    <div class="lead-m m-filter">
+    <div v-if="isCompact" class="lead-m m-filter">
       <div class="m-filter-search">
         <el-icon class="m-filter-search__icon"><Search /></el-icon>
         <input
@@ -431,21 +490,25 @@ onMounted(() => {
     </div>
 
     <!-- 移动卡片（CSS 控制显隐，不依赖 isCompact 首帧） -->
-    <div v-loading="loading" class="lead-m lead-card-list">
-      <div v-if="!sorted.length && !loading" class="lead-card lead-card--empty">暂无线索</div>
+    <div v-if="isCompact" v-loading="loading && !rows.length" class="lead-m lead-card-list">
+      <div v-if="!total && !loading" class="lead-card lead-card--empty">暂无线索</div>
       <div
         v-for="row in infiniteRows"
         :key="row.id"
         class="lead-card"
-        :class="{ 'is-today': isToday(row.next_follow_at) }"
+        :class="{
+          'is-today': isToday(row.next_follow_at),
+          'is-expanded': isExpanded(row.id),
+        }"
       >
-        <div class="lead-card__top">
+        <div class="lead-card__top" @click="toggleCard(row.id, $event)">
           <div class="lead-card__avatar">{{ (row.student_or_parent_name || '?').slice(0, 1) }}</div>
           <div class="lead-card__who">
             <div class="lead-card__name">{{ row.student_or_parent_name }}</div>
             <div class="lead-card__sub">
               <span>{{ sourceLabels[row.source] || row.source }}</span>
               <span v-if="row.phone"> · {{ row.phone }}</span>
+              <span v-if="row.owner_name"> · {{ row.owner_name }}</span>
             </div>
           </div>
           <div class="lead-card__badges">
@@ -455,58 +518,98 @@ onMounted(() => {
             <el-tag :type="statusTagType(row.status)" size="small" effect="plain" round>
               {{ statusLabels[row.status] || row.status }}
             </el-tag>
-          </div>
-        </div>
-
-        <div v-if="row.need || row.notes" class="lead-card__body">
-          <p v-if="row.need" class="lead-card__need">
-            <span class="k">需求</span>{{ row.need }}
-          </p>
-          <p v-if="row.notes" class="lead-card__notes">
-            <span class="k">备注</span>{{ row.notes }}
-          </p>
-        </div>
-
-        <div class="lead-card__controls">
-          <div class="ctrl">
-            <span class="ctrl-label">状态</span>
-            <el-select
-              :model-value="row.status"
-              class="ctrl-select"
-              teleported
-              placement="bottom-start"
-              :fit-input-width="true"
-              :popper-options="{ strategy: 'fixed' }"
-              popper-class="lead-m-select-popper"
-              @change="(v: LeadStatus) => changeStatus(row, v)"
+            <el-tag
+              v-if="(row.collaborator_count || 0) > 0"
+              type="warning"
+              size="small"
+              effect="plain"
+              round
             >
-              <el-option v-for="s in statusOptions" :key="s" :label="statusLabels[s]" :value="s" />
-            </el-select>
+              协作 {{ row.collaborator_count }}
+            </el-tag>
           </div>
-          <div class="ctrl">
-            <span class="ctrl-label">下次跟进</span>
-            <el-date-picker
-              :model-value="row.next_follow_at ? new Date(row.next_follow_at) : null"
-              type="datetime"
-              placeholder="设置跟进"
-              class="ctrl-date"
-              teleported
-              @update:model-value="(v: Date | null) => patchFollow(row, v)"
-            />
+          <button
+            type="button"
+            class="m-card-acc-toggle"
+            :aria-expanded="isExpanded(row.id)"
+            :aria-label="isExpanded(row.id) ? '收起' : '展开'"
+            @click.stop="toggleForce(row.id)"
+          >
+            <el-icon class="m-card-acc-chevron" :class="{ 'is-open': isExpanded(row.id) }">
+              <ArrowDown />
+            </el-icon>
+          </button>
+        </div>
+
+        <div v-if="isExpanded(row.id)" class="m-card-acc-body">
+          <div v-if="row.need || row.notes" class="lead-card__body">
+            <p v-if="row.need" class="lead-card__need">
+              <span class="k">需求</span>{{ row.need }}
+            </p>
+            <p v-if="row.notes" class="lead-card__notes">
+              <span class="k">备注</span>{{ row.notes }}
+            </p>
+          </div>
+
+          <div class="lead-card__meta">
+            <div class="lead-meta-item">
+              <span class="lead-meta-k">主责</span>
+              <span class="lead-meta-v">{{ teamLabel(row) }}</span>
+            </div>
+            <div class="lead-meta-item">
+              <span class="lead-meta-k">下次跟进</span>
+              <span class="lead-meta-v">
+                {{ row.next_follow_at ? formatTime(row.next_follow_at) : '暂无' }}
+              </span>
+            </div>
+            <div class="lead-meta-item lead-meta-item--full">
+              <span class="lead-meta-k">最近联系</span>
+              <span class="lead-meta-v">
+                <template v-if="row.last_contact_at">
+                  {{ formatTime(row.last_contact_at) }}
+                  <template v-if="row.last_contact_by_name"> · {{ row.last_contact_by_name }}</template>
+                </template>
+                <template v-else>暂无</template>
+              </span>
+            </div>
+          </div>
+
+          <div class="lead-card__controls">
+            <div class="ctrl">
+              <span class="ctrl-label">状态</span>
+              <el-select
+                :model-value="row.status"
+                class="ctrl-select"
+                teleported
+                placement="bottom-start"
+                :fit-input-width="true"
+                :popper-options="{ strategy: 'fixed' }"
+                popper-class="lead-m-select-popper"
+                @change="(v: LeadStatus) => changeStatus(row, v)"
+              >
+                <el-option v-for="s in statusOptions" :key="s" :label="statusLabels[s]" :value="s" />
+              </el-select>
+            </div>
+          </div>
+
+          <div class="lead-card__actions">
+            <el-button type="primary" size="small" @click="goDetail(row)">详情 / 写跟进</el-button>
           </div>
         </div>
       </div>
-      <div v-if="sorted.length" ref="sentinelRef" class="scroll-sentinel">
+      <div v-if="total" ref="sentinelRef" class="scroll-sentinel">
         <span v-if="hasMoreInfinite || loadingMore" class="scroll-hint">
           {{ loadingMore ? '加载中…' : '上拉加载更多' }}
         </span>
-        <span v-else class="scroll-hint">已加载全部 {{ sorted.length }} 条</span>
+        <span v-else class="scroll-hint">
+          已加载 {{ rows.length }} / {{ total }} 条
+        </span>
       </div>
     </div>
 
     <!-- PC 表格：与学生信息列表同一套表格气质 -->
-    <div class="lead-pc">
-      <el-card class="pc-table-card" v-loading="loading" shadow="never">
+    <div v-if="!isCompact" class="lead-pc">
+      <el-card class="pc-table-card" v-loading="loading && !rows.length" shadow="never">
         <div class="table-scroll">
           <el-table
             :data="pagedRows"
@@ -517,10 +620,10 @@ onMounted(() => {
           >
             <el-table-column prop="student_or_parent_name" label="姓名" min-width="140" show-overflow-tooltip>
               <template #default="{ row }">
-                <div class="pc-name-cell">
+                <button type="button" class="pc-name-cell" @click="goDetail(row)">
                   <span class="pc-avatar">{{ (row.student_or_parent_name || '?').slice(0, 1) }}</span>
                   <span class="pc-name-text">{{ row.student_or_parent_name }}</span>
-                </div>
+                </button>
               </template>
             </el-table-column>
             <el-table-column prop="phone" label="电话" width="128">
@@ -536,34 +639,35 @@ onMounted(() => {
               </template>
             </el-table-column>
             <el-table-column prop="need" label="需求" min-width="120" show-overflow-tooltip />
+            <el-table-column label="主责" min-width="110" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="pc-owner">{{ row.owner_name || '—' }}</span>
+                <span v-if="(row.collaborator_count || 0) > 0" class="pc-collab">
+                  · 协作 {{ row.collaborator_count }}
+                </span>
+              </template>
+            </el-table-column>
             <!-- 加宽状态列，避免 select 被挤出「..」省略 -->
             <el-table-column label="状态" width="148" class-name="col-status">
               <template #default="{ row }">
-                <el-select
-                  :model-value="row.status"
-                  size="small"
-                  class="status-select"
-                  teleported
-                  :fit-input-width="true"
-                  @change="(v: LeadStatus) => changeStatus(row, v)"
+                <select
+                  class="status-native"
+                  :value="row.status"
+                  aria-label="修改线索状态"
+                  @change="onPcStatusChange(row, $event)"
                 >
-                  <el-option v-for="s in statusOptions" :key="s" :label="statusLabels[s]" :value="s" />
-                </el-select>
+                  <option v-for="s in statusOptions" :key="s" :value="s">
+                    {{ statusLabels[s] }}
+                  </option>
+                </select>
               </template>
             </el-table-column>
-            <!-- 时间选择在前，今日标签在后 -->
-            <el-table-column label="下次跟进" min-width="248" class-name="col-follow">
+            <el-table-column label="下次跟进" min-width="190" class-name="col-follow">
               <template #default="{ row }">
                 <div class="follow-cell">
-                  <el-date-picker
-                    :model-value="row.next_follow_at ? new Date(row.next_follow_at) : null"
-                    type="datetime"
-                    size="small"
-                    placeholder="设置跟进"
-                    class="follow-picker"
-                    teleported
-                    @update:model-value="(v: Date | null) => patchFollow(row, v)"
-                  />
+                  <span class="follow-readonly" :class="{ 'is-empty': !row.next_follow_at }">
+                    {{ row.next_follow_at ? formatTime(row.next_follow_at) : '暂无' }}
+                  </span>
                   <el-tag
                     v-if="isToday(row.next_follow_at)"
                     type="danger"
@@ -577,30 +681,36 @@ onMounted(() => {
                 </div>
               </template>
             </el-table-column>
-            <el-table-column prop="notes" label="备注" min-width="120" show-overflow-tooltip>
+            <el-table-column label="最近联系" min-width="150" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="pc-notes" :class="{ 'is-empty': !row.last_contact_at }">
+                  {{ row.last_contact_at ? formatTime(row.last_contact_at) : '—' }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="notes" label="备注" min-width="100" show-overflow-tooltip>
               <template #default="{ row }">
                 <span class="pc-notes">{{ row.notes || '—' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="88" fixed="right" align="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="goDetail(row)">详情</el-button>
               </template>
             </el-table-column>
           </el-table>
         </div>
       </el-card>
 
-      <div v-if="sorted.length" class="pager-bar pc-pager">
-        <el-button size="small" plain :disabled="page <= 1" @click="goFirstPage">首页</el-button>
-        <el-pagination
-          v-model:current-page="page"
-          v-model:page-size="pageSize"
-          :page-sizes="PAGE_SIZES"
-          :total="sorted.length"
-          :pager-count="5"
-          background
-          layout="total, sizes, prev, pager, next, jumper"
-          @current-change="onPageChange"
-          @size-change="onPageSizeChange"
-        />
-        <el-button size="small" plain :disabled="page >= totalPages" @click="goLastPage">末页</el-button>
-      </div>
+      <!-- 仅 PC 显示底部分页；wap/pad 用服务端上拉追加 -->
+      <PcPagerBar
+        v-if="!isCompact"
+        v-model:page="page"
+        v-model:page-size="pageSize"
+        :total="total"
+        @change="onPcPageChange"
+        @size-change="onPcPageSizeChange"
+      />
     </div>
 
     <el-dialog
@@ -615,8 +725,15 @@ onMounted(() => {
         <el-form-item label="学生/家长姓名" prop="student_or_parent_name">
           <el-input v-model="form.student_or_parent_name" placeholder="必填" />
         </el-form-item>
-        <el-form-item label="电话">
-          <el-input v-model="form.phone" placeholder="选填" />
+        <el-form-item label="电话" prop="phone">
+          <el-input
+            v-model="form.phone"
+            inputmode="numeric"
+            autocomplete="tel"
+            maxlength="11"
+            placeholder="请输入11位手机号"
+            @input="form.phone = sanitizePhoneInput(form.phone)"
+          />
         </el-form-item>
         <el-form-item label="来源" prop="source">
           <el-select v-model="form.source" style="width: 100%">
@@ -959,6 +1076,7 @@ onMounted(() => {
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  cursor: pointer;
 }
 
 .lead-card__avatar {
@@ -1034,6 +1152,33 @@ onMounted(() => {
   margin-right: 6px;
 }
 
+.lead-card__meta {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.lead-meta-item {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  min-width: 0;
+}
+
+.lead-meta-k {
+  flex-shrink: 0;
+  color: #a8a29e;
+  min-width: 3.5em;
+}
+
+.lead-meta-v {
+  min-width: 0;
+  color: var(--oc-ink, #44403c);
+  word-break: break-word;
+}
+
 .lead-card__controls {
   display: grid;
   grid-template-columns: 1fr;
@@ -1043,6 +1188,13 @@ onMounted(() => {
   border-top: 1px solid var(--oc-border, #e8e0d0);
 }
 
+.lead-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .ctrl-label {
   display: block;
   margin-bottom: 4px;
@@ -1050,8 +1202,7 @@ onMounted(() => {
   color: var(--oc-muted, #78716c);
 }
 
-.ctrl-select,
-.ctrl-date {
+.ctrl-select {
   width: 100%;
 }
 
@@ -1091,6 +1242,17 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.pc-name-cell:hover .pc-name-text {
+  color: var(--oc-primary, #a16207);
 }
 
 .pc-avatar {
@@ -1114,6 +1276,7 @@ onMounted(() => {
   white-space: nowrap;
   font-weight: 500;
   color: var(--oc-ink, #44403c);
+  transition: color 0.15s ease;
 }
 
 .pc-mono {
@@ -1122,18 +1285,42 @@ onMounted(() => {
   color: var(--oc-ink, #44403c);
 }
 
+.pc-owner {
+  color: var(--oc-ink, #44403c);
+  font-weight: 500;
+}
+
+.pc-collab {
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+}
+
 .pc-notes {
   color: var(--oc-muted, #78716c);
 }
 
-/* 状态列：给足宽度，去掉被挤出的「..」 */
-.status-select {
-  width: 120px;
-  max-width: 100%;
+.pc-notes.is-empty {
+  color: #a8a29e;
 }
 
-.status-select :deep(.el-select__wrapper) {
-  min-height: 28px;
+/* 状态列：给足宽度，去掉被挤出的「..」 */
+.status-native {
+  width: 120px;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 6px;
+  background: #fffdf8;
+  color: var(--oc-ink, #44403c);
+  font: inherit;
+  cursor: pointer;
+}
+
+.status-native:focus-visible {
+  border-color: var(--oc-primary, #a16207);
+  outline: 2px solid rgba(161, 98, 7, 0.15);
+  outline-offset: 1px;
 }
 
 .follow-cell {
@@ -1144,9 +1331,13 @@ onMounted(() => {
   min-width: 0;
 }
 
-.follow-picker {
-  width: 178px;
-  flex-shrink: 0;
+.follow-readonly {
+  color: var(--oc-ink, #44403c);
+  font-variant-numeric: tabular-nums;
+}
+
+.follow-readonly.is-empty {
+  color: #a8a29e;
 }
 
 .follow-today-tag {

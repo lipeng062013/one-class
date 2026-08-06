@@ -67,7 +67,8 @@ class Settings(BaseSettings):
     seed_ops_username: str = "ops"
     seed_ops_password: str = "ops123"
     seed_teacher_username: str = "teacher1"
-    seed_teacher_password: str = "t123"
+    # 演示老师：用户名与密码相同，便于联调
+    seed_teacher_password: str = "teacher1"
 
 
 @lru_cache

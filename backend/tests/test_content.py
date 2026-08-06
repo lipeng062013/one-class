@@ -93,7 +93,8 @@ def test_bulk_delete_copies(client):
     assert bulk.status_code == 200, bulk.text
     assert bulk.json()["data"]["deleted_count"] == 2
     listed = client.get("/api/v1/copies", headers=h).json()["data"]
-    listed_ids = {c["id"] for c in listed}
+    items = listed["items"] if isinstance(listed, dict) else listed
+    listed_ids = {c["id"] for c in items}
     assert not set(ids) & listed_ids
 
 
@@ -162,8 +163,14 @@ def test_teacher_cannot_generate(client):
     assert res.status_code == 403
 
 
-def test_llm_mode_without_config_falls_back(client):
+def test_llm_mode_without_config_falls_back(client, monkeypatch):
     """Direct LLM mode must not 503 when keys missing — return draft + llm_error."""
+    from app.integrations.llm import LlmUnavailable
+
+    def unavailable(*_args, **_kwargs):
+        raise LlmUnavailable("LLM not configured")
+
+    monkeypatch.setattr("app.integrations.llm.chat_completion", unavailable)
     h = auth_header(client, "ops", "ops123")
     mid = _create_material(client, h)
     tid = _create_template(client, h)

@@ -3,7 +3,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.deps import get_current_user, require_roles
+from app.core.deps import get_current_user, require_permissions
 from app.core.image_thumb import DEFAULT_THUMB_EDGE, read_image_variant
 from app.core.responses import ok
 from app.core.storage import get_storage
@@ -13,7 +13,7 @@ from app.modules.posters.schemas import GeneratePosterRequest, PosterBulkDelete
 
 router = APIRouter(tags=["posters"])
 
-_ops = require_roles("admin", "operator")
+_ops = require_permissions("posters.use")
 
 _MAX_UPLOAD_BYTES = 12 * 1024 * 1024  # 12MB
 
@@ -53,11 +53,14 @@ async def upload_poster(
 
 @router.get("/posters")
 def list_posters(
+    q: str | None = None,
+    mode: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
     db: Session = Depends(get_db),
     _: User = Depends(_ops),
 ):
-    items = service.list_posters(db)
-    return ok([service.serialize_poster(p) for p in items])
+    return ok(service.list_posters(db, q=q, mode=mode, page=page, page_size=page_size))
 
 
 @router.post("/posters/bulk-delete")

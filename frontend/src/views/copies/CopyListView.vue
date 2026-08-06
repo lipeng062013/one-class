@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { bulkDeleteCopies, deleteCopy, listCopies, type GeneratedCopy } from '../../api/copies'
 import { useBreakpoint } from '../../composables/useBreakpoint'
-import { useInfiniteScroll } from '../../composables/useInfiniteScroll'
+import { useCardAccordion } from '../../composables/useCardAccordion'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
+import { useServerPagedList } from '../../composables/useServerPagedList'
+import PcPagerBar from '../../components/PcPagerBar.vue'
 
 const LIST_STATE_KEY = 'oc-copy-list-state'
-const PAGE_SIZES = [10, 20, 50, 100]
-const SCROLL_CHUNK = 10
 
 const MODE_LABELS: Record<string, string> = {
   template: '仅模板',
@@ -28,6 +28,7 @@ const PLATFORM_LABELS: Record<string, string> = {
 const route = useRoute()
 const router = useRouter()
 const { isCompact } = useBreakpoint()
+const { isExpanded, toggle: toggleCard, toggleForce, collapseAll } = useCardAccordion()
 
 const pcHeaderStyle = {
   background: '#f5f0e6',
@@ -36,11 +37,7 @@ const pcHeaderStyle = {
   borderBottomColor: '#e8e0d0',
 }
 
-const loading = ref(false)
 const bulkLoading = ref(false)
-const rows = ref<GeneratedCopy[]>([])
-const page = ref(1)
-const pageSize = ref(20)
 const selectedIds = ref<number[]>([])
 const filterExpanded = ref(false)
 const tableRef = ref<{ clearSelection?: () => void } | null>(null)
@@ -51,6 +48,34 @@ const filters = reactive({
   platform: '',
 })
 
+const {
+  page,
+  pageSize,
+  total,
+  rows,
+  loading,
+  loadingMore,
+  hasMore: hasMoreInfinite,
+  PAGE_SIZES,
+  sentinelRef,
+  load: loadPage,
+  resetAndLoad,
+  onPageChange,
+  onPageSizeChange,
+  setupScrollObserver,
+} = useServerPagedList<GeneratedCopy>({
+  isCompact,
+  getId: (r) => r.id,
+  fetchPage: (p, size) =>
+    listCopies({
+      q: filters.q.trim() || undefined,
+      mode: filters.mode || undefined,
+      platform: filters.platform || undefined,
+      page: p,
+      page_size: size,
+    }),
+})
+
 const activeFilterCount = computed(() => {
   let n = 0
   if (filters.q.trim()) n += 1
@@ -59,16 +84,10 @@ const activeFilterCount = computed(() => {
   return n
 })
 
-const filtered = computed(() => {
-  const q = filters.q.trim().toLowerCase()
-  return rows.value.filter((r) => {
-    if (filters.mode && r.mode !== filters.mode) return false
-    if (filters.platform && r.platform !== filters.platform) return false
-    if (!q) return true
-    const hay = `${r.title || ''} ${r.body || ''}`.toLowerCase()
-    return hay.includes(q)
-  })
-})
+/** PC 表格 / 卡片数据源（服务端分页结果） */
+const pagedRows = computed(() => rows.value)
+const infiniteRows = computed(() => rows.value)
+const visibleCount = computed(() => rows.value.length)
 
 function modeLabel(mode?: string | null) {
   if (!mode) return '—'
@@ -80,26 +99,10 @@ function platformLabel(platform?: string | null) {
   return PLATFORM_LABELS[platform] || platform
 }
 
-const sentinelRef = ref<HTMLElement | null>(null)
-const {
-  displayRows: infiniteRows,
-  hasMore: hasMoreInfinite,
-  loadingMore,
-  visibleCount,
-  resetVisible: resetInfinite,
-  ensureVisible,
-} = useInfiniteScroll(filtered, { chunk: SCROLL_CHUNK, enabled: isCompact, sentinelRef })
-
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('copies', {
   visibleCount,
   enabled: isCompact,
-})
-
-const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize.value) || 1))
-
-const pagedRows = computed(() => {
-  const start = (page.value - 1) * pageSize.value
-  return filtered.value.slice(start, start + pageSize.value)
+  stateStorageKey: LIST_STATE_KEY,
 })
 
 const selectedCount = computed(() => selectedIds.value.length)
@@ -118,9 +121,11 @@ function restoreListState() {
       filters.mode = s.filters.mode ?? ''
       filters.platform = s.filters.platform ?? ''
     }
-    if (typeof s.page === 'number' && s.page > 0) page.value = s.page
-    if (typeof s.pageSize === 'number' && PAGE_SIZES.includes(s.pageSize)) {
-      pageSize.value = s.pageSize
+    if (!isCompact.value) {
+      if (typeof s.page === 'number' && s.page > 0) page.value = s.page
+      if (typeof s.pageSize === 'number' && PAGE_SIZES.includes(s.pageSize)) {
+        pageSize.value = s.pageSize
+      }
     }
   } catch {
     /* ignore */
@@ -142,47 +147,32 @@ function saveListState() {
   }
 }
 
-function clampPage() {
-  if (page.value > totalPages.value) page.value = totalPages.value
-  if (page.value < 1) page.value = 1
-}
-
-function goFirstPage() {
-  page.value = 1
-  saveListState()
-}
-
-function goLastPage() {
-  page.value = totalPages.value
-  saveListState()
-}
-
-function onPageSizeChange() {
-  page.value = 1
-  saveListState()
-}
-
-function onPageChange() {
-  saveListState()
-}
-
 function runQuery() {
   clearSnapshot()
-  page.value = 1
+  collapseAll()
   filterExpanded.value = false
-  resetInfinite()
-  clampPage()
   saveListState()
+  void load({ fromQuery: true })
 }
 
 function resetFilters() {
   clearSnapshot()
+  collapseAll()
   filters.q = ''
   filters.mode = ''
   filters.platform = ''
-  page.value = 1
   filterExpanded.value = false
-  resetInfinite()
+  saveListState()
+  void load({ fromQuery: true })
+}
+
+function onPcPageChange() {
+  onPageChange()
+  saveListState()
+}
+
+function onPcPageSizeChange() {
+  onPageSizeChange()
   saveListState()
 }
 
@@ -215,22 +205,9 @@ function isSelected(id: number) {
 async function load(opts?: { fromQuery?: boolean }) {
   const snap = opts?.fromQuery ? null : takeSnapshotForLoad(route.path)
   if (opts?.fromQuery) clearSnapshot()
-
-  loading.value = true
-  try {
-    rows.value = await listCopies()
-    selectedIds.value = selectedIds.value.filter((id) => rows.value.some((r) => r.id === id))
-    if (snap?.visibleCount != null && isCompact.value) {
-      ensureVisible(snap.visibleCount)
-    } else {
-      resetInfinite()
-    }
-    clampPage()
-    saveListState()
-  } finally {
-    loading.value = false
-  }
-  // 有快照才恢复；否则强制回顶（.main 跨路由不卸，切换模块会带着旧 scroll）
+  await (opts?.fromQuery ? resetAndLoad() : loadPage())
+  selectedIds.value = selectedIds.value.filter((id) => rows.value.some((r) => r.id === id))
+  saveListState()
   void finishListEnter({ snap, forceTop: !!opts?.fromQuery })
 }
 
@@ -289,12 +266,11 @@ async function onBulkDelete() {
   }
 }
 
-watch(filtered, () => clampPage())
-watch(pageSize, () => clampPage())
-
-onMounted(() => {
+onMounted(async () => {
   restoreListState()
-  load()
+  await load({ fromQuery: isCompact.value })
+  await nextTick()
+  if (sentinelRef.value) setupScrollObserver()
 })
 </script>
 
@@ -334,7 +310,7 @@ onMounted(() => {
           <div class="pc-list-summary">
             <span class="pc-list-summary__label">生成文案</span>
             <span class="pc-list-summary__count">
-              共 <strong>{{ filtered.length }}</strong> 条
+              共 <strong>{{ total }}</strong> 条
             </span>
             <span v-if="selectedCount" class="pc-list-summary__sel">
               已选 <strong>{{ selectedCount }}</strong>
@@ -434,45 +410,53 @@ onMounted(() => {
     </div>
 
     <div v-loading="loading" class="copy-m copy-card-list">
-      <div v-if="!filtered.length && !loading" class="copy-card copy-card--empty">暂无文案</div>
+      <div v-if="!total && !loading" class="copy-card copy-card--empty">暂无文案</div>
       <div
         v-for="row in infiniteRows"
         :key="row.id"
         class="copy-card"
-        :class="{ 'is-selected': isSelected(row.id) }"
+        :class="{ 'is-selected': isSelected(row.id), 'is-expanded': isExpanded(row.id) }"
       >
-        <div class="copy-card__top">
+        <div class="copy-card__top" @click="toggleCard(row.id, $event)">
           <el-checkbox
             class="copy-card__check"
             :model-value="isSelected(row.id)"
             @click.stop
             @update:model-value="(v: boolean | string | number) => toggleCardSelect(row.id, v)"
           />
-          <button type="button" class="copy-card__title copy-card__title--link" @click="goDetail(row)">
-            {{ row.title || `文案 #${row.id}` }}
-          </button>
+          <span class="copy-card__title">{{ row.title || `文案 #${row.id}` }}</span>
           <el-tag v-if="row.banned_hits?.length" type="danger" size="small" effect="plain" round>
             禁用词 {{ row.banned_hits.length }}
           </el-tag>
+          <button
+            type="button"
+            class="m-card-acc-toggle"
+            :aria-expanded="isExpanded(row.id)"
+            @click.stop="toggleForce(row.id)"
+          >
+            <el-icon class="m-card-acc-chevron" :class="{ 'is-open': isExpanded(row.id) }">
+              <ArrowDown />
+            </el-icon>
+          </button>
         </div>
-        <div class="copy-card__meta" @click="goDetail(row)">
-          <span><span class="k">模式</span>{{ modeLabel(row.mode) }}</span>
-          <span><span class="k">平台</span>{{ platformLabel(row.platform) }}</span>
-        </div>
-        <p v-if="row.body" class="copy-card__excerpt" @click="goDetail(row)">
-          {{ row.body }}
-        </p>
-        <div class="copy-card__actions">
-          <el-button type="primary" size="small" @click="goDetail(row)">详情</el-button>
-          <el-button size="small" @click="copyBody(row)">复制</el-button>
-          <el-button size="small" type="danger" plain @click="onDelete(row)">删除</el-button>
+        <div v-show="isExpanded(row.id)" class="m-card-acc-body">
+          <div class="copy-card__meta">
+            <span><span class="k">模式</span>{{ modeLabel(row.mode) }}</span>
+            <span><span class="k">平台</span>{{ platformLabel(row.platform) }}</span>
+          </div>
+          <p v-if="row.body" class="copy-card__excerpt">{{ row.body }}</p>
+          <div class="copy-card__actions">
+            <el-button type="primary" size="small" @click="goDetail(row)">详情</el-button>
+            <el-button size="small" @click="copyBody(row)">复制</el-button>
+            <el-button size="small" type="danger" plain @click="onDelete(row)">删除</el-button>
+          </div>
         </div>
       </div>
-      <div v-if="filtered.length" ref="sentinelRef" class="scroll-sentinel">
+      <div v-if="total" ref="sentinelRef" class="scroll-sentinel">
         <span v-if="hasMoreInfinite || loadingMore" class="scroll-hint">
           {{ loadingMore ? '加载中…' : '上拉加载更多' }}
         </span>
-        <span v-else class="scroll-hint">已加载全部 {{ filtered.length }} 条</span>
+        <span v-else class="scroll-hint">已加载 {{ rows.length }} / {{ total }} 条</span>
       </div>
     </div>
 
@@ -540,24 +524,17 @@ onMounted(() => {
             </el-table-column>
           </el-table>
         </div>
-        <div v-if="!filtered.length && !loading" class="pc-table-empty">暂无文案，可点「生成文案」</div>
+        <div v-if="!total && !loading" class="pc-table-empty">暂无文案，可点「生成文案」</div>
       </el-card>
 
-      <div v-if="filtered.length" class="pager-bar pc-pager">
-        <el-button size="small" plain :disabled="page <= 1" @click="goFirstPage">首页</el-button>
-        <el-pagination
-          v-model:current-page="page"
-          v-model:page-size="pageSize"
-          :page-sizes="PAGE_SIZES"
-          :total="filtered.length"
-          :pager-count="5"
-          background
-          layout="total, sizes, prev, pager, next, jumper"
-          @current-change="onPageChange"
-          @size-change="onPageSizeChange"
-        />
-        <el-button size="small" plain :disabled="page >= totalPages" @click="goLastPage">末页</el-button>
-      </div>
+      <PcPagerBar
+        v-if="!isCompact"
+        v-model:page="page"
+        v-model:page-size="pageSize"
+        :total="total"
+        @change="onPcPageChange"
+        @size-change="onPcPageSizeChange"
+      />
     </div>
   </div>
 </template>
@@ -743,6 +720,9 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
 
 .copy-card__check {

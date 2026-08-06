@@ -3,20 +3,33 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from app.core.phone import PhoneInputModel
 
-class StudentCreate(BaseModel):
+
+class StudentCourseLink(BaseModel):
+    """新建学生时关联的课程快照。"""
+
+    id: Optional[int] = None
+    name: str = Field(min_length=1, max_length=128)
+    type: str = ""
+    price_label: str = ""
+
+
+class StudentCreate(PhoneInputModel):
     name: str = Field(min_length=1, max_length=128)
     grade: str = Field(min_length=1, max_length=64)
     school: str = ""
-    phone: Optional[str] = None
+    phone: str = Field(min_length=11, max_length=11)
     parent_name: Optional[str] = None
     academic_manager_id: Optional[int] = None
     status: str = "active"
     source_lead_id: Optional[int] = None
     notes: str = ""
+    # 新建时须关联至少一门课程（与报名页「新建学生」一致）
+    courses: list[StudentCourseLink] = Field(default_factory=list, max_length=20)
 
 
-class StudentUpdate(BaseModel):
+class StudentUpdate(PhoneInputModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=128)
     grade: Optional[str] = Field(default=None, min_length=1, max_length=64)
     school: Optional[str] = None
@@ -26,6 +39,8 @@ class StudentUpdate(BaseModel):
     status: Optional[str] = None
     source_lead_id: Optional[int] = None
     notes: Optional[str] = None
+    # 与新建一致：可更新关联课程
+    courses: Optional[list[StudentCourseLink]] = Field(default=None, max_length=20)
 
 
 class StudentReassign(BaseModel):
@@ -54,6 +69,7 @@ class StudentOut(BaseModel):
     status: str
     source_lead_id: Optional[int] = None
     notes: str
+    linked_courses: list[dict] = Field(default_factory=list)
     created_by: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

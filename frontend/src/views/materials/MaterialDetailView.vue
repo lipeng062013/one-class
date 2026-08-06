@@ -11,12 +11,14 @@ import {
   type Material,
 } from '../../api/materials'
 import { useAuthStore } from '../../stores/auth'
+import { useListDetailStateCleanup } from '../../composables/useListScrollRestore'
 import { usePageBack } from '../../composables/usePageBack'
 import { asyncPool } from '../../utils/asyncPool'
 
 const route = useRoute()
 const router = useRouter()
 const { goBack } = usePageBack('/materials')
+useListDetailStateCleanup('materials', 'oc-material-list-state')
 const auth = useAuthStore()
 const loading = ref(false)
 const uploading = ref(false)

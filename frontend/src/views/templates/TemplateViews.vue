@@ -21,6 +21,7 @@ import {
   copyParamPlaceholder,
 } from '../../constants/templateParams'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useCardAccordion } from '../../composables/useCardAccordion'
 import { useInfiniteScroll } from '../../composables/useInfiniteScroll'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
 
@@ -58,6 +59,7 @@ const SCENE_LABELS: Record<string, string> = {
 const route = useRoute()
 const router = useRouter()
 const { isCompact } = useBreakpoint()
+const { isExpanded, toggle: toggleCard, toggleForce, collapseAll } = useCardAccordion()
 
 const pcHeaderStyle = {
   background: '#f5f0e6',
@@ -173,6 +175,7 @@ const {
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('templates', {
   visibleCount,
   enabled: isCompact,
+  stateStorageKey: LIST_STATE_KEY,
 })
 
 const infiniteCopies = computed(() => infiniteRows.value as CopyTemplate[])
@@ -243,6 +246,7 @@ function saveListState() {
 
 function runQuery() {
   clearSnapshot()
+  collapseAll()
   page.value = 1
   filterExpanded.value = false
   resetInfinite()
@@ -252,6 +256,7 @@ function runQuery() {
 
 function resetFilters() {
   clearSnapshot()
+  collapseAll()
   filters.q = ''
   filters.status = ''
   filters.system = ''
@@ -267,6 +272,7 @@ function toggleFilterExpand() {
 
 function onTabChange() {
   page.value = 1
+  collapseAll()
   resetInfinite()
   saveListState()
 }
@@ -607,15 +613,18 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- 移动卡片 -->
+    <!-- 移动卡片（互斥折叠） -->
     <div v-loading="loading" class="tpl-m tpl-card-list">
       <div v-if="!filtered.length && !loading" class="tpl-card tpl-card--empty">暂无模板</div>
       <template v-if="tab === 'copies'">
-        <div v-for="row in infiniteCopies" :key="`c-${row.id}`" class="tpl-card">
-          <div class="tpl-card__top">
-            <button type="button" class="tpl-card__name tpl-card__name--link" @click="goCopyDetail(row)">
-              {{ row.name }}
-            </button>
+        <div
+          v-for="row in infiniteCopies"
+          :key="`c-${row.id}`"
+          class="tpl-card"
+          :class="{ 'is-expanded': isExpanded(`c-${row.id}`) }"
+        >
+          <div class="tpl-card__top" @click="toggleCard(`c-${row.id}`, $event)">
+            <span class="tpl-card__name">{{ row.name }}</span>
             <div class="tpl-card__badges">
               <el-tag :type="row.is_system ? 'warning' : 'info'" size="small" effect="plain" round>
                 {{ row.is_system ? '系统' : '自定义' }}
@@ -624,32 +633,47 @@ onMounted(() => {
                 {{ row.is_active ? '启用' : '停用' }}
               </el-tag>
             </div>
-          </div>
-          <div class="tpl-card__meta" @click="goCopyDetail(row)">
-            <span><span class="k">场景</span>{{ sceneLabel(row.scene) }}</span>
-          </div>
-          <p class="tpl-card__body" @click="goCopyDetail(row)">{{ row.body }}</p>
-          <div class="tpl-card__actions">
-            <el-button size="small" type="primary" @click="goCopyDetail(row)">详情</el-button>
-            <el-button size="small" @click="openEditCopy(row)">编辑</el-button>
-            <el-button
-              size="small"
-              type="danger"
-              plain
-              :disabled="row.is_system"
-              @click="removeCopy(row)"
+            <button
+              type="button"
+              class="m-card-acc-toggle"
+              :aria-expanded="isExpanded(`c-${row.id}`)"
+              @click.stop="toggleForce(`c-${row.id}`)"
             >
-              删除
-            </el-button>
+              <el-icon class="m-card-acc-chevron" :class="{ 'is-open': isExpanded(`c-${row.id}`) }">
+                <ArrowDown />
+              </el-icon>
+            </button>
+          </div>
+          <div v-show="isExpanded(`c-${row.id}`)" class="m-card-acc-body">
+            <div class="tpl-card__meta">
+              <span><span class="k">场景</span>{{ sceneLabel(row.scene) }}</span>
+            </div>
+            <p class="tpl-card__body">{{ row.body }}</p>
+            <div class="tpl-card__actions">
+              <el-button size="small" type="primary" @click="goCopyDetail(row)">详情</el-button>
+              <el-button size="small" @click="openEditCopy(row)">编辑</el-button>
+              <el-button
+                size="small"
+                type="danger"
+                plain
+                :disabled="row.is_system"
+                @click="removeCopy(row)"
+              >
+                删除
+              </el-button>
+            </div>
           </div>
         </div>
       </template>
       <template v-else>
-        <div v-for="row in infinitePosters" :key="`p-${row.id}`" class="tpl-card">
-          <div class="tpl-card__top">
-            <button type="button" class="tpl-card__name tpl-card__name--link" @click="goPosterDetail(row)">
-              {{ row.name }}
-            </button>
+        <div
+          v-for="row in infinitePosters"
+          :key="`p-${row.id}`"
+          class="tpl-card"
+          :class="{ 'is-expanded': isExpanded(`p-${row.id}`) }"
+        >
+          <div class="tpl-card__top" @click="toggleCard(`p-${row.id}`, $event)">
+            <span class="tpl-card__name">{{ row.name }}</span>
             <div class="tpl-card__badges">
               <el-tag :type="row.is_system ? 'warning' : 'info'" size="small" effect="plain" round>
                 {{ row.is_system ? '系统' : '自定义' }}
@@ -658,22 +682,34 @@ onMounted(() => {
                 {{ row.is_active ? '启用' : '停用' }}
               </el-tag>
             </div>
-          </div>
-          <div class="tpl-card__meta" @click="goPosterDetail(row)">
-            <span><span class="k">场景</span>{{ sceneLabel(row.scene) }}</span>
-          </div>
-          <div class="tpl-card__actions">
-            <el-button size="small" type="primary" @click="goPosterDetail(row)">详情</el-button>
-            <el-button size="small" @click="openEditPoster(row)">编辑</el-button>
-            <el-button
-              size="small"
-              type="danger"
-              plain
-              :disabled="row.is_system"
-              @click="removePoster(row)"
+            <button
+              type="button"
+              class="m-card-acc-toggle"
+              :aria-expanded="isExpanded(`p-${row.id}`)"
+              @click.stop="toggleForce(`p-${row.id}`)"
             >
-              删除
-            </el-button>
+              <el-icon class="m-card-acc-chevron" :class="{ 'is-open': isExpanded(`p-${row.id}`) }">
+                <ArrowDown />
+              </el-icon>
+            </button>
+          </div>
+          <div v-show="isExpanded(`p-${row.id}`)" class="m-card-acc-body">
+            <div class="tpl-card__meta">
+              <span><span class="k">场景</span>{{ sceneLabel(row.scene) }}</span>
+            </div>
+            <div class="tpl-card__actions">
+              <el-button size="small" type="primary" @click="goPosterDetail(row)">详情</el-button>
+              <el-button size="small" @click="openEditPoster(row)">编辑</el-button>
+              <el-button
+                size="small"
+                type="danger"
+                plain
+                :disabled="row.is_system"
+                @click="removePoster(row)"
+              >
+                删除
+              </el-button>
+            </div>
           </div>
         </div>
       </template>
@@ -1127,6 +1163,9 @@ onMounted(() => {
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
 
 .tpl-card__name {

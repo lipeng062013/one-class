@@ -114,7 +114,8 @@ def test_bulk_delete_posters(client):
     assert bulk.status_code == 200, bulk.text
     assert bulk.json()["data"]["deleted_count"] == 2
     listed = client.get("/api/v1/posters", headers=h).json()["data"]
-    listed_ids = {p["id"] for p in listed}
+    items = listed["items"] if isinstance(listed, dict) else listed
+    listed_ids = {p["id"] for p in items}
     assert not set(ids) & listed_ids
 
 

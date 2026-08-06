@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.core.config import get_settings
-from app.core.deps import require_roles
+from app.core.deps import require_permissions
 from app.core.responses import ok
 from app.models.user import User
 
@@ -10,7 +10,7 @@ router = APIRouter(prefix="/system", tags=["system"])
 
 @router.get("/integrations")
 def integrations_status(
-    _: User = Depends(require_roles("admin", "operator")),
+    _: User = Depends(require_permissions("system.read")),
 ):
     """Return whether optional AI providers are configured (never expose keys)."""
     settings = get_settings()

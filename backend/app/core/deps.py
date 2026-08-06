@@ -3,6 +3,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.permissions import has_any_permission, has_permission
 from app.core.security import decode_token
 from app.models.user import User
 
@@ -29,9 +30,38 @@ def get_current_user(
 
 
 def require_roles(*roles: str):
+    """Legacy role gate. Prefer require_permissions for new code."""
+
     def _dep(user: User = Depends(get_current_user)) -> User:
         if user.role not in roles:
             raise HTTPException(status_code=403, detail="无权限")
+        return user
+
+    return _dep
+
+
+def require_permissions(*codes: str):
+    """Require any of the given permission codes (role defaults ∪ extra grants)."""
+
+    if not codes:
+        raise ValueError("require_permissions needs at least one code")
+
+    def _dep(user: User = Depends(get_current_user)) -> User:
+        if not has_any_permission(user, codes):
+            raise HTTPException(status_code=403, detail="无权限")
+        return user
+
+    return _dep
+
+
+def require_all_permissions(*codes: str):
+    if not codes:
+        raise ValueError("require_all_permissions needs at least one code")
+
+    def _dep(user: User = Depends(get_current_user)) -> User:
+        for code in codes:
+            if not has_permission(user, code):
+                raise HTTPException(status_code=403, detail="无权限")
         return user
 
     return _dep

@@ -1,6 +1,7 @@
 from app.models.content import GeneratedCopy
+from app.models.enrollment import EnrollmentRecord
 from app.models.knowledge import KnowledgeEntry
-from app.models.lead import Lead
+from app.models.lead import Lead, LeadActivity, LeadCollaborator
 from app.models.material import Material, MaterialFile
 from app.models.poster import GeneratedPoster
 from app.models.student import LearningRecord, LearningRecordFile, Student
@@ -14,6 +15,8 @@ __all__ = [
     "MaterialFile",
     "KnowledgeEntry",
     "Lead",
+    "LeadActivity",
+    "LeadCollaborator",
     "CopyTemplate",
     "PosterTemplate",
     "GeneratedCopy",
@@ -22,4 +25,5 @@ __all__ = [
     "LearningRecord",
     "LearningRecordFile",
     "TodoItem",
+    "EnrollmentRecord",
 ]

@@ -15,6 +15,14 @@
   --oc-radius: 10px;
   --oc-shadow: 0 8px 24px rgba(41, 37, 36, 0.06);
   /*
+   * 弹窗 / 抽屉 / MessageBox 底部操作区
+   * · 按钮间距统一用 gap（.tb-btn 全局 margin:0，不能靠 EP 默认相邻 margin）
+   * · 规范：docs/ui-list-page-pattern.md § 弹窗底部按钮
+   */
+  --oc-dialog-footer-gap: 12px;
+  --oc-dialog-footer-pad-y: 12px;
+  --oc-dialog-footer-pad-x: 16px;
+  /*
    * 工作台阅读宽度（仅 .dashboard.oc-page-shell 使用）
    * 详情 / 上传 / 生成等业务页：.oc-page-shell 默认吃满主区，不限宽
    * 规范：docs/ui-detail-page-pattern.md
@@ -64,6 +72,8 @@ html {
    * 会让视口右侧多一截空白。
    */
   width: 100%;
+  height: 100%;
+  height: 100dvh;
   overflow-x: hidden;
   overflow-y: auto;
 }
@@ -75,10 +85,37 @@ html {
   }
 }
 
+/*
+ * pad / 手机：滚动交给 AppLayout .main，避免 html/body 与壳层双滚动打架，
+ * 以及 100vh 大于可视区时「裁切却滑不动」。
+ */
+@media (max-width: 991px) {
+  html {
+    height: 100%;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  body {
+    height: 100%;
+    height: 100dvh;
+    overflow: hidden;
+    /* fixed 背景在部分 WebView 会放大绘制区域，关掉以免撑破壳 */
+    background-attachment: scroll;
+  }
+
+  #app {
+    height: 100%;
+    max-height: 100%;
+    overflow: hidden;
+  }
+}
+
 html,
 body {
   margin: 0;
   min-height: 100%;
+  min-height: 100dvh;
   width: 100%;
   font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
   background: var(--oc-page-gradient);
@@ -93,6 +130,7 @@ body {
 #app {
   margin: 0;
   min-height: 100%;
+  min-height: 100dvh;
   width: 100%;
   max-width: 100%;
   /* 透明，让 body 渐变与圆环装饰透上来 */
@@ -153,13 +191,20 @@ a {
 
 /**
  * 模块根列表页：el-page-header 只当标题用。
- * EP 默认会渲染可点的「返回」区，未绑 @back 时点了无反应，整站体感很差。
+ * EP 结构：.left > (.back + divider + .content)，标题在 .content。
+ * 只藏返回区与分隔线；禁止 display:none 整个 .left，否则标题会一起消失。
  */
 .el-page-header.is-title-only .el-page-header__back {
   display: none;
 }
 .el-page-header.is-title-only .el-page-header__left > .el-divider {
   display: none;
+}
+.el-page-header.is-title-only .el-page-header__content {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--oc-ink, #44403c);
+  letter-spacing: 0.02em;
 }
 
 .el-input__wrapper,
@@ -214,6 +259,71 @@ a {
   margin: 0 !important;
   border-radius: 9px;
   font-weight: 500;
+}
+
+/*
+ * 弹窗 / 抽屉 / 确认框 · 底部功能按钮间距（项目样式规则）
+ *
+ * 用法：
+ * 1. el-dialog / el-drawer 的 #footer 直接放多个 el-button（推荐）
+ * 2. 自定义包裹层加 class="oc-dialog-footer"（左右分区时内层按钮组也加）
+ * 3. 复杂页脚：左侧一组 + 右侧一组时，各组用 .oc-dialog-footer 包一层
+ *
+ * 勿在单页 scoped 里再写「取消/保存 margin」；改这里即可全站统一。
+ */
+.el-dialog__footer,
+.el-message-box__btns,
+.oc-dialog-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--oc-dialog-footer-gap, 12px);
+  box-sizing: border-box;
+}
+
+.el-dialog__footer {
+  padding-top: var(--oc-dialog-footer-pad-y, 12px);
+  padding-bottom: var(--oc-dialog-footer-pad-y, 12px);
+}
+
+/* 抽屉底部与 AppSheet 共用同一间距 token */
+.el-drawer__footer,
+.el-drawer.oc-app-sheet .el-drawer__footer {
+  box-sizing: border-box;
+}
+
+.el-drawer.oc-app-sheet .el-drawer__footer .oc-app-sheet__footer,
+.oc-app-sheet__footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--oc-dialog-footer-gap, 12px);
+  width: 100%;
+}
+
+/* 底部按钮统一吃 gap，清掉 EP 相邻 margin，避免与 .tb-btn{margin:0} 打架或双重间距 */
+.el-dialog__footer .el-button,
+.el-drawer__footer .el-button,
+.el-message-box__btns .el-button,
+.oc-dialog-footer .el-button,
+.oc-app-sheet__footer .el-button {
+  margin: 0 !important;
+}
+
+/*
+ * 页脚里「只包一层按钮组」时用 .dialog-footer / .oc-dialog-footer。
+ * 不要对任意子 div 强加 flex-end，以免破坏左右分区页脚（如工作台快捷自定义）。
+ */
+.el-dialog__footer > .dialog-footer,
+.el-message-box__btns > .dialog-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--oc-dialog-footer-gap, 12px);
+  width: 100%;
 }
 
 .tb-btn--primary {
@@ -465,8 +575,9 @@ a {
     min-width: 0;
   }
 
-  /* 表格卡吃掉中间空白，分页沉底 */
-  .main:has(.pager-bar.pc-pager) .pc-table-card {
+  /* 表格卡吃掉中间空白，分页沉底（含教务/财务 module-card） */
+  .main:has(.pager-bar.pc-pager) .pc-table-card,
+  .main:has(.pager-bar.pc-pager) .module-card {
     flex: 1 1 auto;
   }
 
@@ -534,6 +645,86 @@ a {
   border-radius: var(--oc-radius, 10px);
   padding: 12px 14px;
   box-shadow: var(--oc-shadow);
+}
+
+/*
+ * wap/pad 列表卡片 · 互斥折叠（useCardAccordion）
+ * 折叠只露头部摘要；展开后显示 meta / 正文 / 操作。
+ */
+.m-card-acc-toggle {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 4px;
+  margin: 0 0 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--oc-muted, #78716c);
+  cursor: pointer;
+  border-radius: 8px;
+  flex-shrink: 0;
+  min-width: 32px;
+  min-height: 32px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.m-card-acc-toggle:active {
+  background: rgba(161, 98, 7, 0.08);
+}
+
+.m-card-acc-chevron {
+  font-size: 16px;
+  transition: transform 0.2s ease, color 0.15s ease;
+}
+
+.m-card-acc-chevron.is-open,
+.is-expanded .m-card-acc-chevron {
+  transform: rotate(180deg);
+  color: var(--oc-primary, #a16207);
+}
+
+.m-card-acc-body {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--oc-border, #e8e0d0);
+  animation: m-card-acc-in 0.18s ease;
+}
+
+@keyframes m-card-acc-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 展开态描边提示 */
+.is-expanded.m-card,
+.stu-card.is-expanded,
+.lead-card.is-expanded,
+.mat-card.is-expanded,
+.copy-card.is-expanded,
+.user-card.is-expanded,
+.know-card.is-expanded,
+.tpl-card.is-expanded,
+.learn-card.is-expanded {
+  box-shadow: 0 6px 16px rgba(41, 37, 36, 0.06);
+  border-color: var(--el-color-primary-light-7, #dbbf94);
+}
+
+/* 折叠后头部内 meta 若仍有 margin，去掉首块多余顶距 */
+.m-card-acc-body > .stu-card__meta,
+.m-card-acc-body > .mat-card__meta,
+.m-card-acc-body > .copy-card__meta,
+.m-card-acc-body > .lead-card__body,
+.m-card-acc-body > .know-card__body,
+.m-card-acc-body > .tpl-card__meta,
+.m-card-acc-body > .user-card__actions {
+  margin-top: 0;
 }
 
 .m-card-head {
@@ -637,39 +828,60 @@ a {
   }
 
   /*
-   * wap / pad · Dialog：不超过视口高度；过高时 body 内滚动；弹窗本身保持居中固定。
-   * EP 默认 margin-top + overlay 滚动会在内容超高时把弹窗顶走，这里统一改为 flex 居中 + 内部滚动。
+   * wap / pad · Dialog：
+   * - 高度用 svh 并多留边，避免贴底后滚动时底部橡皮筋闪白
+   * - 只允许 .el-dialog__body 内滚，遮罩与弹窗壳不滚、不连锁
    */
+  .el-overlay.el-modal-dialog,
+  .el-overlay:has(> .el-overlay-dialog) {
+    overscroll-behavior: none;
+  }
+
   .el-overlay-dialog {
     display: flex !important;
     align-items: center;
     justify-content: center;
-    /* 禁止遮罩层自身滚动，避免弹窗随滚动位移 */
+    box-sizing: border-box;
+    /* 安全区 + 额外边距，弹窗不要顶满可视区 */
+    padding:
+      max(16px, env(safe-area-inset-top, 0px))
+      max(12px, env(safe-area-inset-right, 0px))
+      max(16px, env(safe-area-inset-bottom, 0px))
+      max(12px, env(safe-area-inset-left, 0px));
     overflow: hidden !important;
+    overscroll-behavior: none;
   }
 
   .el-dialog {
     display: flex;
     flex-direction: column;
     margin: 0 !important;
-    /* 上下留白，兼容地址栏/安全区；dvh 优先，vh 回退 */
-    max-height: calc(100vh - 24px);
-    max-height: calc(100dvh - 24px);
+    /* 比 dvh 更稳的小视口高度，再减边距，避免「过高 + 底部闪空白」 */
+    max-height: calc(100vh - 48px);
+    max-height: calc(100dvh - 48px);
+    max-height: calc(100svh - 48px);
     overflow: hidden;
+    /* 不透明底，overscroll 露边时不透出背后页面 */
+    background: var(--oc-card, #fffdf8);
   }
 
   .el-dialog__header,
   .el-dialog__footer {
     flex-shrink: 0;
+    background: var(--oc-card, #fffdf8);
   }
 
   .el-dialog__body {
-    flex: 1 1 auto;
+    /* flex-basis:0 才能在列 flex 里真正限高，内容改在内部滚 */
+    flex: 1 1 0;
     min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
+    /* none：禁止橡皮筋把底部撑出空白闪烁 */
+    overscroll-behavior: none;
+    overscroll-behavior-y: none;
+    background: var(--oc-card, #fffdf8);
   }
 }
 
@@ -682,9 +894,173 @@ a {
     font-size: 15px;
   }
 
+  .el-dialog {
+    max-height: calc(100vh - 32px);
+    max-height: calc(100dvh - 32px);
+    max-height: calc(100svh - 32px);
+  }
+
   .el-dialog__body {
     padding: 12px 14px;
   }
+}
+
+/*
+ * AppSheet · 业务侧栏响应式
+ * PC：右侧抽屉；wap/pad：底部上滑（direction=btt）
+ */
+.el-drawer.oc-app-sheet {
+  --el-drawer-bg-color: var(--oc-card, #fffdf8);
+  background: var(--oc-card, #fffdf8) !important;
+}
+
+.el-drawer.oc-app-sheet .el-drawer__header {
+  margin-bottom: 12px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--oc-border, #e8e0d0);
+  color: var(--oc-ink, #44403c);
+  font-weight: 650;
+}
+
+.el-drawer.oc-app-sheet .el-drawer__body {
+  padding: 12px 16px 8px;
+  background: var(--oc-card, #fffdf8);
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.el-drawer.oc-app-sheet .el-drawer__footer {
+  padding: 10px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--oc-border, #e8e0d0);
+  background: var(--oc-card, #fffdf8);
+}
+
+/* 底部面板：圆角顶边 + 拖拽感 */
+.el-drawer.oc-app-sheet.is-bottom-sheet {
+  border-radius: 16px 16px 0 0 !important;
+  overflow: hidden;
+  box-shadow: 0 -8px 32px rgba(41, 37, 36, 0.14) !important;
+}
+
+.el-drawer.oc-app-sheet.is-bottom-sheet .el-drawer__header {
+  position: relative;
+  padding-top: 20px;
+}
+
+.el-drawer.oc-app-sheet.is-bottom-sheet .el-drawer__header::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 36px;
+  height: 4px;
+  border-radius: 999px;
+  background: #d6d3d1;
+}
+
+@media (max-width: 991px) {
+  /* 教务/财务列表：表格横向滚动，避免挤成一团 */
+  .oc-compact-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -4px;
+    padding: 0 4px;
+  }
+
+  .oc-compact-table-wrap .el-table {
+    min-width: 640px;
+  }
+
+  /* 筛选条纵向堆叠 */
+  .oc-compact-filters .filter-row,
+  .oc-compact-filters .filter-panel,
+  .module-card .filter-row,
+  .filter-bar .filter-row {
+    flex-direction: column;
+    align-items: stretch !important;
+  }
+
+  .oc-compact-filters .filter-item,
+  .module-card .filter-item,
+  .filter-bar .filter-item {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .oc-compact-filters .filter-select,
+  .oc-compact-filters .filter-search,
+  .module-card .filter-select,
+  .module-card .filter-search,
+  .filter-bar .filter-select,
+  .filter-bar .filter-search {
+    width: 100% !important;
+    max-width: none;
+  }
+
+  .page-toolbar {
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 10px;
+  }
+
+  .page-toolbar .toolbar-right,
+  .page-toolbar .toolbar-actions {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .page-toolbar .toolbar-right .el-button,
+  .page-toolbar .toolbar-actions .el-button,
+  .page-toolbar > .el-button {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* PC 专用块 / 移动专用块（与线索列表同套路） */
+  .oc-pc-only {
+    display: none !important;
+  }
+
+  .oc-m-only {
+    display: block !important;
+  }
+
+  .pc-filters .el-form--inline,
+  .pc-filters .pc-filter-form.el-form--inline {
+    display: block;
+  }
+
+  .pc-filters .el-form-item {
+    display: flex;
+    width: 100%;
+    margin-right: 0;
+  }
+
+  .pc-filters .el-input,
+  .pc-filters .el-select {
+    width: 100% !important;
+  }
+}
+
+@media (min-width: 992px) {
+  .oc-m-only {
+    display: none !important;
+  }
+
+  .oc-pc-only {
+    display: block;
+  }
+}
+
+/* 默认隐藏移动块（首屏未匹配 media 时） */
+.oc-m-only {
+  display: none;
 }
 
 /*

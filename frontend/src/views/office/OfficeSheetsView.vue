@@ -81,6 +81,7 @@ onFrameStart()
   /* 抵消 layout main 内边距，让表格尽量全屏 */
   margin: -18px -20px;
   height: calc(100vh - 56px);
+  height: calc(100dvh - 56px);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -167,6 +168,7 @@ onFrameStart()
   .office-page {
     margin: -12px;
     height: calc(100vh - 56px);
+    height: calc(100dvh - 56px);
   }
 
   .subtitle {

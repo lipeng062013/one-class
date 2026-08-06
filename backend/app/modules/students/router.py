@@ -3,7 +3,7 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.deps import get_current_user, require_roles
+from app.core.deps import get_current_user, require_permissions
 from app.core.image_thumb import DEFAULT_THUMB_EDGE, read_image_variant
 from app.core.responses import fail, ok
 from app.core.storage import Storage, get_storage
@@ -34,15 +34,22 @@ MAX_FILE_SIZE = 8 * 1024 * 1024
 # ── managers ──────────────────────────────────────────────
 
 
-# 学生模块：运营不可见；仅 admin / teacher
-_student_roles = require_roles("admin", "teacher")
+_student_roles = require_permissions("students.read", "students.write")
+_student_manage_roles = require_permissions("students.write")
+
+
+def _student_payload(db: Session, student, user: User) -> dict:
+    payload = svc.student_to_dict(db, student)
+    if user.role == "teacher":
+        payload["phone"] = None
+    return payload
 
 
 @router.get("/students/managers")
 def get_managers(
     include_inactive: bool = Query(True),
     db: Session = Depends(get_db),
-    _: User = Depends(_student_roles),
+    user: User = Depends(_student_roles),
 ):
     return ok(svc.list_managers(db, include_inactive=include_inactive))
 
@@ -62,23 +69,24 @@ def list_students(
     page: int = Query(1, ge=1, description="页码，从 1 开始"),
     page_size: int = Query(20, ge=1, le=100, description="每页条数，最大 100"),
     db: Session = Depends(get_db),
-    _: User = Depends(_student_roles),
+    user: User = Depends(_student_roles),
 ):
     result = svc.list_students(
         db,
         grade=grade,
         name=name,
-        phone=phone,
+        phone=None if user.role == "teacher" else phone,
         status=status,
         school=school,
         academic_manager_id=academic_manager_id,
         q=q,
         page=page,
         page_size=page_size,
+        viewer=user,
     )
     return ok(
         {
-            "items": [svc.student_to_dict(db, s) for s in result["items"]],
+            "items": [_student_payload(db, s, user) for s in result["items"]],
             "total": result["total"],
             "page": result["page"],
             "page_size": result["page_size"],
@@ -90,9 +98,11 @@ def list_students(
 def create_student(
     body: StudentCreate,
     db: Session = Depends(get_db),
-    user: User = Depends(_student_roles),
+    user: User = Depends(_student_manage_roles),
 ):
-    result = svc.create_student(db, user, body.model_dump())
+    payload = body.model_dump()
+    # courses 为嵌套模型，已 model_dump 成 dict 列表
+    result = svc.create_student(db, user, payload)
     if isinstance(result, str):
         return fail("STUDENT_CREATE_FAILED", result, status_code=400)
     return ok(svc.student_to_dict(db, result), status_code=201)
@@ -102,9 +112,9 @@ def create_student(
 def reassign_students(
     body: StudentReassign,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles("admin")),
+    user: User = Depends(require_permissions("students.delete")),
 ):
-    if user.role != "admin":
+    if not svc.can_reassign(user):
         return fail("FORBIDDEN", "无权限转交", status_code=403)
     result = svc.reassign_students(
         db,
@@ -121,7 +131,7 @@ def reassign_students(
 def bulk_delete_students(
     body: StudentBulkDelete,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles("admin")),
+    user: User = Depends(require_permissions("students.delete")),
 ):
     if not svc.can_delete_student(user):
         return fail("FORBIDDEN", "仅负责人可删除学生", status_code=403)
@@ -135,12 +145,95 @@ def bulk_delete_students(
 def get_student(
     student_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(_student_roles),
+    user: User = Depends(_student_roles),
 ):
+    from app.core.roles import is_finance_scoped_role
+
     s = svc.get_student(db, student_id)
     if not s:
         return fail("NOT_FOUND", "学生不存在", status_code=404)
-    return ok(svc.student_to_dict(db, s))
+    # 学管师不可查看他人名下学员详情（报名深链等）
+    if is_finance_scoped_role(user.role) and s.academic_manager_id != user.id:
+        return fail("NOT_FOUND", "学生不存在", status_code=404)
+    return ok(_student_payload(db, s, user))
+
+
+@router.get("/students/{student_id}/course-packages")
+def student_course_packages(
+    student_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(_student_roles),
+):
+    """报读课程（课包聚合）。"""
+    result = svc.list_student_course_packages(db, student_id)
+    if result.get("error"):
+        return fail("NOT_FOUND", result["error"], status_code=404)
+    return ok(result)
+
+
+@router.get("/students/{student_id}/orders")
+def student_orders(
+    student_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: User = Depends(_student_roles),
+):
+    """消费记录（财务订单，分页）。"""
+    result = svc.list_student_orders(db, student_id, page=page, page_size=page_size)
+    if result.get("error"):
+        return fail("NOT_FOUND", result["error"], status_code=404)
+    return ok(result)
+
+
+@router.get("/students/{student_id}/activity")
+def student_activity(
+    student_id: int,
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _: User = Depends(_student_roles),
+):
+    """学员动态时间线。"""
+    result = svc.list_student_activity(db, student_id, limit=limit)
+    if result.get("error"):
+        return fail("NOT_FOUND", result["error"], status_code=404)
+    return ok(result)
+
+
+@router.get("/students/{student_id}/class-records")
+def student_class_records(
+    student_id: int,
+    view: str = Query("completed", pattern="^(completed|pending)$"),
+    start: str | None = None,
+    end: str | None = None,
+    class_id: int | None = None,
+    course_id: int | None = None,
+    teacher_id: int | None = None,
+    attendance_status: str | None = None,
+    record_status: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: User = Depends(_student_roles),
+):
+    """学员详情中的已上课 / 待上课记录。"""
+    result = svc.list_student_class_records(
+        db,
+        student_id,
+        view=view,
+        start=start,
+        end=end,
+        class_id=class_id,
+        course_id=course_id,
+        teacher_id=teacher_id,
+        attendance_status=attendance_status,
+        record_status=record_status,
+        page=page,
+        page_size=page_size,
+    )
+    if result.get("error"):
+        return fail("NOT_FOUND", result["error"], status_code=404)
+    return ok(result)
 
 
 @router.get("/students/{student_id}/growth-report")
@@ -231,7 +324,7 @@ def patch_student(
     student_id: int,
     body: StudentUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(_student_roles),
+    _: User = Depends(_student_manage_roles),
 ):
     s = svc.get_student(db, student_id)
     if not s:
@@ -246,7 +339,7 @@ def patch_student(
 def delete_student(
     student_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles("admin")),
+    user: User = Depends(require_permissions("students.delete")),
 ):
     s = svc.get_student(db, student_id)
     if not s:
@@ -264,10 +357,13 @@ def delete_student(
 def list_learning(
     student_id: int | None = None,
     teacher_id: int | None = None,
+    q: str | None = None,
     mine: bool | None = Query(
         None,
         description="True=仅自己填写；False=全部；默认：老师=自己，负责人=全部",
     ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     user: User = Depends(_student_roles),
 ):
@@ -282,15 +378,23 @@ def list_learning(
         )
     if want_mine and student_id is None:
         tid = user.id
-    rows = svc.list_learning_records(db, student_id=student_id, teacher_id=tid)
-    return ok([svc.learning_to_dict(db, r) for r in rows])
+    return ok(
+        svc.list_learning_records(
+            db,
+            student_id=student_id,
+            teacher_id=tid,
+            q=q,
+            page=page,
+            page_size=page_size,
+        )
+    )
 
 
 @router.post("/learning-records")
 def create_learning(
     body: LearningRecordCreate,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles("admin", "teacher")),
+    user: User = Depends(require_permissions("learning.write")),
 ):
     if not svc.can_write_learning(user):
         return fail("FORBIDDEN", "无权限写学情", status_code=403)
@@ -315,7 +419,7 @@ def download_learning_file(
     record = svc.get_learning_record(db, mf.record_id)
     if not record:
         return fail("NOT_FOUND", "学情不存在", status_code=404)
-    if user.role not in {"admin", "operator", "teacher"}:
+    if user.role not in {"admin", "operator", "teacher", "cr", "academic_manager"}:
         return fail("FORBIDDEN", "无权限", status_code=403)
     try:
         data, media_type = read_image_variant(
@@ -349,7 +453,7 @@ def patch_learning(
     record_id: int,
     body: LearningRecordUpdate,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles("admin", "teacher")),
+    user: User = Depends(require_permissions("learning.write")),
 ):
     r = svc.get_learning_record(db, record_id)
     if not r:
@@ -365,7 +469,7 @@ def patch_learning(
 def delete_learning(
     record_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles("admin", "teacher")),
+    user: User = Depends(require_permissions("learning.write")),
 ):
     r = svc.get_learning_record(db, record_id)
     if not r:
@@ -381,7 +485,7 @@ async def upload_learning_file(
     record_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles("admin", "teacher")),
+    user: User = Depends(require_permissions("learning.write")),
     storage: Storage = Depends(get_storage),
 ):
     r = svc.get_learning_record(db, record_id)

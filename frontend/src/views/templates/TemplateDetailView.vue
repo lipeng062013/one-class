@@ -18,6 +18,7 @@ import {
   POSTER_LAYOUT_META,
   copyParamPlaceholder,
 } from '../../constants/templateParams'
+import { useListDetailStateCleanup } from '../../composables/useListScrollRestore'
 import { usePageBack } from '../../composables/usePageBack'
 
 const SCENE_LABELS: Record<string, string> = {
@@ -32,6 +33,7 @@ const SCENE_LABELS: Record<string, string> = {
 const route = useRoute()
 const router = useRouter()
 const { goBack } = usePageBack('/templates')
+useListDetailStateCleanup('templates', 'oc-template-list-state')
 
 const loading = ref(false)
 const saving = ref(false)

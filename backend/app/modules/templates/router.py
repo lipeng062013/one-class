@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.deps import require_roles
+from app.core.deps import require_permissions
 from app.core.responses import ok
 from app.models.template import CopyTemplate, PosterTemplate
 from app.models.user import User
@@ -17,7 +17,7 @@ from app.modules.templates.schemas import (
 
 router = APIRouter(prefix="/templates", tags=["templates"])
 
-_ops = require_roles("admin", "operator")
+_ops = require_permissions("templates.manage")
 
 
 def _serialize_copy(tpl: CopyTemplate) -> dict:

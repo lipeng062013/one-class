@@ -67,6 +67,14 @@ def client(tmp_path: Path):
             role="teacher",
         )
     )
+    db.add(
+        User(
+            username="cr1",
+            password_hash=hash_password("cr11234"),
+            display_name="学管甲",
+            role="cr",
+        )
+    )
     db.commit()
     seed_system_templates(db)
     seed_sample_knowledge(db)
@@ -84,3 +92,11 @@ def auth_header(client: TestClient, username: str, password: str) -> dict:
     assert res.status_code == 200, res.text
     token = res.json()["data"]["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def first_manager_id(client: TestClient, headers: dict, username: str = "cr1") -> int:
+    """Return a CR 学管师 id from /students/managers (default demo cr1)."""
+    managers = client.get("/api/v1/students/managers", headers=headers).json()["data"]
+    match = next((m for m in managers if m.get("username") == username), None)
+    assert match is not None, f"manager {username} not found in {managers}"
+    return int(match["id"])

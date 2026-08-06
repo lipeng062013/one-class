@@ -6,12 +6,20 @@ class UserCreate(BaseModel):
     display_name: str = Field(min_length=1, max_length=128)
     role: str
     password: str = Field(min_length=6, max_length=128)
+    extra_permissions: list[str] | None = None
 
 
 class UserUpdate(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=128)
     role: str | None = None
     is_active: bool | None = None
+    extra_permissions: list[str] | None = None
+
+
+class UserPermissionsUpdate(BaseModel):
+    """Set extra permission codes (beyond role defaults)."""
+
+    extra_permissions: list[str] = Field(default_factory=list)
 
 
 class ResetPasswordRequest(BaseModel):
@@ -25,5 +33,7 @@ class UserPublic(BaseModel):
     role: str
     is_active: bool
     created_at: str | None = None
+    extra_permissions: list[str] = []
+    permissions: list[str] = []
 
     model_config = {"from_attributes": True}

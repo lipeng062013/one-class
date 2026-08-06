@@ -1,14 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
+from app.core.timeutil import now as _utcnow
 
 class Material(Base):
     __tablename__ = "materials"
@@ -33,7 +29,6 @@ class Material(Base):
         cascade="all, delete-orphan",
         order_by="MaterialFile.sort_order",
     )
-
 
 class MaterialFile(Base):
     __tablename__ = "material_files"

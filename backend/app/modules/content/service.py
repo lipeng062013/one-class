@@ -204,9 +204,9 @@ def serialize_copy(
 
 
 def generate_copy(db: Session, user: User, body: GenerateCopyRequest) -> dict[str, Any]:
-    if user.role == "teacher":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-    if user.role not in {"admin", "operator"}:
+    from app.core.permissions import has_permission
+
+    if not has_permission(user, "copies.use"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
     mode = body.mode or "template"
@@ -290,8 +290,33 @@ def generate_copy(db: Session, user: User, body: GenerateCopyRequest) -> dict[st
     return serialize_copy(copy, banned_hits=banned, llm_error=llm_error)
 
 
-def list_copies(db: Session) -> list[GeneratedCopy]:
-    return db.query(GeneratedCopy).order_by(GeneratedCopy.id.desc()).all()
+def list_copies(
+    db: Session,
+    *,
+    q: str | None = None,
+    mode: str | None = None,
+    platform: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> dict:
+    from app.core.pagination import clamp_page, clamp_page_size, page_payload, paginate_query
+
+    page = clamp_page(page)
+    page_size = clamp_page_size(page_size)
+    query = db.query(GeneratedCopy)
+    if mode:
+        query = query.filter(GeneratedCopy.mode == mode)
+    if platform:
+        query = query.filter(GeneratedCopy.platform == platform)
+    if q and q.strip():
+        qq = q.strip()
+        query = query.filter(
+            (GeneratedCopy.title.contains(qq)) | (GeneratedCopy.body.contains(qq))
+        )
+    query = query.order_by(GeneratedCopy.id.desc())
+    rows, total = paginate_query(query, page=page, page_size=page_size)
+    items = [serialize_copy_detail(db, c) for c in rows]
+    return page_payload(items, total=total, page=page, page_size=page_size)
 
 
 def get_copy(db: Session, copy_id: int) -> GeneratedCopy:
