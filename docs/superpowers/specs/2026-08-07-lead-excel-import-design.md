@@ -1,21 +1,21 @@
-# Lead Excel Import Design
+# 线索 Excel 导入功能设计
 
-## Goal
+## 目标
 
-Add a reliable Excel import workflow to the lead-management page. The workflow accepts the supplied legacy `.xls` template and `.xlsx` files, extends lead records with the template's business fields, reports row-level outcomes, and is verified by importing a populated 20-row workbook.
+在线索管理页面增加可靠的 Excel 导入功能。功能需直接支持用户提供的旧版 `.xls` 模板及 `.xlsx` 文件，扩展线索记录以保存模板中的业务字段，返回逐行处理结果，并通过导入一份包含 20 条数据的工作簿完成验证。
 
-## Scope
+## 功能范围
 
-- Add an import action and result dialog to the existing lead list page.
-- Accept one `.xls` or `.xlsx` file up to 5 MB and 1,000 data rows.
-- Add a downloadable standard template.
-- Extend lead storage, API responses, list display, and detail display with the imported fields.
-- Populate the supplied workbook with 20 representative rows and use it for end-to-end verification.
-- Keep the existing lead creation and follow-up workflows intact.
+- 在现有线索列表页增加导入入口和结果弹窗。
+- 每次上传一个 `.xls` 或 `.xlsx` 文件，文件最大 5 MB，最多包含 1000 条数据。
+- 提供系统标准模板下载。
+- 扩展线索存储、接口返回、列表展示和详情展示，加入模板中的业务字段。
+- 在用户提供的工作簿中填入 20 条有代表性的测试数据，并用它完成端到端验证。
+- 保持现有线索新建、编辑和跟进流程不变。
 
-## Workbook Contract
+## 工作簿格式
 
-The standard template contains these columns in order:
+标准模板按以下顺序包含 11 列：
 
 1. `编号`
 2. `姓名`
@@ -29,117 +29,117 @@ The standard template contains these columns in order:
 10. `创建人`
 11. `备注`
 
-`姓名` and `手机号` are required. `手机号` must be an 11-digit mainland mobile number. `年龄` is optional but, when present, must be an integer from 1 through 99. Other cells may be blank.
+`姓名`和`手机号`为必填项。`手机号`必须是 11 位中国大陆手机号码。`年龄`可以为空，填写时必须是 1 至 99 的整数。其他单元格可以为空。
 
-## Data Model
+## 数据模型
 
-The `leads` table gains these nullable or default-empty fields:
+`leads` 表新增以下可空或默认为空的字段：
 
-- `external_code`: external lead identifier from `编号`; indexed for duplicate lookup.
-- `school`: school name.
-- `grade`: grade label.
-- `age`: integer age.
-- `campus`: campus label.
-- `imported_creator_name`: original text from `创建人`.
+- `external_code`：保存`编号`对应的外部线索编号，并建立索引用于重复检查。
+- `school`：学校名称。
+- `grade`：年级名称。
+- `age`：整数年龄。
+- `campus`：校区名称。
+- `imported_creator_name`：保存`创建人`列的原始文本。
 
-Existing fields remain authoritative for core lead behavior:
+现有字段继续作为线索核心业务字段：
 
-- `student_or_parent_name` stores `姓名`.
-- `phone` stores `手机号`.
-- `source` stores the normalized source code.
-- `channel_note` preserves an unrecognized source as `原来源渠道：<value>`.
-- `owner_id` stores the matched assignee.
-- `notes` stores `备注`.
-- `status` defaults to `new`.
-- The authenticated importer remains the actor in the activity audit trail.
+- `student_or_parent_name` 保存`姓名`。
+- `phone` 保存`手机号`。
+- `source` 保存标准化后的来源代码。
+- `channel_note` 在来源无法识别时保存`原来源渠道：<原始值>`。
+- `owner_id` 保存匹配到的归属人。
+- `notes` 保存`备注`。
+- `status` 默认设置为 `new`，即“新建”。
+- 活动时间线中的操作人始终记录实际执行导入的登录用户。
 
-Startup migration follows the repository's existing idempotent SQLite `ALTER TABLE ADD COLUMN` pattern.
+数据库升级沿用项目现有的 SQLite 幂等 `ALTER TABLE ADD COLUMN` 方式，重复启动不会重复添加字段。
 
-## Source And User Mapping
+## 来源与用户映射
 
-Source values are trimmed before matching:
+来源文本先去除首尾空格，再按以下规则匹配：
 
-| Workbook value | Stored source |
+| 工作簿内容 | 保存的来源代码 |
 | --- | --- |
-| 老带新, 转介绍 | `referral` |
+| 老带新、转介绍 | `referral` |
 | 大众点评 | `dianping` |
 | 微信 | `wechat` |
 | 到店 | `walkin` |
-| 其他 or blank | `other` |
-| Any other text | `other`, with original text in `channel_note` |
+| 其他或空白 | `other` |
+| 其他任何文本 | 保存为 `other`，原文同时写入 `channel_note` |
 
-`归属人` matches an active user's display name or username. A unique match sets `owner_id`. A missing or ambiguous match does not reject the row: the lead is imported without an owner and the result contains a warning. `创建人` is stored as plain imported text and never overrides the authenticated audit actor.
+`归属人`按启用用户的显示名或用户名进行匹配。唯一匹配时写入 `owner_id`；没有匹配或出现多个匹配时，该行仍然导入，负责人留空，并在导入结果中返回警告。`创建人`只作为导入原文保存，不能覆盖系统审计记录中的实际操作人。
 
-## Duplicate Rules
+## 重复数据规则
 
-A row is skipped as a duplicate when either of these non-empty values already appeared earlier in the same file or exists in the database:
+当以下任一非空值已经出现在当前文件的前面行，或已经存在于数据库中时，该行按重复数据跳过：
 
-- normalized `手机号`
-- normalized `编号`
+- 标准化后的`手机号`
+- 标准化后的`编号`
 
-The first valid occurrence wins. Duplicate rows are not failures and are reported separately with their row number and reason.
+同一值第一次出现的有效数据优先。重复行不计为失败，结果中单独返回行号和跳过原因。
 
-## Backend Design
+## 后端设计
 
-Add a multipart endpoint under the lead router for users with `leads.write` permission. The endpoint validates extension, size, worksheet headers, and row count before importing. Legacy `.xls` parsing uses `xlrd`; `.xlsx` parsing uses `openpyxl`. Both parsers produce the same normalized row structure, and service-layer validation and persistence operate only on that structure.
+在线索路由下增加文件上传接口，仅允许拥有 `leads.write` 权限的用户调用。接口在导入前校验文件扩展名、文件大小、工作表表头和数据行数。旧版 `.xls` 使用 `xlrd` 解析，`.xlsx` 使用 `openpyxl` 解析；两种解析器都输出相同的标准化行结构，业务校验和数据库写入只处理该标准结构。
 
-Valid rows are inserted with a create activity attributed to the authenticated importer. Row validation, duplicate checks, and user-match warnings accumulate independently so one bad row does not block other valid rows. Valid rows commit together after all rows are processed. A file parsing or database-level failure rolls back the entire batch.
+每条有效线索写入时，都创建一条由当前登录用户执行的建档活动。逐行收集字段校验、重复检查和用户匹配警告，因此单行问题不会阻止其他有效行。所有有效行处理完成后统一提交；如果发生文件解析错误或数据库级异常，则整批回滚。
 
-The response contains:
+接口返回以下汇总字段：
 
-- `imported_count`
-- `duplicate_count`
-- `failed_count`
-- `warning_count`
-- row-level `details` with row number, category, and message
+- `imported_count`：成功导入数量。
+- `duplicate_count`：重复跳过数量。
+- `failed_count`：校验失败数量。
+- `warning_count`：警告数量。
+- `details`：逐行结果，包含行号、结果分类和说明。
 
-The existing single-create endpoint remains unchanged apart from supporting the new optional lead fields.
+现有单条新建接口保持原有行为，只增加对新可选字段的支持。
 
-## Frontend Design
+## 前端设计
 
-The lead page toolbar gains an upload-icon `导入` button beside `新建线索`. It opens an Element Plus dialog with:
+线索页工具栏在“新建线索”旁增加带上传图标的“导入”按钮。点击后打开 Element Plus 弹窗，包含：
 
-- one-file `.xls,.xlsx` selection;
-- a `下载导入模板` command;
-- file size and row-limit guidance;
-- upload progress and disabled states;
-- a result summary for imported, duplicate, failed, and warning counts;
-- a compact row-detail table showing row number and reason.
+- 单文件 `.xls,.xlsx` 选择控件。
+- “下载导入模板”命令。
+- 文件大小和数据行数限制说明。
+- 上传进度及提交中的禁用状态。
+- 成功、重复、失败和警告四类结果汇总。
+- 展示行号和原因的紧凑型结果明细表。
 
-After at least one row imports successfully, the dialog triggers a fresh list request and returns pagination to the first page so the new records are visible. Desktop table and mobile cards expose school, grade, campus, and external code without removing existing status and follow-up controls. The lead detail view shows every new field.
+只要至少成功导入一条数据，弹窗完成后就重新请求线索列表，并回到第一页以展示新记录。桌面表格和移动端卡片增加学校、年级、校区和外部编号信息，同时保留现有状态和跟进操作。线索详情页展示全部新增字段。
 
-## Error Handling
+## 错误处理
 
-- Missing required headers rejects the file before any row is written.
-- Missing name or phone, invalid phone, and invalid age fail only that row.
-- Database and in-file duplicates skip only that row.
-- Unmatched or ambiguous owner names create warnings and import without an owner.
-- Unknown source values import as `other` and preserve the original source text.
-- Unsupported files, files larger than 5 MB, and sheets over 1,000 data rows return a clear request-level error.
-- Parser or database exceptions return a safe error message and leave the database unchanged.
+- 缺少必需表头时，在写入任何数据前拒绝整个文件。
+- 姓名或手机号为空、手机号格式错误、年龄非法时，只将对应行记为失败。
+- 数据库内重复或文件内重复时，只跳过对应行。
+- 归属人未匹配或匹配不唯一时，导入该行但负责人留空，并返回警告。
+- 无法识别的来源保存为 `other`，同时保留原始来源文本。
+- 文件格式不支持、超过 5 MB 或超过 1000 条数据时，返回明确的文件级错误。
+- 解析器或数据库发生异常时，返回安全的错误信息，数据库不保留本批次的任何写入。
 
-## Testing
+## 测试方案
 
-Backend tests cover:
+后端自动化测试覆盖：
 
-- valid `.xls` import and field mapping;
-- valid `.xlsx` import;
-- source normalization and unknown-source preservation;
-- database and within-file duplicate detection by phone and external code;
-- invalid required fields, phone, and age with partial success;
-- matched, missing, and ambiguous assignees;
-- missing headers, unsupported files, size and row limits;
-- permission denial for users without `leads.write`;
-- rollback on persistence failure.
+- 有效 `.xls` 文件的导入和字段映射。
+- 有效 `.xlsx` 文件导入。
+- 来源标准化及未知来源原文保留。
+- 按手机号和外部编号检查数据库重复与文件内重复。
+- 姓名、手机号或年龄不合法时的部分成功导入。
+- 归属人匹配成功、未匹配和匹配不唯一三种情况。
+- 缺少表头、格式不支持、文件大小限制和行数限制。
+- 无 `leads.write` 权限用户被拒绝。
+- 数据库写入异常时整批回滚。
 
-Frontend verification includes the existing TypeScript build gate and browser testing at desktop and compact viewports. The end-to-end acceptance test populates the supplied template with 20 unique rows, imports it through the page, confirms all 20 appear with mapped fields, then uploads the same file again and confirms all 20 are reported as duplicates.
+前端验证包括现有 TypeScript 构建检查，以及桌面和紧凑视口下的浏览器测试。端到端验收时，先在用户提供的模板中填入 20 条唯一数据，通过页面导入并确认 20 条线索及其映射字段正确显示；随后再次上传同一文件，确认 20 条全部被识别为重复数据且没有新增记录。
 
-## Acceptance Criteria
+## 验收标准
 
-1. A permitted user can upload the supplied `.xls` template directly from the lead page.
-2. The populated 20-row workbook imports 20 valid leads and refreshes the list.
-3. Imported fields appear correctly in lead list and detail views.
-4. Owner, creator, source, and audit behavior follow the mapping rules above.
-5. Row problems produce actionable row-level results without blocking unrelated valid rows.
-6. Re-uploading the same workbook creates no duplicates and reports 20 skipped rows.
-7. Existing lead CRUD, follow-up, permissions, responsive layouts, and tests continue to work.
+1. 有权限的用户可以在线索页面直接上传用户提供的 `.xls` 模板。
+2. 填有 20 条有效数据的工作簿可以成功导入 20 条线索，并自动刷新列表。
+3. 导入字段在线索列表和详情页中正确显示。
+4. 归属人、创建人、来源和审计记录符合以上映射规则。
+5. 单行问题返回可操作的逐行说明，且不阻止无关的有效行。
+6. 再次上传同一工作簿不会产生重复记录，并明确显示 20 条已跳过。
+7. 现有线索增删改查、跟进、权限控制、响应式布局和测试继续正常工作。
