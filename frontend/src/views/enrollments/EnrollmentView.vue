@@ -23,10 +23,13 @@ import {
 import { listUsersApi, type UserRow } from '../../api/users'
 import { listAcademicTeachersApi, listCoursesApi, type Course } from '../../api/academic'
 import AppSheet from '../../components/AppSheet.vue'
+import MobileActionBar from '../../components/MobileActionBar.vue'
+import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useAuthStore } from '../../stores/auth'
 import { sanitizePhoneInput, validateRequiredPhone } from '../../utils/phone'
 
 const auth = useAuthStore()
+const { isCompact } = useBreakpoint()
 const route = useRoute()
 const router = useRouter()
 
@@ -891,7 +894,7 @@ onUnmounted(() => {
               </el-form-item>
 
               <div v-if="purchaseRows.length" class="purchase-table-wrap">
-                <el-table :data="purchaseRows" border size="small" class="purchase-table">
+                <el-table v-if="!isCompact" :data="purchaseRows" border size="small" class="purchase-table">
                   <el-table-column label="购买项目" min-width="168">
                     <template #default="{ row }">
                       <div class="purchase-name">{{ row.course.name }}</div>
@@ -997,6 +1000,58 @@ onUnmounted(() => {
                     </template>
                   </el-table-column>
                 </el-table>
+                <div v-else class="purchase-mobile-list">
+                  <section v-for="row in purchaseRows" :key="row.course.id" class="purchase-mobile-card">
+                    <header class="purchase-mobile-head">
+                      <div>
+                        <div class="purchase-name">{{ row.course.name }}</div>
+                        <span class="purchase-type">{{ row.course.type_label }}</span>
+                      </div>
+                      <el-button link type="danger" aria-label="移除课程" @click="removePurchase(row.course.id)">
+                        <el-icon><Delete /></el-icon>
+                      </el-button>
+                    </header>
+                    <label class="purchase-mobile-field">
+                      <span>定价标准</span>
+                      <el-select v-model="row.detail.price_standard">
+                        <el-option :label="row.course.price_label" :value="row.course.price_label" />
+                      </el-select>
+                    </label>
+                    <div class="purchase-mobile-grid">
+                      <div class="purchase-mobile-field">
+                        <span>购买课时</span>
+                        <div class="course-stepper">
+                          <button type="button" aria-label="购买课时减0.25" :disabled="row.detail.hours <= 0.01" @click="changePurchaseHours(row.detail, 'hours', -0.25)"><el-icon><Minus /></el-icon></button>
+                          <el-input v-model.number="row.detail.hours" inputmode="decimal" aria-label="购买课时" @blur="normalizePurchaseNumber(row.detail, 'hours')" />
+                          <button type="button" aria-label="购买课时加0.25" @click="changePurchaseHours(row.detail, 'hours', 0.25)"><el-icon><Plus /></el-icon></button>
+                        </div>
+                      </div>
+                      <div class="purchase-mobile-field">
+                        <span>赠送课时</span>
+                        <div class="course-stepper">
+                          <button type="button" aria-label="赠送课时减0.25" :disabled="row.detail.gift_hours <= 0" @click="changePurchaseHours(row.detail, 'gift_hours', -0.25)"><el-icon><Minus /></el-icon></button>
+                          <el-input v-model.number="row.detail.gift_hours" inputmode="decimal" aria-label="赠送课时" @blur="normalizePurchaseNumber(row.detail, 'gift_hours')" />
+                          <button type="button" aria-label="赠送课时加0.25" @click="changePurchaseHours(row.detail, 'gift_hours', 0.25)"><el-icon><Plus /></el-icon></button>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="purchase-mobile-field">
+                      <span>直减/折扣</span>
+                      <div class="discount-control">
+                        <el-select v-model="row.detail.discount_type" @change="onDiscountTypeChange(row.detail)">
+                          <el-option label="直减" value="reduce" />
+                          <el-option label="折扣" value="rate" />
+                        </el-select>
+                        <el-input-number v-model="row.detail.discount_value" :min="0" :max="row.detail.discount_type === 'rate' ? 10 : row.total" :precision="row.detail.discount_type === 'rate' ? 1 : 2" :step="row.detail.discount_type === 'rate' ? 0.1 : 50" :controls="false" />
+                        <span>{{ row.detail.discount_type === 'rate' ? '折' : '元' }}</span>
+                      </div>
+                    </div>
+                    <footer class="purchase-mobile-total">
+                      <span>原价 ¥{{ row.total.toFixed(2) }}</span>
+                      <strong>小计 ¥{{ row.subtotal.toFixed(2) }}</strong>
+                    </footer>
+                  </section>
+                </div>
               </div>
               <el-empty v-else description="请选择报名课程" :image-size="52" />
               <div class="section-total">应收合计 <strong>¥{{ receivableTotal.toFixed(2) }}</strong></div>
@@ -1056,6 +1111,7 @@ onUnmounted(() => {
               <div class="attr-block">
                 <el-table
                   v-if="enrollForm.attributions.length"
+                  v-show="!isCompact"
                   :data="enrollForm.attributions"
                   size="small"
                   border
@@ -1101,6 +1157,21 @@ onUnmounted(() => {
                     </template>
                   </el-table-column>
                 </el-table>
+                <div v-if="isCompact && enrollForm.attributions.length" class="attr-mobile-list">
+                  <section v-for="(row, index) in enrollForm.attributions" :key="row.key" class="attr-mobile-card">
+                    <label>
+                      <span>归属人</span>
+                      <el-select v-model="row.user_id" filterable placeholder="选择同事">
+                        <el-option v-for="u in staff" :key="u.id" :label="staffLabel(u)" :value="u.id" :disabled="enrollForm.attributions.some((a) => a !== row && a.user_id === u.id)" />
+                      </el-select>
+                    </label>
+                    <label>
+                      <span>销售业绩（元）</span>
+                      <el-input-number v-model="row.amount" :min="0" :max="receivableTotal" :precision="2" :step="50" :controls="false" @change="balanceAttributions(index)" />
+                    </label>
+                    <el-button plain type="danger" @click="removeAttribution(index)">移除</el-button>
+                  </section>
+                </div>
                 <div class="attr-foot">
                   <el-button plain size="small" @click="addAttribution">
                     <el-icon><Plus /></el-icon>
@@ -1164,7 +1235,7 @@ onUnmounted(() => {
               </el-form-item>
             </section>
 
-            <el-form-item>
+            <el-form-item v-if="!isCompact">
               <div class="form-actions">
                 <el-button @click="clearSelected">取消</el-button>
                 <el-button
@@ -1177,6 +1248,17 @@ onUnmounted(() => {
                 </el-button>
               </div>
             </el-form-item>
+            <MobileActionBar v-else>
+              <el-button @click="clearSelected">取消</el-button>
+              <el-button
+                type="primary"
+                :loading="submitting"
+                :disabled="!canSubmit"
+                @click="submitEnrollment"
+              >
+                确认{{ kindLabels[enrollForm.kind] }}
+              </el-button>
+            </MobileActionBar>
           </el-form>
         </template>
       </section>
@@ -1649,6 +1731,71 @@ onUnmounted(() => {
   overflow-x: auto;
 }
 
+.purchase-mobile-list,
+.attr-mobile-list {
+  display: grid;
+  gap: 12px;
+}
+
+.purchase-mobile-card,
+.attr-mobile-card {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.purchase-mobile-head,
+.purchase-mobile-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.purchase-mobile-field,
+.attr-mobile-card label {
+  display: grid;
+  gap: 7px;
+  color: var(--oc-muted, #78716c);
+  font-size: 13px;
+}
+
+.purchase-mobile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.purchase-mobile-grid .course-stepper {
+  width: 100%;
+}
+
+.purchase-mobile-total {
+  padding-top: 12px;
+  border-top: 1px solid var(--oc-border, #e8e0d0);
+  color: var(--oc-muted, #78716c);
+  font-size: 13px;
+}
+
+.purchase-mobile-total strong {
+  color: var(--oc-primary, #a16207);
+  font-size: 16px;
+}
+
+.attr-mobile-card :deep(.el-input-number),
+.attr-mobile-card :deep(.el-select) {
+  width: 100%;
+}
+
+@media (max-width: 520px) {
+  .purchase-mobile-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .purchase-table {
   min-width: 1160px;
 }
@@ -2030,6 +2177,16 @@ onUnmounted(() => {
   .student-banner {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .student-banner-left > div {
+    min-width: 0;
+  }
+
+  .student-meta {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.55;
   }
 
   .form-section-head {

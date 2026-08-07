@@ -4,10 +4,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { createCourseApi, getCourseApi, updateCourseApi } from '../../api/academic'
 import { usePageBack } from '../../composables/usePageBack'
+import { useBreakpoint } from '../../composables/useBreakpoint'
+import MobileActionBar from '../../components/MobileActionBar.vue'
 
 const route = useRoute()
 const router = useRouter()
 const { goBack } = usePageBack('/academic/courses')
+const { isCompact } = useBreakpoint()
 const saving = ref(false)
 const loading = ref(false)
 
@@ -217,7 +220,25 @@ onMounted(() => {
             title="建议在定价标准中保留数量为 1 的单价价目，便于报名灵活选购课时。"
             class="tip"
           />
-          <el-table :data="[{}]" border size="small" class="price-table">
+          <div v-if="isCompact" class="mobile-price-editor">
+            <label class="mobile-price-field">
+              <span>名称</span>
+              <el-input v-model="form.price_name" placeholder="单价" />
+            </label>
+            <label class="mobile-price-field">
+              <span>数量（课时）</span>
+              <el-input v-model="form.price_hours" inputmode="decimal" />
+            </label>
+            <label class="mobile-price-field">
+              <span>总价（元）</span>
+              <el-input v-model="form.price_total" inputmode="decimal" placeholder="请输入" />
+            </label>
+            <div class="mobile-price-field mobile-price-unit">
+              <span>单价（元/课时）</span>
+              <strong>{{ calcUnitLabel() }}</strong>
+            </div>
+          </div>
+          <el-table v-else :data="[{}]" border size="small" class="price-table">
             <el-table-column label="名称" min-width="120">
               <template #default>
                 <el-input v-model="form.price_name" placeholder="单价" />
@@ -268,10 +289,14 @@ onMounted(() => {
         </el-form-item>
       </el-form>
 
-      <div class="form-actions">
+      <div v-if="!isCompact" class="form-actions">
         <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
         <el-button @click="goBack">取消</el-button>
       </div>
+      <MobileActionBar v-else>
+        <el-button @click="goBack">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
+      </MobileActionBar>
     </el-card>
   </div>
 </template>
@@ -364,6 +389,37 @@ onMounted(() => {
 
 .price-table {
   margin-bottom: 4px;
+}
+
+.mobile-price-editor {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  margin-bottom: 4px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.mobile-price-field {
+  display: grid;
+  gap: 7px;
+  color: var(--oc-muted, #78716c);
+  font-size: 13px;
+}
+
+.mobile-price-unit {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 6px;
+  background: #f8f6f1;
+}
+
+.mobile-price-unit strong {
+  color: var(--oc-primary, #a16207);
+  font-size: 16px;
 }
 
 .form-actions {

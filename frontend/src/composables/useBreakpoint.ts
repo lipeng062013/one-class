@@ -1,9 +1,11 @@
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 /** 手机竖屏 / 窄屏（抽屉导航） */
 export const MOBILE_MAX = 767
 /** 平板及以下：列表改卡片，避免宽表挤压 */
 export const COMPACT_MAX = 991
+/** Pad landscape and narrow desktop: keep tables, but hide secondary columns. */
+export const NARROW_DESKTOP_MAX = 1279
 
 function readWidth() {
   return typeof window !== 'undefined' ? window.innerWidth : 1200
@@ -17,6 +19,12 @@ export function useBreakpoint() {
   const width = ref(readWidth())
   const isMobile = ref(width.value <= MOBILE_MAX)
   const isCompact = ref(width.value <= COMPACT_MAX)
+  const isPad = computed(() => width.value > MOBILE_MAX && width.value <= COMPACT_MAX)
+  const isPadPortrait = computed(() => isPad.value && width.value < 900)
+  const isPadLandscape = computed(() => isPad.value && width.value >= 900)
+  const isNarrowDesktop = computed(
+    () => width.value > COMPACT_MAX && width.value <= NARROW_DESKTOP_MAX,
+  )
 
   function update() {
     width.value = readWidth()
@@ -32,5 +40,13 @@ export function useBreakpoint() {
   })
   onUnmounted(() => window.removeEventListener('resize', update))
 
-  return { width, isMobile, isCompact }
+  return {
+    width,
+    isMobile,
+    isPad,
+    isPadPortrait,
+    isPadLandscape,
+    isCompact,
+    isNarrowDesktop,
+  }
 }

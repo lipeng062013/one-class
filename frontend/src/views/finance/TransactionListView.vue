@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -9,6 +9,7 @@ import {
   type FinanceTransaction,
 } from '../../api/finance'
 import PcPagerBar from '../../components/PcPagerBar.vue'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 
@@ -22,6 +23,7 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 const selectedIds = ref<number[]>([])
+const filterVisible = ref(false)
 const summary = reactive({
   income: 0,
   pending_income: 0,
@@ -34,6 +36,14 @@ const filters = reactive({
   typeIncome: false,
   typeExpense: false,
   status: '',
+})
+
+const activeFilterCount = computed(() => {
+  let count = 0
+  if (filters.item) count += 1
+  if (filters.typeIncome || filters.typeExpense) count += 1
+  if (filters.status) count += 1
+  return count
 })
 
 const pcHeaderStyle = {
@@ -119,6 +129,17 @@ function runQuery() {
   void load()
 }
 
+function resetFilters() {
+  filters.item = ''
+  filters.typeIncome = false
+  filters.typeExpense = false
+  filters.status = ''
+}
+
+function applyMobileFilters() {
+  runQuery()
+}
+
 function goOrder(orderId?: number | null) {
   if (orderId) void router.push(`/finance/orders/${orderId}`)
 }
@@ -149,7 +170,7 @@ onMounted(() => {
         <el-tab-pane label="已作废明细" name="void" />
       </el-tabs>
 
-      <div class="filter-row">
+      <div v-if="!isCompact" class="filter-row">
         <el-select v-model="filters.item" clearable placeholder="项目" class="filter-ctl" @change="runQuery">
           <el-option label="报名/续费" value="报名/续费" />
           <el-option label="账户充值" value="账户充值" />
@@ -165,6 +186,14 @@ onMounted(() => {
           <el-option label="已确认" value="confirmed" />
         </el-select>
         <el-button type="primary" @click="runQuery">查询</el-button>
+      </div>
+
+      <div v-else class="mobile-filter-trigger">
+        <el-button class="mobile-filter-trigger__button" @click="filterVisible = true">
+          筛选条件
+          <span v-if="activeFilterCount" class="mobile-filter-trigger__count">{{ activeFilterCount }}</span>
+        </el-button>
+        <span class="mobile-filter-trigger__result">共 {{ total }} 条</span>
       </div>
 
       <div class="summary-bar">
@@ -184,7 +213,7 @@ onMounted(() => {
           <div class="m-card-meta">
             <span><span class="k">日期</span>{{ formatTime(row.handled_at) }}</span>
             <span><span class="k">类型</span>{{ row.type || row.tx_type }}</span>
-            <span>
+            <span class="m-card-amount" :class="row.tx_type === 'income' ? 'amt-in' : 'amt-out'">
               <span class="k">金额</span>
               {{ row.tx_type === 'income' ? '+' : '-' }}{{ Number(row.amount || 0).toFixed(2) }}
             </span>
@@ -274,6 +303,36 @@ onMounted(() => {
       </div>
     </el-card>
 
+    <MobileFilterSheet
+      v-model="filterVisible"
+      :active-count="activeFilterCount"
+      @reset="resetFilters"
+      @apply="applyMobileFilters"
+    >
+      <label class="mobile-filter-field">
+        <span>项目</span>
+        <el-select v-model="filters.item" clearable placeholder="全部项目">
+          <el-option label="报名/续费" value="报名/续费" />
+          <el-option label="账户充值" value="账户充值" />
+          <el-option label="退费" value="退费" />
+        </el-select>
+      </label>
+      <div class="mobile-filter-field">
+        <span>收支类型</span>
+        <div class="mobile-type-options">
+          <el-checkbox v-model="filters.typeIncome">收入</el-checkbox>
+          <el-checkbox v-model="filters.typeExpense">支出</el-checkbox>
+        </div>
+      </div>
+      <label class="mobile-filter-field">
+        <span>状态</span>
+        <el-select v-model="filters.status" clearable placeholder="全部状态">
+          <el-option label="待确认" value="pending" />
+          <el-option label="已确认" value="confirmed" />
+        </el-select>
+      </label>
+    </MobileFilterSheet>
+
     <PcPagerBar
       v-model:page="page"
       v-model:page-size="pageSize"
@@ -316,6 +375,62 @@ onMounted(() => {
 
 .filter-ctl--sm {
   width: 120px;
+}
+
+.mobile-filter-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.mobile-filter-trigger__button {
+  min-width: 116px;
+}
+
+.mobile-filter-trigger__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--oc-primary, #a16207);
+  color: #fff;
+  font-size: 12px;
+}
+
+.mobile-filter-trigger__result {
+  color: var(--oc-muted, #78716c);
+  font-size: 13px;
+}
+
+.mobile-filter-field {
+  display: grid;
+  gap: 8px;
+  color: var(--oc-ink, #44403c);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mobile-type-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mobile-type-options :deep(.el-checkbox) {
+  margin: 0;
+  padding: 0 12px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 6px;
+}
+
+.m-card-amount {
+  font-size: 15px;
 }
 
 @media (max-width: 991px) {

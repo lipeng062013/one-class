@@ -6,10 +6,12 @@ import {
   type IncomeReport,
   type PendingHoursReport,
 } from '../../api/finance'
+import { useBreakpoint } from '../../composables/useBreakpoint'
 
 type QuickRange = 'month' | 'week' | 'lastWeek' | 'custom'
 
 const loading = ref(false)
+const { isCompact } = useBreakpoint()
 const activeReport = ref('income')
 const quickRange = ref<QuickRange>('month')
 const customRange = ref<[string, string] | null>(null)
@@ -278,7 +280,7 @@ onMounted(() => {
           <div class="card-head compact">
             <div class="card-title">按支付方式汇总</div>
           </div>
-          <el-table :data="report?.by_pay_method || []" row-key="method" stripe border :header-cell-style="pcHeaderStyle">
+          <el-table v-if="!isCompact" :data="report?.by_pay_method || []" row-key="method" stripe border :header-cell-style="pcHeaderStyle">
             <el-table-column prop="method" label="支付方式" min-width="140" />
             <el-table-column prop="count" label="笔数" width="100" align="center" />
             <el-table-column label="金额（元）" min-width="140" align="right">
@@ -292,6 +294,14 @@ onMounted(() => {
               </template>
             </el-table-column>
           </el-table>
+          <div v-else class="report-card-list">
+            <article v-for="row in report?.by_pay_method || []" :key="row.method" class="report-row-card">
+              <div class="report-row-head"><strong>{{ row.method }}</strong><span>{{ row.count }} 笔</span></div>
+              <div class="report-row-value">{{ formatMoney(row.amount) }}</div>
+              <div class="report-row-meta">收入占比 {{ report?.total_income ? ((row.amount / report.total_income) * 100).toFixed(1) : 0 }}%</div>
+            </article>
+            <el-empty v-if="!report?.by_pay_method?.length" description="暂无支付数据" :image-size="52" />
+          </div>
         </el-card>
       </template>
 
@@ -349,6 +359,7 @@ onMounted(() => {
             <div class="card-title">按课程汇总课消</div>
           </div>
           <el-table
+            v-if="!isCompact"
             :data="report?.course_consumption?.by_course || []"
             row-key="course_name"
             stripe
@@ -374,6 +385,17 @@ onMounted(() => {
               </template>
             </el-table-column>
           </el-table>
+          <div v-else class="report-card-list">
+            <article v-for="row in report?.course_consumption?.by_course || []" :key="row.course_name" class="report-row-card">
+              <div class="report-row-head">
+                <strong>{{ row.course_name }}</strong>
+                <el-tag v-if="row.course_type_label" size="small" effect="plain">{{ row.course_type_label }}</el-tag>
+              </div>
+              <div class="report-row-value">{{ formatMoney(row.amount) }}</div>
+              <div class="report-row-meta"><span>{{ row.count }} 次课消</span><span>{{ formatHours(row.hours) }} 课时</span></div>
+            </article>
+            <el-empty v-if="!report?.course_consumption?.by_course?.length" description="暂无课程课消" :image-size="52" />
+          </div>
         </el-card>
       </template>
 
@@ -426,6 +448,7 @@ onMounted(() => {
             </div>
           </div>
           <el-table
+            v-if="!isCompact"
             :data="pendingReport?.by_course || []"
             row-key="course_id"
             stripe
@@ -457,6 +480,22 @@ onMounted(() => {
               </template>
             </el-table-column>
           </el-table>
+          <div v-else class="report-card-list">
+            <article v-for="row in pendingReport?.by_course || []" :key="row.course_id" class="report-row-card">
+              <div class="report-row-head">
+                <strong>{{ row.course_name }}</strong>
+                <el-tag size="small" effect="plain" :type="riskTagType(row.risk_status)">{{ riskLabel(row.risk_status) }}</el-tag>
+              </div>
+              <div class="report-row-value">待消 {{ formatHours(row.pending_hours) }} 课时</div>
+              <div class="report-row-meta">
+                <span>{{ row.student_count }} 名学员</span>
+                <span>已消 {{ formatHours(row.consumed_hours) }} / 总计 {{ formatHours(row.total_hours) }}</span>
+                <span>比例 {{ formatRate(row.consumption_rate) }}</span>
+                <span>估值 {{ formatMoney(row.pending_value) }}</span>
+              </div>
+            </article>
+            <el-empty v-if="!pendingReport?.by_course?.length" description="暂无课程待消" :image-size="52" />
+          </div>
         </el-card>
 
         <div class="pending-detail-filter">
@@ -489,6 +528,7 @@ onMounted(() => {
             <div class="card-title">学员待消明细</div>
           </div>
           <el-table
+            v-if="!isCompact"
             :data="pendingDetailRows"
             :row-key="pendingRowKey"
             stripe
@@ -523,6 +563,22 @@ onMounted(() => {
               </template>
             </el-table-column>
           </el-table>
+          <div v-else class="report-card-list">
+            <article v-for="row in pendingDetailRows" :key="pendingRowKey(row)" class="report-row-card">
+              <div class="report-row-head">
+                <div><strong>{{ row.student_name }}</strong><div class="report-row-sub">{{ row.student_phone || '-' }} · {{ row.student_grade || '未填年级' }}</div></div>
+                <el-tag size="small" effect="plain" :type="riskTagType(row.risk_status)">{{ riskLabel(row.risk_status) }}</el-tag>
+              </div>
+              <div class="report-row-course">{{ row.course_name }}</div>
+              <div class="report-row-value">待消 {{ formatHours(row.pending_hours) }} 课时</div>
+              <div class="report-row-meta">
+                <span>已消 {{ formatHours(row.consumed_hours) }} / 总计 {{ formatHours(row.total_hours) }}</span>
+                <span>比例 {{ formatRate(row.consumption_rate) }}</span>
+                <span>到期 {{ row.valid_until || '-' }}</span>
+              </div>
+            </article>
+            <el-empty v-if="!pendingDetailRows.length" description="暂无学员待消明细" :image-size="52" />
+          </div>
         </el-card>
       </template>
     </div>
@@ -830,6 +886,50 @@ onMounted(() => {
 
 .pc-table-card {
   overflow: hidden;
+}
+
+.report-card-list {
+  display: grid;
+  gap: 10px;
+}
+
+.report-row-card {
+  display: grid;
+  gap: 8px;
+  padding: 13px 14px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.report-row-head,
+.report-row-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.report-row-head strong {
+  color: var(--oc-ink, #44403c);
+}
+
+.report-row-value {
+  color: var(--oc-primary, #a16207);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.report-row-meta,
+.report-row-sub {
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+}
+
+.report-row-course {
+  color: var(--oc-ink, #44403c);
+  font-size: 13px;
 }
 
 .pc-mono {

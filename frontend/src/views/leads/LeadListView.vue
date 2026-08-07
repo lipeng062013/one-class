@@ -17,6 +17,7 @@ import { useCardAccordion } from '../../composables/useCardAccordion'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
 import { useServerPagedList } from '../../composables/useServerPagedList'
 import PcPagerBar from '../../components/PcPagerBar.vue'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
 import { sanitizePhoneInput, validateRequiredPhone } from '../../utils/phone'
 
 const LIST_STATE_KEY = 'oc-lead-list-state'
@@ -480,13 +481,14 @@ onActivated(() => {
           <el-icon :class="{ 'is-open': filterExpanded }"><ArrowDown /></el-icon>
         </button>
       </div>
-      <div v-show="filterExpanded" class="m-filter-panel">
+      <MobileFilterSheet
+        v-model="filterExpanded"
+        :active-count="activeFilterCount"
+        @reset="resetFilters"
+        @apply="runQuery"
+      >
         <el-input v-model="filters.phone" clearable placeholder="电话" />
-        <div class="m-filter-panel__actions">
-          <button type="button" class="m-filter-link" @click="resetFilters">重置</button>
-          <button type="button" class="m-filter-apply" @click="runQuery">完成</button>
-        </div>
-      </div>
+      </MobileFilterSheet>
     </div>
 
     <!-- 移动卡片（CSS 控制显隐，不依赖 isCompact 首帧） -->
@@ -1050,6 +1052,19 @@ onActivated(() => {
   gap: 12px;
   margin-top: 12px;
   padding-bottom: 8px;
+}
+
+@media (min-width: 768px) and (max-width: 991px) {
+  .lead-card-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .lead-card--empty,
+  .infinite-sentinel {
+    grid-column: 1 / -1;
+  }
 }
 
 .lead-card {

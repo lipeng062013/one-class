@@ -18,6 +18,7 @@ import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useCardAccordion } from '../../composables/useCardAccordion'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
 import {
   isValidOptionalPhone,
   PHONE_INPUT_MESSAGE,
@@ -783,7 +784,12 @@ onUnmounted(() => teardownScrollObserver())
           <el-icon :class="{ 'is-open': filterExpanded }"><ArrowDown /></el-icon>
         </button>
       </div>
-      <div v-show="filterExpanded" class="m-filter-panel">
+      <MobileFilterSheet
+        v-model="filterExpanded"
+        :active-count="activeFilterCount"
+        @reset="resetFilters"
+        @apply="runQuery"
+      >
         <el-select
           v-if="!auth.isTeacher"
           v-model="filters.academic_manager_id"
@@ -816,11 +822,7 @@ onUnmounted(() => teardownScrollObserver())
           clearable
           placeholder="学校"
         />
-        <div class="m-filter-panel__actions">
-          <button type="button" class="m-filter-link" @click="resetFilters">重置</button>
-          <button type="button" class="m-filter-apply" @click="runQuery">完成</button>
-        </div>
-      </div>
+      </MobileFilterSheet>
     </div>
 
     <!-- 平板 / 手机：学生卡片 -->
@@ -1699,6 +1701,19 @@ onUnmounted(() => teardownScrollObserver())
   gap: 12px;
   margin-top: 12px;
   padding-bottom: 8px;
+}
+
+@media (min-width: 768px) and (max-width: 991px) {
+  .stu-card-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .stu-card--empty,
+  .infinite-sentinel {
+    grid-column: 1 / -1;
+  }
 }
 
 .stu-card {

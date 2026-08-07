@@ -1241,7 +1241,13 @@ onMounted(async () => {
     </div>
 
     <el-card class="module-card" shadow="never" v-loading="loading">
-      <el-tabs v-model="viewTab" class="mode-tabs">
+      <el-select v-if="isCompact" v-model="viewTab" class="mobile-view-switch" aria-label="课表视图">
+        <el-option label="时间课表" value="time" />
+        <el-option v-if="!selfTeacherOnly" label="老师课表" value="teacher" />
+        <el-option label="教室课表" value="room" />
+        <el-option label="班级课表" value="class" />
+      </el-select>
+      <el-tabs v-else v-model="viewTab" class="mode-tabs">
         <el-tab-pane name="time">
           <template #label>
             <span class="tab-label">
@@ -2095,6 +2101,11 @@ onMounted(async () => {
 
 .mode-tabs {
   margin-bottom: 4px;
+}
+
+.mobile-view-switch {
+  width: 100%;
+  margin: 8px 0 12px;
 }
 
 .mode-tabs :deep(.el-tabs__header) {

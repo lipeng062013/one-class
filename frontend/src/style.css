@@ -764,6 +764,18 @@ a {
   border-top: 1px solid var(--oc-border, #e8e0d0);
 }
 
+@media (min-width: 768px) and (max-width: 991px) {
+  .m-card-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .m-card-empty {
+    grid-column: 1 / -1;
+  }
+}
+
 .m-card-empty {
   text-align: center;
   color: var(--oc-muted, #78716c);
@@ -779,6 +791,42 @@ a {
 }
 
 @media (max-width: 991px) {
+  :root {
+    --oc-touch-target: 44px;
+  }
+
+  html,
+  body,
+  #app {
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
+  button,
+  [role='button'],
+  .el-button,
+  .el-input__wrapper,
+  .el-select__wrapper,
+  .el-checkbox,
+  .el-radio {
+    min-height: var(--oc-touch-target);
+  }
+
+  .m-card-actions .el-button {
+    min-height: 40px;
+    padding-inline: 14px;
+  }
+
+  .mobile-filter-sheet__content .el-input,
+  .mobile-filter-sheet__content .el-select,
+  .mobile-filter-sheet__content .el-date-editor {
+    width: 100% !important;
+  }
+
+  .el-drawer.oc-mobile-filter-sheet .el-drawer__body {
+    padding-bottom: 20px;
+  }
+
   .filter-form.el-form--inline {
     display: block;
   }
