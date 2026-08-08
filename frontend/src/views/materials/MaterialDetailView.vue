@@ -11,20 +11,25 @@ import {
   type Material,
 } from '../../api/materials'
 import { useAuthStore } from '../../stores/auth'
+import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useListDetailStateCleanup } from '../../composables/useListScrollRestore'
 import { usePageBack } from '../../composables/usePageBack'
 import { asyncPool } from '../../utils/asyncPool'
+import MobileActionBar from '../../components/MobileActionBar.vue'
 
 const route = useRoute()
 const router = useRouter()
 const { goBack } = usePageBack('/materials')
 useListDetailStateCleanup('materials', 'oc-material-list-state')
 const auth = useAuthStore()
+const { isApp } = useBreakpoint()
 const loading = ref(false)
 const uploading = ref(false)
 const item = ref<Material | null>(null)
 const previewUrls = ref<Record<number, string>>({})
 const previewLoading = ref(false)
+/** 手机端：内容 / 图库分段 */
+const detailSection = ref<'content' | 'gallery'>('content')
 
 /** 负责人/运营可补图任意素材；老师仅可给自己上传的素材补图 */
 const canUploadMore = computed(() => {
@@ -225,15 +230,15 @@ onUnmounted(revokePreviews)
 </script>
 
 <template>
-  <div v-loading="loading" class="mat-detail oc-page-shell">
+  <div v-loading="loading" class="mat-detail oc-page-shell" :class="{ 'is-app': isApp }">
     <!-- 顶栏 -->
     <div class="page-toolbar">
       <el-page-header @back="goBack">
         <template #content>
-          <span class="page-title">素材详情</span>
+          <span class="page-title">{{ isApp && item ? item.title : '素材详情' }}</span>
         </template>
       </el-page-header>
-      <div v-if="item && canManage" class="toolbar-actions">
+      <div v-if="item && canManage && !isApp" class="toolbar-actions">
         <el-button type="primary" @click="goGenerateCopy">
           <el-icon class="btn-ico"><EditPen /></el-icon>
           生成文案
@@ -251,7 +256,7 @@ onUnmounted(revokePreviews)
               <el-icon><Picture /></el-icon>
               <span>素材 #{{ item.id }}</span>
             </div>
-            <h1 class="hero-title">{{ item.title }}</h1>
+            <h1 class="hero-title" :class="{ 'is-app-hidden': isApp }">{{ item.title }}</h1>
             <div class="hero-tags">
               <el-tag
                 size="small"
@@ -296,9 +301,20 @@ onUnmounted(revokePreviews)
         </div>
       </section>
 
+      <!-- WAP/Pad：内容 / 图库分段 -->
+      <el-segmented
+        v-if="isApp"
+        v-model="detailSection"
+        class="detail-section-switch"
+        :options="[
+          { label: '场景内容', value: 'content' },
+          { label: `图片${fileCount ? ` · ${fileCount}` : ''}`, value: 'gallery' },
+        ]"
+      />
+
       <div class="detail-grid">
         <!-- 左：内容与操作 -->
-        <div class="col-main">
+        <div v-show="!isApp || detailSection === 'content'" class="col-main">
           <!-- 内容块 -->
           <section class="panel">
             <div class="panel-head">
@@ -318,7 +334,9 @@ onUnmounted(revokePreviews)
                   </span>
                   <span class="block-label">{{ block.label }}</span>
                 </div>
-                <p class="block-value">{{ block.value?.trim() || '暂无填写' }}</p>
+                <p class="block-value" :class="{ 'is-empty': !block.value?.trim() }">
+                  {{ block.value?.trim() || '暂无填写' }}
+                </p>
               </div>
             </div>
           </section>
@@ -332,46 +350,52 @@ onUnmounted(revokePreviews)
             <div class="action-groups">
               <div class="action-group">
                 <div class="group-label">素材状态</div>
-                <div class="group-btns">
-                  <el-button
-                    type="success"
-                    :plain="item.status !== 'usable'"
+                <div class="status-chips" role="group" aria-label="素材状态">
+                  <button
+                    type="button"
+                    class="status-chip"
+                    :class="{ active: item.status === 'usable', tone: 'success' }"
                     @click="setStatus('usable')"
                   >
-                    标为可用
-                  </el-button>
-                  <el-button
-                    type="warning"
-                    :plain="item.status !== 'used'"
+                    可用
+                  </button>
+                  <button
+                    type="button"
+                    class="status-chip"
+                    :class="{ active: item.status === 'used', tone: 'warning' }"
                     @click="setStatus('used')"
                   >
-                    标为已用
-                  </el-button>
-                  <el-button
-                    :type="item.status === 'archived' ? 'info' : 'default'"
-                    :plain="item.status !== 'archived'"
+                    已用
+                  </button>
+                  <button
+                    type="button"
+                    class="status-chip"
+                    :class="{ active: item.status === 'archived', tone: 'info' }"
                     @click="setStatus('archived')"
                   >
                     归档
-                  </el-button>
+                  </button>
                 </div>
               </div>
               <div class="action-group">
                 <div class="group-label">授权状态</div>
-                <div class="group-btns">
-                  <el-button
-                    type="primary"
-                    :plain="item.auth_status !== 'authorized'"
+                <div class="status-chips" role="group" aria-label="授权状态">
+                  <button
+                    type="button"
+                    class="status-chip"
+                    :class="{ active: item.auth_status === 'authorized', tone: 'primary' }"
                     @click="setAuth('authorized')"
                   >
-                    确认授权
-                  </el-button>
-                  <el-button
-                    :plain="item.auth_status !== 'anonymized'"
+                    已授权
+                  </button>
+                  <button
+                    type="button"
+                    class="status-chip"
+                    :class="{ active: item.auth_status === 'anonymized', tone: 'muted' }"
                     @click="setAuth('anonymized')"
                   >
                     已脱敏
-                  </el-button>
+                  </button>
                 </div>
               </div>
               <div class="action-group danger-group">
@@ -388,12 +412,14 @@ onUnmounted(revokePreviews)
             <div class="panel-head">
               <h2 class="panel-title">操作</h2>
             </div>
-            <el-button type="danger" plain @click="onDelete">删除素材</el-button>
+            <el-button type="danger" plain class="teacher-delete-btn" @click="onDelete">
+              删除素材
+            </el-button>
           </section>
         </div>
 
         <!-- 右：图库 -->
-        <section class="panel gallery-panel">
+        <section v-show="!isApp || detailSection === 'gallery'" class="panel gallery-panel">
           <div class="panel-head">
             <h2 class="panel-title">
               图片预览
@@ -417,17 +443,21 @@ onUnmounted(revokePreviews)
                 <el-icon class="upload-ico" :size="28"><UploadFilled /></el-icon>
                 <div class="upload-text">
                   <span class="upload-title">继续上传图片</span>
-                  <span class="upload-hint">拖拽或点击 · 支持多选 · 单张 ≤ 8MB</span>
+                  <span class="upload-hint">
+                    {{ isApp ? '点击添加 · 支持多选 · 单张 ≤ 8MB' : '拖拽或点击 · 支持多选 · 单张 ≤ 8MB' }}
+                  </span>
                 </div>
               </div>
             </el-upload>
           </div>
 
-          <el-empty
-            v-if="!item.files?.length"
-            description="暂无图片，可上传课堂/作业相关照片"
-            :image-size="80"
-          />
+          <div v-if="!item.files?.length" class="gallery-empty">
+            <div class="gallery-empty-ico" aria-hidden="true">
+              <el-icon :size="26"><Picture /></el-icon>
+            </div>
+            <p class="gallery-empty-title">暂无图片</p>
+            <p class="gallery-empty-desc">可上传课堂 / 作业相关照片</p>
+          </div>
 
           <div v-else class="preview-grid">
             <div v-for="(f, idx) in item.files" :key="f.id" class="thumb-wrap">
@@ -455,6 +485,20 @@ onUnmounted(revokePreviews)
           </div>
         </section>
       </div>
+
+      <MobileActionBar v-if="isApp">
+        <el-button
+          :type="canManage ? 'default' : 'primary'"
+          @click="detailSection = detailSection === 'content' ? 'gallery' : 'content'"
+        >
+          <el-icon><Picture /></el-icon>
+          {{ detailSection === 'content' ? '查看图片' : '场景内容' }}
+        </el-button>
+        <el-button v-if="canManage" type="primary" @click="goGenerateCopy">
+          <el-icon><EditPen /></el-icon>
+          生成文案
+        </el-button>
+      </MobileActionBar>
     </template>
   </div>
 </template>
@@ -778,6 +822,142 @@ onUnmounted(revokePreviews)
   margin: 0 !important;
 }
 
+.status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.status-chip {
+  flex: 1 1 calc(33.33% - 6px);
+  min-width: 72px;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1.5px solid var(--oc-border, #e8e0d0);
+  background: #fffdfb;
+  color: var(--oc-ink, #44403c);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s,
+    box-shadow 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.status-chip:hover {
+  border-color: #dbbf94;
+}
+
+.status-chip.active {
+  border-color: var(--oc-primary, #a16207);
+  background: linear-gradient(180deg, #faf6ee, #f2e8d6);
+  color: var(--oc-primary, #a16207);
+  box-shadow: 0 0 0 1px rgba(161, 98, 7, 0.12);
+}
+
+.status-chip.active.tone-success {
+  border-color: #67c23a;
+  color: #3f8618;
+  background: linear-gradient(180deg, #f3faf0, #e8f5e0);
+}
+
+.status-chip.active.tone-warning {
+  border-color: #e6a23c;
+  color: #b8821a;
+  background: linear-gradient(180deg, #fdf6ec, #faecd8);
+}
+
+.status-chip.active.tone-info {
+  border-color: #909399;
+  color: #606266;
+  background: linear-gradient(180deg, #f4f4f5, #e9e9eb);
+}
+
+.status-chip.active.tone-primary {
+  border-color: var(--oc-primary, #a16207);
+  color: #86530a;
+  background: linear-gradient(180deg, #faf6ee, #f2e8d6);
+}
+
+.block-value.is-empty {
+  color: var(--oc-muted, #78716c);
+  font-style: italic;
+}
+
+.detail-section-switch {
+  display: flex;
+  width: 100%;
+  margin: 0 0 14px;
+}
+
+.detail-section-switch :deep(.el-segmented__group) {
+  width: 100%;
+}
+
+.detail-section-switch :deep(.el-segmented__item) {
+  flex: 1;
+}
+
+.hero-title.is-app-hidden {
+  /* 标题已在顶栏展示，hero 内隐藏避免重复 */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.gallery-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 28px 16px;
+  border-radius: 12px;
+  border: 1.5px dashed rgba(181, 145, 83, 0.35);
+  background: linear-gradient(180deg, #fffefb, #faf6ee);
+  text-align: center;
+}
+
+.gallery-empty-ico {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--oc-primary, #a16207);
+  background: linear-gradient(145deg, #f5e6c8, #e8d5b0);
+  margin-bottom: 4px;
+}
+
+.gallery-empty-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--oc-ink, #44403c);
+}
+
+.gallery-empty-desc {
+  margin: 0;
+  font-size: 12px;
+  color: var(--oc-muted, #78716c);
+}
+
+.teacher-delete-btn {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 10px;
+}
+
 /* ── 图库 ── */
 .upload-zone {
   margin-bottom: 14px;
@@ -944,10 +1124,47 @@ onUnmounted(revokePreviews)
   }
 }
 
-/* ── pad / wap：状态按钮竖排满宽，避免换行 margin 错位 ── */
-@media (max-width: 991px) {
+/* ── pad / wap ── */
+@media (max-width: 1199px) {
+  .mat-detail.is-app {
+    padding-bottom: 4px;
+  }
+
+  .page-title {
+    display: block;
+    max-width: min(58vw, 280px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .hero {
+    border-color: rgba(181, 145, 83, 0.36);
+    border-radius: 16px;
+    background:
+      linear-gradient(120deg, #fffefb 0%, #faf3e6 55%, #f5e6c8 140%);
+    box-shadow:
+      0 10px 24px rgba(88, 60, 24, 0.1),
+      0 1px 0 rgba(255, 255, 255, 0.85) inset;
+    margin-bottom: 12px;
+  }
+
+  .hero-ornament {
+    display: none;
+  }
+
   .hero-body {
-    padding: 16px;
+    padding: 14px 16px;
+    gap: 12px;
+  }
+
+  .hero-kicker,
+  .stat-num {
+    color: #8b5406;
+  }
+
+  .hero-title {
+    color: #3f3a34;
   }
 
   .hero-stats .stat-pill {
@@ -955,8 +1172,30 @@ onUnmounted(revokePreviews)
     padding: 10px 12px;
   }
 
+  .meta-chip,
+  .stat-pill {
+    border-color: rgba(181, 145, 83, 0.24);
+    border-radius: 10px;
+    background: rgba(255, 253, 248, 0.78);
+    color: #44403c;
+    backdrop-filter: none;
+  }
+
+  .meta-chip.muted,
+  .stat-label {
+    color: #78716c;
+  }
+
   .panel {
     padding: 14px;
+    border-color: rgba(181, 145, 83, 0.28);
+    border-radius: 16px;
+    background:
+      linear-gradient(155deg, rgba(255, 255, 255, 0.88) 0%, transparent 46%),
+      #fffdf8;
+    box-shadow:
+      0 12px 28px rgba(88, 60, 24, 0.08),
+      0 2px 0 rgba(255, 255, 255, 0.9) inset;
   }
 
   .preview-grid {
@@ -973,24 +1212,52 @@ onUnmounted(revokePreviews)
   .group-btns :deep(.el-button) {
     width: 100%;
     margin: 0 !important;
-    height: 40px;
-    border-radius: 10px;
+    min-height: 42px;
+    border-radius: 12px;
     justify-content: center;
+    font-weight: 650;
   }
 
-  /* 顶栏操作：小屏两列，不吸顶（与文案详情一致，随页面滚动） */
-  .toolbar-actions {
-    width: 100%;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+  .status-chip {
+    min-height: 44px;
+    border-radius: 12px;
+    font-weight: 700;
   }
 
-  .toolbar-actions .el-button {
-    margin: 0 !important;
-    width: 100%;
-    height: 40px;
-    border-radius: 10px;
+  .content-block {
+    border-radius: 12px;
+  }
+
+  .content-block.tone-rose {
+    border-color: #edc7c3;
+    border-left: 3px solid #c2413b;
+    background: #fdf5f4;
+  }
+
+  .content-block.tone-amber {
+    border-color: #ead39e;
+    border-left: 3px solid #b7791f;
+    background: #fff8e8;
+  }
+
+  .content-block.tone-sage {
+    border-color: #b9dcc7;
+    border-left: 3px solid #2f855a;
+    background: #f2faf5;
+  }
+
+  .upload-trigger :deep(.el-upload-dragger) {
+    padding: 20px 14px;
+    border-radius: 14px;
+    min-height: 88px;
+  }
+
+  .thumb-wrap {
+    border-radius: 14px;
+  }
+
+  .thumb-wrap:active {
+    transform: scale(0.98);
   }
 }
 
@@ -998,7 +1265,7 @@ onUnmounted(revokePreviews)
 @media (max-width: 767px) {
   .hero-body {
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
   }
 
   .hero-stats {
@@ -1020,8 +1287,13 @@ onUnmounted(revokePreviews)
     gap: 8px;
   }
 
-  .group-btns .el-button {
-    flex: 1 1 calc(50% - 8px);
+  .status-chips {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .action-group:nth-child(2) .status-chips {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

@@ -529,35 +529,29 @@ def list_classes(
         query = query.filter(ClassRoom.mode == mode)
     if q:
         qq = q.strip()
-        if mode == "one_to_one" or mode is None:
-            # 一对一支持按学员姓名搜索；仅负责人可按手机号搜索
-            if user is not None and user.role != "admin":
-                stu_filter = Student.name.contains(qq)
-            else:
-                stu_filter = (Student.name.contains(qq)) | (Student.phone.contains(qq))
-            stu_ids = [
-                r[0]
-                for r in db.query(Student.id).filter(stu_filter).all()
-            ]
-            member_class_ids = []
-            if stu_ids:
-                member_class_ids = [
-                    r[0]
-                    for r in db.query(ClassMember.class_id)
-                    .filter(ClassMember.student_id.in_(stu_ids), ClassMember.status == "active")
-                    .distinct()
-                    .all()
-                ]
-            from sqlalchemy import or_
+        from sqlalchemy import or_
 
-            conds = [ClassRoom.name.contains(qq)]
-            if stu_ids:
-                conds.append(ClassRoom.primary_student_id.in_(stu_ids))
-            if member_class_ids:
-                conds.append(ClassRoom.id.in_(member_class_ids))
-            query = query.filter(or_(*conds))
+        # 班课/一对一均可按班级名搜索；同时支持按在班学员姓名（负责人可手机号）
+        if user is not None and user.role != "admin":
+            stu_filter = Student.name.contains(qq)
         else:
-            query = query.filter(ClassRoom.name.contains(qq))
+            stu_filter = (Student.name.contains(qq)) | (Student.phone.contains(qq))
+        stu_ids = [r[0] for r in db.query(Student.id).filter(stu_filter).all()]
+        member_class_ids: list[int] = []
+        if stu_ids:
+            member_class_ids = [
+                r[0]
+                for r in db.query(ClassMember.class_id)
+                .filter(ClassMember.student_id.in_(stu_ids), ClassMember.status == "active")
+                .distinct()
+                .all()
+            ]
+        conds = [ClassRoom.name.contains(qq)]
+        if stu_ids:
+            conds.append(ClassRoom.primary_student_id.in_(stu_ids))
+        if member_class_ids:
+            conds.append(ClassRoom.id.in_(member_class_ids))
+        query = query.filter(or_(*conds))
     if course_id:
         query = query.filter(ClassRoom.course_id == course_id)
     if only_mine and user:
@@ -1819,6 +1813,7 @@ def _consume_package(
             ),
         )
         .order_by(
+            StudentCoursePackage.priority_consume.desc(),
             StudentCoursePackage.valid_until.is_(None).asc(),
             StudentCoursePackage.valid_until.asc(),
             StudentCoursePackage.id.asc(),

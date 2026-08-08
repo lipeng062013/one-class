@@ -11,6 +11,7 @@ from app.core.responses import ok
 from app.core.timeutil import day_end, day_start, today as business_today
 from app.models.academic import ClassMember, ClassRecord, ClassRoom, Course, ScheduleLesson
 from app.models.content import GeneratedCopy
+from app.models.enrollment import EnrollmentRecord
 from app.models.lead import Lead, LeadCollaborator
 from app.models.material import Material
 from app.models.student import Student
@@ -126,6 +127,36 @@ def today_todos(
                 source="lead",
                 ref_id=lead.id,
             )
+
+    # 负责人：报名成功且尚未分配学管的线索转入学员
+    if user.role == "admin":
+        enrolled_ids = {
+            row[0]
+            for row in db.query(EnrollmentRecord.student_id)
+            .filter(EnrollmentRecord.kind == "enroll")
+            .distinct()
+            .all()
+        }
+        if enrolled_ids:
+            pending = (
+                db.query(Student)
+                .filter(
+                    Student.source_lead_id.isnot(None),
+                    Student.academic_manager_id.is_(None),
+                    Student.id.in_(enrolled_ids),
+                )
+                .order_by(Student.id.desc())
+                .limit(50)
+                .all()
+            )
+            for stu in pending:
+                add(
+                    "报名成功待调配",
+                    f"{stu.name} · 请分配学管",
+                    f"/students/{stu.id}",
+                    source="student_allocation",
+                    ref_id=stu.id,
+                )
 
     if user.role in {"admin", "cr", "academic_manager", "teacher"}:
         schedules = (

@@ -21,6 +21,12 @@ export interface Lead {
   id: number
   student_or_parent_name: string
   phone: string | null
+  external_code: string | null
+  school: string
+  grade: string
+  age: number | null
+  campus: string
+  imported_creator_name: string
   source: string
   referrer_name: string | null
   channel_note: string
@@ -38,6 +44,11 @@ export interface Lead {
   followers?: LeadFollower[]
   created_at?: string | null
   updated_at?: string | null
+  /** 已报名后锁定 */
+  locked?: boolean
+  converted_student_id?: number | null
+  conversion_status?: 'created' | 'already_linked' | 'incomplete' | 'error' | string
+  conversion_message?: string
 }
 
 export interface LeadActivity {
@@ -65,6 +76,12 @@ export interface LeadAssignee {
 export interface LeadCreateInput {
   student_or_parent_name: string
   phone?: string | null
+  external_code?: string | null
+  school?: string
+  grade?: string
+  age?: number | null
+  campus?: string
+  imported_creator_name?: string
   source?: LeadSource | string
   referrer_name?: string | null
   channel_note?: string
@@ -78,6 +95,12 @@ export interface LeadCreateInput {
 export interface LeadUpdateInput {
   student_or_parent_name?: string
   phone?: string | null
+  external_code?: string | null
+  school?: string
+  grade?: string
+  age?: number | null
+  campus?: string
+  imported_creator_name?: string
   source?: LeadSource | string
   referrer_name?: string | null
   channel_note?: string
@@ -122,6 +145,22 @@ export interface LeadListResult {
   total: number
   page: number
   page_size: number
+}
+
+export type LeadImportStatus = 'imported' | 'duplicate' | 'failed' | 'warning'
+
+export interface LeadImportDetail {
+  row: number
+  status: LeadImportStatus
+  message: string
+}
+
+export interface LeadImportResult {
+  imported_count: number
+  duplicate_count: number
+  failed_count: number
+  warning_count: number
+  details: LeadImportDetail[]
 }
 
 type LeadListCacheEntry = {
@@ -199,6 +238,35 @@ export async function createLead(payload: LeadCreateInput): Promise<Lead> {
   assertValidOptionalPhone(payload.phone)
   const res = await client.post<ApiResponse<Lead>>('/leads', payload)
   return unwrap(res, 'Failed to create lead')
+}
+
+export async function importLeadWorkbook(
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<LeadImportResult> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await client.post<ApiResponse<LeadImportResult>>('/leads/import', form, {
+    timeout: 120_000,
+    onUploadProgress: (event) => {
+      if (!event.total) return
+      onProgress?.(Math.min(99, Math.round((event.loaded / event.total) * 100)))
+    },
+  })
+  onProgress?.(100)
+  return unwrap(res, '导入线索失败')
+}
+
+export async function downloadLeadImportTemplate(): Promise<void> {
+  const res = await client.get('/leads/import-template', { responseType: 'blob' })
+  const url = URL.createObjectURL(res.data as Blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = '线索导入模板.xlsx'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 export async function patchLead(id: number, payload: LeadUpdateInput): Promise<Lead> {

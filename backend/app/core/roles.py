@@ -23,7 +23,7 @@ ACADEMIC_MANAGER_ROLES: frozenset[str] = frozenset(
     {"admin", "cr", "academic_manager"}
 )
 
-# 财务数据按「名下学员」收窄的角色（非全机构视角）
+# 财务数据按「名下学员」收窄的角色（学管师）
 FINANCE_SCOPED_ROLES: frozenset[str] = frozenset({"cr", "academic_manager"})
 
 ROLE_DISPLAY_LABEL: dict[str, str] = {
@@ -48,19 +48,47 @@ def is_finance_scoped_role(role: str | None) -> bool:
     return bool(role) and role in FINANCE_SCOPED_ROLES
 
 
+def is_operator_finance_scoped(role: str | None) -> bool:
+    """运营：财务仅见自己相关订单 / 自己相关学员课消。"""
+    return role == "operator"
+
+
+def operator_related_student_ids(db: "Session", user: "User") -> set[int]:
+    """运营相关学员：本人建档，或来源线索主责为自己。"""
+    from app.models.lead import Lead
+    from app.models.student import Student
+
+    created = {
+        int(r[0])
+        for r in db.query(Student.id).filter(Student.created_by == user.id).all()
+    }
+    from_leads = {
+        int(r[0])
+        for r in (
+            db.query(Student.id)
+            .join(Lead, Lead.id == Student.source_lead_id)
+            .filter(Lead.owner_id == user.id)
+            .all()
+        )
+    }
+    return created | from_leads
+
+
 def managed_student_ids(db: "Session", user: "User") -> set[int] | None:
     """财务/报名单据的学员范围。
 
     - 返回 None：不限制（负责人等全机构）
-    - 返回 set：仅这些学员 id（学管师名下；可为空）
+    - 返回 set：仅这些学员 id（学管师名下 / 运营相关学员；可为空）
     """
-    if not is_finance_scoped_role(user.role):
-        return None
-    from app.models.student import Student
+    if is_finance_scoped_role(user.role):
+        from app.models.student import Student
 
-    rows = (
-        db.query(Student.id)
-        .filter(Student.academic_manager_id == user.id)
-        .all()
-    )
-    return {int(r[0]) for r in rows}
+        rows = (
+            db.query(Student.id)
+            .filter(Student.academic_manager_id == user.id)
+            .all()
+        )
+        return {int(r[0]) for r in rows}
+    if is_operator_finance_scoped(user.role):
+        return operator_related_student_ids(db, user)
+    return None

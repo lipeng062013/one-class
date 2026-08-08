@@ -24,6 +24,8 @@ import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useCardAccordion } from '../../composables/useCardAccordion'
 import { useInfiniteScroll } from '../../composables/useInfiniteScroll'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
+import CompactFilterBar from '../../components/CompactFilterBar.vue'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
 
 const LIST_STATE_KEY = 'oc-template-list-state'
 const PAGE_SIZES = [10, 20, 50, 100]
@@ -58,7 +60,7 @@ const SCENE_LABELS: Record<string, string> = {
 
 const route = useRoute()
 const router = useRouter()
-const { isCompact } = useBreakpoint()
+const { isApp } = useBreakpoint()
 const { isExpanded, toggle: toggleCard, toggleForce, collapseAll } = useCardAccordion()
 
 const pcHeaderStyle = {
@@ -168,13 +170,13 @@ const {
   ensureVisible,
 } = useInfiniteScroll(filtered, {
   chunk: SCROLL_CHUNK,
-  enabled: isCompact,
+    enabled: isApp,
   sentinelRef,
 })
 
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('templates', {
   visibleCount,
-  enabled: isCompact,
+  enabled: isApp,
   stateStorageKey: LIST_STATE_KEY,
 })
 
@@ -264,10 +266,6 @@ function resetFilters() {
   filterExpanded.value = false
   resetInfinite()
   saveListState()
-}
-
-function toggleFilterExpand() {
-  filterExpanded.value = !filterExpanded.value
 }
 
 function onTabChange() {
@@ -373,7 +371,7 @@ async function load(opts?: { fromQuery?: boolean }) {
   loading.value = true
   try {
     ;[copies.value, posters.value] = await Promise.all([listCopyTemplates(), listPosterTemplates()])
-    if (snap?.visibleCount != null && isCompact.value) {
+    if (snap?.visibleCount != null && isApp.value) {
       ensureVisible(snap.visibleCount)
     } else {
       resetInfinite()
@@ -484,7 +482,7 @@ onMounted(() => {
 
 <template>
   <div class="tpl-page">
-    <div class="page-toolbar" :class="{ 'is-compact': isCompact }">
+    <div class="page-toolbar" :class="{ 'is-compact': isApp }">
       <el-page-header class="is-title-only" content="模板管理" />
       <el-button class="tb-btn tb-btn--primary" type="primary" @click="openCreate">
         <el-icon><Plus /></el-icon>
@@ -557,61 +555,14 @@ onMounted(() => {
       </el-card>
     </div>
 
-    <div class="tpl-m m-filter">
-      <div class="m-filter-search">
-        <el-icon class="m-filter-search__icon"><Search /></el-icon>
-        <input
-          v-model="filters.q"
-          class="m-filter-search__input"
-          type="search"
-          enterkeyhint="search"
-          placeholder="搜索名称"
-          @keyup.enter="runQuery"
-        />
-        <button type="button" class="m-filter-search__btn" @click="runQuery">查询</button>
-      </div>
-      <div class="m-filter-row">
-        <el-select
-          v-model="filters.status"
-          class="m-filter-select"
-          clearable
-          placeholder="状态"
-          teleported
-          :popper-options="{ strategy: 'fixed' }"
-          popper-class="tpl-m-select-popper"
-        >
-          <el-option label="启用" value="active" />
-          <el-option label="停用" value="inactive" />
-        </el-select>
-        <el-select
-          v-model="filters.system"
-          class="m-filter-select"
-          clearable
-          placeholder="类型"
-          teleported
-          :popper-options="{ strategy: 'fixed' }"
-          popper-class="tpl-m-select-popper"
-        >
-          <el-option label="系统" value="system" />
-          <el-option label="自定义" value="custom" />
-        </el-select>
-        <button
-          type="button"
-          class="m-filter-more"
-          :class="{ 'is-active': filterExpanded || activeFilterCount > 0 }"
-          @click="toggleFilterExpand"
-        >
-          更多{{ activeFilterCount ? ` · ${activeFilterCount}` : '' }}
-          <el-icon :class="{ 'is-open': filterExpanded }"><ArrowDown /></el-icon>
-        </button>
-      </div>
-      <div v-show="filterExpanded" class="m-filter-panel">
-        <div class="m-filter-panel__actions">
-          <button type="button" class="m-filter-link" @click="resetFilters">重置</button>
-          <button type="button" class="m-filter-apply" @click="runQuery">完成</button>
-        </div>
-      </div>
-    </div>
+    <CompactFilterBar class="tpl-m" :active-count="activeFilterCount" :total="filtered.length" label="条模板" @open="filterExpanded = true" />
+    <MobileFilterSheet v-model="filterExpanded" :active-count="activeFilterCount" @apply="runQuery" @reset="resetFilters">
+      <el-form label-position="top" @submit.prevent="runQuery">
+        <el-form-item label="关键词"><el-input v-model="filters.q" clearable placeholder="名称 / 场景" /></el-form-item>
+        <el-form-item label="状态"><el-select v-model="filters.status" clearable placeholder="全部状态"><el-option label="启用" value="active" /><el-option label="停用" value="inactive" /></el-select></el-form-item>
+        <el-form-item label="类型"><el-select v-model="filters.system" clearable placeholder="全部类型"><el-option label="系统" value="system" /><el-option label="自定义" value="custom" /></el-select></el-form-item>
+      </el-form>
+    </MobileFilterSheet>
 
     <!-- 移动卡片（互斥折叠） -->
     <div v-loading="loading" class="tpl-m tpl-card-list">
@@ -637,6 +588,7 @@ onMounted(() => {
               type="button"
               class="m-card-acc-toggle"
               :aria-expanded="isExpanded(`c-${row.id}`)"
+              :aria-label="isExpanded(`c-${row.id}`) ? '收起文案模板详情' : '展开文案模板详情'"
               @click.stop="toggleForce(`c-${row.id}`)"
             >
               <el-icon class="m-card-acc-chevron" :class="{ 'is-open': isExpanded(`c-${row.id}`) }">
@@ -686,6 +638,7 @@ onMounted(() => {
               type="button"
               class="m-card-acc-toggle"
               :aria-expanded="isExpanded(`p-${row.id}`)"
+              :aria-label="isExpanded(`p-${row.id}`) ? '收起海报模板详情' : '展开海报模板详情'"
               @click.stop="toggleForce(`p-${row.id}`)"
             >
               <el-icon class="m-card-acc-chevron" :class="{ 'is-open': isExpanded(`p-${row.id}`) }">
@@ -981,7 +934,7 @@ onMounted(() => {
   display: block;
 }
 
-@media (min-width: 992px) {
+@media (min-width: 1200px) {
   .tpl-pc {
     display: block;
   }
@@ -1373,9 +1326,9 @@ onMounted(() => {
   flex: 1 1 160px;
 }
 
-@media (max-width: 991px) {
+@media (max-width: 1199px) {
   .tb-btn--primary {
-    width: 100%;
+    width: auto;
     height: 40px;
   }
 }

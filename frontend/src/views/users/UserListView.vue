@@ -19,14 +19,30 @@ import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useCardAccordion } from '../../composables/useCardAccordion'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
 import { useServerPagedList } from '../../composables/useServerPagedList'
+import ListLoadStatus from '../../components/ListLoadStatus.vue'
 import PcPagerBar from '../../components/PcPagerBar.vue'
+import CompactFilterBar from '../../components/CompactFilterBar.vue'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
+import { useResponsiveSurface } from '../../composables/useResponsiveSurface'
 
 const LIST_STATE_KEY = 'oc-user-list-state'
 
 const route = useRoute()
 const auth = useAuthStore()
-const { isCompact } = useBreakpoint()
+const { isApp } = useBreakpoint()
 const { isExpanded, toggle: toggleCard, toggleForce, collapseAll } = useCardAccordion()
+const { surface: userSurface, surfaceProps: userSurfaceProps } = useResponsiveSurface({
+  compactSize: 'min(88%, 640px)',
+  dialogMaxWidth: '480px',
+  modalClass: 'user-app-sheet',
+  sheetProps: { forceBottom: true },
+})
+const { surface: permSurface, surfaceProps: permSurfaceProps } = useResponsiveSurface({
+  compactSize: 'min(94%, 780px)',
+  dialogMaxWidth: '720px',
+  modalClass: 'user-app-sheet',
+  sheetProps: { forceBottom: true },
+})
 
 const pcHeaderStyle = {
   background: '#f5f0e6',
@@ -55,12 +71,13 @@ const {
   PAGE_SIZES,
   sentinelRef,
   load: loadPage,
+  loadMore,
   resetAndLoad,
   onPageChange,
   onPageSizeChange,
   setupScrollObserver,
 } = useServerPagedList<UserRow>({
-  isCompact,
+  isCompact: isApp,
   getId: (r) => r.id,
   fetchPage: (p, size) =>
     listUsersApi({
@@ -74,7 +91,7 @@ const {
     }),
 })
 
-/** PC / 移动端共用当前服务端页数据 */
+/** PC / 移动端共用当前服务端页数据*/
 const pagedRows = computed(() => rows.value)
 const infiniteRows = computed(() => rows.value)
 const visibleCount = computed(() => rows.value.length)
@@ -151,8 +168,8 @@ const roleLabel: Record<string, string> = {
   admin: '负责人',
   operator: '运营',
   teacher: '老师',
-  cr: 'CR（班主任，学管师）',
-  academic_manager: 'CR（班主任，学管师）',
+  cr: 'CR（班主任/学管师）',
+  academic_manager: 'CR（班主任/学管师）',
 }
 
 function roleTagType(role: string): 'danger' | 'warning' | 'info' | 'success' {
@@ -173,7 +190,7 @@ const activeFilterCount = computed(() => {
 
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('users', {
   visibleCount,
-  enabled: isCompact,
+  enabled: isApp,
   stateStorageKey: LIST_STATE_KEY,
 })
 
@@ -192,7 +209,7 @@ function restoreListState() {
       filters.username = s.filters.username ?? ''
       filters.display_name = s.filters.display_name ?? ''
     }
-    if (!isCompact.value) {
+    if (!isApp.value) {
       if (typeof s.page === 'number' && s.page > 0) page.value = s.page
       if (typeof s.pageSize === 'number' && PAGE_SIZES.includes(s.pageSize)) {
         pageSize.value = s.pageSize
@@ -254,10 +271,6 @@ function onPcPageChange() {
 function onPcPageSizeChange() {
   onPageSizeChange()
   saveListState()
-}
-
-function toggleFilterExpand() {
-  filterExpanded.value = !filterExpanded.value
 }
 
 function nameInitial(row: UserRow) {
@@ -426,7 +439,7 @@ async function onDelete(row: UserRow) {
         ? '\n（负责人账号可删除；删除后请确认仍有可用的负责人登录。）'
         : ''
     await ElMessageBox.confirm(
-      `确定删除用户「${row.display_name || row.username}」？\n账号将无法登录并从列表移除；其上传的素材与填写的学情仍保留原作者署名。名下学管/线索归属会清空，个人待办会删除。${roleHint}`,
+      `确定删除用户「${row.display_name || row.username}」？\n账号将无法登录并从列表移除；其上传的素材与填写的学情仍保留原作者署名。名下学管线索归属会清空，个人待办会删除。${roleHint}`,
       '删除用户',
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
     )
@@ -456,7 +469,7 @@ onMounted(async () => {
 
 <template>
   <div class="user-page">
-    <div class="page-toolbar user-toolbar" :class="{ 'is-compact': isCompact }">
+    <div class="page-toolbar user-toolbar" :class="{ 'is-compact': isApp }">
       <el-page-header class="is-title-only" content="用户管理" />
       <el-button class="create-btn tb-btn tb-btn--primary" type="primary" @click="openCreate">
         <el-icon><Plus /></el-icon>
@@ -464,7 +477,7 @@ onMounted(async () => {
       </el-button>
     </div>
 
-    <!-- PC 筛选 -->
+    <!-- PC 筛选-->
     <div class="user-pc">
       <el-card class="filters pc-filters" shadow="never">
         <div class="pc-filters-head">
@@ -475,8 +488,7 @@ onMounted(async () => {
           <div class="pc-list-summary">
             <span class="pc-list-summary__label">系统账号</span>
             <span class="pc-list-summary__count">
-              共 <strong>{{ total }}</strong> 人
-            </span>
+              共 <strong>{{ total }}</strong> 条</span>
           </div>
         </div>
         <el-form class="filter-form pc-filter-form" :inline="true" @submit.prevent="runQuery">
@@ -485,7 +497,7 @@ onMounted(async () => {
               <el-option label="负责人" value="admin" />
               <el-option label="运营" value="operator" />
               <el-option label="老师" value="teacher" />
-              <el-option label="CR（班主任，学管师）" value="cr" />
+              <el-option label="CR（班主任/学管师）" value="cr" />
             </el-select>
           </el-form-item>
           <el-form-item label="状态">
@@ -520,69 +532,15 @@ onMounted(async () => {
       </el-card>
     </div>
 
-    <!-- wap/pad 筛选 -->
-    <div class="user-m m-filter">
-      <div class="m-filter-search">
-        <el-icon class="m-filter-search__icon"><Search /></el-icon>
-        <input
-          v-model="filters.display_name"
-          class="m-filter-search__input"
-          type="search"
-          enterkeyhint="search"
-          placeholder="搜索显示名"
-          @keyup.enter="runQuery"
-        />
-        <button type="button" class="m-filter-search__btn" @click="runQuery">查询</button>
-      </div>
-      <div class="m-filter-row">
-        <el-select
-          v-model="filters.role"
-          class="m-filter-select"
-          clearable
-          placeholder="角色"
-          teleported
-          placement="bottom-start"
-          :fit-input-width="true"
-          :popper-options="{ strategy: 'fixed' }"
-          popper-class="user-m-select-popper"
-        >
-          <el-option label="负责人" value="admin" />
-          <el-option label="运营" value="operator" />
-          <el-option label="老师" value="teacher" />
-          <el-option label="CR（班主任，学管师）" value="cr" />
-        </el-select>
-        <el-select
-          v-model="filters.is_active"
-          class="m-filter-select"
-          clearable
-          placeholder="状态"
-          teleported
-          placement="bottom-start"
-          :fit-input-width="true"
-          :popper-options="{ strategy: 'fixed' }"
-          popper-class="user-m-select-popper"
-        >
-          <el-option label="启用" value="true" />
-          <el-option label="停用" value="false" />
-        </el-select>
-        <button
-          type="button"
-          class="m-filter-more"
-          :class="{ 'is-active': filterExpanded || activeFilterCount > 0 }"
-          @click="toggleFilterExpand"
-        >
-          更多{{ activeFilterCount ? ` · ${activeFilterCount}` : '' }}
-          <el-icon :class="{ 'is-open': filterExpanded }"><ArrowDown /></el-icon>
-        </button>
-      </div>
-      <div v-show="filterExpanded" class="m-filter-panel">
-        <el-input v-model="filters.username" clearable placeholder="用户名" />
-        <div class="m-filter-panel__actions">
-          <button type="button" class="m-filter-link" @click="resetFilters">重置</button>
-          <button type="button" class="m-filter-apply" @click="runQuery">完成</button>
-        </div>
-      </div>
-    </div>
+    <CompactFilterBar class="user-m" :active-count="activeFilterCount" :total="total" label="位用户" @open="filterExpanded = true" />
+    <MobileFilterSheet v-model="filterExpanded" :active-count="activeFilterCount" @apply="runQuery" @reset="resetFilters">
+      <el-form label-position="top" @submit.prevent="runQuery">
+        <el-form-item label="显示名"><el-input v-model="filters.display_name" clearable placeholder="搜索显示名" /></el-form-item>
+        <el-form-item label="用户名"><el-input v-model="filters.username" clearable placeholder="搜索用户名" /></el-form-item>
+        <el-form-item label="角色"><el-select v-model="filters.role" clearable placeholder="全部角色"><el-option label="负责人" value="admin" /><el-option label="运营" value="operator" /><el-option label="老师" value="teacher" /><el-option label="CR（班主任/学管师）" value="cr" /></el-select></el-form-item>
+        <el-form-item label="状态"><el-select v-model="filters.is_active" clearable placeholder="全部状态"><el-option label="启用" value="true" /><el-option label="停用" value="false" /></el-select></el-form-item>
+      </el-form>
+    </MobileFilterSheet>
 
     <!-- 移动卡片（互斥折叠） -->
     <div v-loading="loading" class="user-m user-card-list">
@@ -613,6 +571,7 @@ onMounted(async () => {
             type="button"
             class="m-card-acc-toggle"
             :aria-expanded="isExpanded(row.id)"
+            :aria-label="isExpanded(row.id) ? '收起用户详情' : '展开用户详情'"
             @click.stop="toggleForce(row.id)"
           >
             <el-icon class="m-card-acc-chevron" :class="{ 'is-open': isExpanded(row.id) }">
@@ -639,16 +598,16 @@ onMounted(async () => {
             </el-button>
           </div>
           <div v-if="extraPermCount(row)" class="user-card__perm-hint">
-            额外授权 {{ extraPermCount(row) }} 项
-          </div>
+            额外授权 {{ extraPermCount(row) }} 项          </div>
         </div>
       </div>
-      <div v-if="rows.length || hasMoreInfinite" ref="sentinelRef" class="scroll-sentinel">
-        <span v-if="hasMoreInfinite || loadingMore" class="scroll-hint">
-          {{ loadingMore ? '加载中…' : '上拉加载更多' }}
-        </span>
-        <span v-else class="scroll-hint">已加载全部 {{ total }} 人</span>
-      </div>
+      <div ref="sentinelRef" class="list-load-sentinel"><ListLoadStatus :has-more="hasMoreInfinite"
+        :loading="loadingMore"
+        :loaded="rows.length"
+        :total="total"
+        @more="loadMore"
+        @retry="loadMore"
+      /></div>
     </div>
 
     <!-- PC 表格 -->
@@ -743,11 +702,11 @@ onMounted(async () => {
       />
     </div>
 
-    <el-dialog
+    <component
+      :is="userSurface"
       v-model="createVisible"
+      v-bind="userSurfaceProps"
       title="新建用户"
-      width="90%"
-      style="max-width: 480px"
       destroy-on-close
       class="user-dialog"
     >
@@ -763,7 +722,7 @@ onMounted(async () => {
             <el-option label="负责人" value="admin" />
             <el-option label="运营" value="operator" />
             <el-option label="老师" value="teacher" />
-            <el-option label="CR（班主任，学管师）" value="cr" />
+            <el-option label="CR（班主任/学管师）" value="cr" />
           </el-select>
         </el-form-item>
         <el-form-item label="初始密码" prop="password">
@@ -777,18 +736,18 @@ onMounted(async () => {
         <el-button @click="createVisible = false">取消</el-button>
         <el-button type="primary" :loading="createLoading" @click="submitCreate">创建</el-button>
       </template>
-    </el-dialog>
+    </component>
 
-    <el-dialog
+    <component
+      :is="userSurface"
       v-model="resetVisible"
+      v-bind="userSurfaceProps"
       title="重置密码"
-      width="90%"
-      style="max-width: 420px"
       destroy-on-close
       class="user-dialog"
     >
       <p v-if="resetTarget" class="reset-hint">
-        为用户 <strong>{{ resetTarget.username }}</strong> 设置新密码：
+        为用户<strong>{{ resetTarget.username }}</strong> 设置新密码：
       </p>
       <el-form ref="resetFormRef" :model="resetForm" :rules="resetRules" label-position="top">
         <el-form-item label="新密码" prop="new_password">
@@ -802,9 +761,15 @@ onMounted(async () => {
         <el-button @click="resetVisible = false">取消</el-button>
         <el-button type="primary" :loading="resetLoading" @click="submitReset">确认重置</el-button>
       </template>
-    </el-dialog>
+    </component>
 
-    <el-dialog v-model="revealVisible" :title="revealTitle" width="90%" style="max-width: 420px">
+    <component
+      :is="userSurface"
+      v-model="revealVisible"
+      v-bind="userSurfaceProps"
+      :title="revealTitle"
+      destroy-on-close
+    >
       <el-alert
         type="warning"
         :closable="false"
@@ -819,33 +784,25 @@ onMounted(async () => {
         <el-button @click="copyText(`${revealUsername} / ${revealPassword}`)">复制账号密码</el-button>
         <el-button type="primary" @click="revealVisible = false">已保存，关闭</el-button>
       </template>
-    </el-dialog>
+    </component>
 
-    <el-dialog
+    <component
+      :is="permSurface"
       v-model="permVisible"
-      width="92%"
-      style="max-width: 720px"
-      align-center
+      v-bind="permSurfaceProps"
       destroy-on-close
       class="user-dialog perm-dialog"
+      title="授权管理"
     >
-      <template #header>
-        <div class="perm-head">
-          <div class="perm-head__title">授权管理</div>
-          <div v-if="permTarget" class="perm-head__sub">
-            <span class="perm-head__name">{{ permTarget.display_name || permTarget.username }}</span>
-            <el-tag
-              :type="roleTagType(permTarget.role)"
-              size="small"
-              effect="plain"
-              round
-            >
-              {{ permTargetRoleLabel }}
-            </el-tag>
-            <span class="perm-head__uname">@{{ permTarget.username }}</span>
-          </div>
+      <div v-if="permTarget" class="perm-head">
+        <div class="perm-head__sub">
+          <span class="perm-head__name">{{ permTarget.display_name || permTarget.username }}</span>
+          <el-tag :type="roleTagType(permTarget.role)" size="small" effect="plain" round>
+            {{ permTargetRoleLabel }}
+          </el-tag>
+          <span class="perm-head__uname">@{{ permTarget.username }}</span>
         </div>
-      </template>
+      </div>
 
       <div v-loading="permLoading" class="perm-body">
         <el-alert
@@ -932,7 +889,7 @@ onMounted(async () => {
           保存授权
         </el-button>
       </template>
-    </el-dialog>
+    </component>
   </div>
 </template>
 
@@ -949,7 +906,7 @@ onMounted(async () => {
   display: block;
 }
 
-@media (min-width: 992px) {
+@media (min-width: 1200px) {
   .user-pc {
     display: block;
   }
@@ -1052,7 +1009,7 @@ onMounted(async () => {
   font-weight: 500;
 }
 
-/* ── wap 筛选 ── */
+/* ── wap 筛选── */
 .m-filter {
   position: relative;
   z-index: 20;
@@ -1302,16 +1259,6 @@ onMounted(async () => {
   color: var(--oc-primary, #a16207);
 }
 
-.scroll-sentinel {
-  padding: 12px 0 4px;
-  text-align: center;
-}
-
-.scroll-hint {
-  font-size: 12px;
-  color: var(--oc-muted, #78716c);
-}
-
 /* ── PC 表格 ── */
 .pc-table-card {
   margin-top: 12px;
@@ -1407,14 +1354,14 @@ onMounted(async () => {
   color: #a8a29e;
 }
 
-@media (max-width: 991px) {
+@media (max-width: 1199px) {
   .user-toolbar {
     flex-wrap: wrap;
     gap: 10px;
   }
 
   .create-btn {
-    width: 100%;
+    width: auto;
     height: 40px;
     border-radius: 10px;
     font-weight: 600;
@@ -1427,7 +1374,7 @@ onMounted(async () => {
   z-index: 5000 !important;
 }
 
-/* 授权弹窗：非 scoped，避免 teleport 后布局样式偶发失效 */
+/* 授权弹窗：非 scoped，避免teleport 后布局样式偶发失效 */
 .perm-dialog .perm-head {
   display: flex;
   flex-direction: column;

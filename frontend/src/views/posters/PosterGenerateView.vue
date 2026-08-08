@@ -19,7 +19,7 @@ import { usePageBack } from '../../composables/usePageBack'
 const route = useRoute()
 const router = useRouter()
 const { goBack } = usePageBack('/posters')
-const { isCompact } = useBreakpoint()
+const { isApp } = useBreakpoint()
 const loading = ref(false)
 const templates = ref<PosterTemplate[]>([])
 const result = ref<GeneratedPoster | null>(null)
@@ -175,11 +175,11 @@ onUnmounted(revokePreview)
     </div>
 
     <el-row
-      :gutter="isCompact ? 0 : 20"
+      :gutter="isApp ? 0 : 20"
       class="generate-layout"
-      :class="{ 'is-stacked': isCompact }"
+      :class="{ 'is-stacked': isApp }"
     >
-      <el-col :xs="24" :sm="24" :lg="9" :md="isCompact ? 24 : 10" class="generate-form-col">
+      <el-col :xs="24" :sm="24" :lg="9" :md="isApp ? 24 : 10" class="generate-form-col">
         <el-card class="form-card" shadow="never">
           <template #header>
             <div class="card-head">
@@ -318,7 +318,7 @@ onUnmounted(revokePreview)
         </el-card>
       </el-col>
 
-      <el-col :xs="24" :sm="24" :lg="15" :md="isCompact ? 24 : 14" class="generate-side-col">
+      <el-col :xs="24" :sm="24" :lg="15" :md="isApp ? 24 : 14" class="generate-side-col">
         <el-card class="preview-card" shadow="never" v-loading="loading">
           <template #header>
             <div class="card-head">

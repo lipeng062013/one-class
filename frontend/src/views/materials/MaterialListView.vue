@@ -17,9 +17,12 @@ import {
   type Material,
 } from '../../api/materials'
 import { useAuthStore } from '../../stores/auth'
+import ListLoadStatus from '../../components/ListLoadStatus.vue'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useCardAccordion } from '../../composables/useCardAccordion'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
+import CompactFilterBar from '../../components/CompactFilterBar.vue'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
 
 const LIST_STATE_KEY = 'oc-material-list-state'
 const PAGE_SIZES = [10, 20, 50, 100]
@@ -28,7 +31,7 @@ const SCROLL_CHUNK = 10
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const { isCompact } = useBreakpoint()
+const { isApp } = useBreakpoint()
 
 const pcHeaderStyle = {
   background: '#f5f0e6',
@@ -123,7 +126,7 @@ const hasMoreInfinite = computed(() => rows.value.length < total.value)
 const { isExpanded, toggle: toggleCard, toggleForce, collapseAll } = useCardAccordion()
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('materials', {
   visibleCount,
-  enabled: isCompact,
+  enabled: isApp,
   stateStorageKey: LIST_STATE_KEY,
 })
 
@@ -222,10 +225,6 @@ function resetFilters() {
   void load({ fromQuery: true })
 }
 
-function toggleFilterExpand() {
-  filterExpanded.value = !filterExpanded.value
-}
-
 function resetUploadForm() {
   uploadForm.title = ''
   uploadForm.grade = ''
@@ -238,21 +237,52 @@ function resetUploadForm() {
 }
 
 async function openUpload() {
+  // 长表单：WAP/Pad 走独立上传页，避免小弹窗双层滚动
+  if (isApp.value) {
+    await router.push('/upload')
+    return
+  }
   resetUploadForm()
   uploadDialog.value = true
   await nextTick()
   uploadFormRef.value?.clearValidate()
 }
 
+function goDetail(row: Material) {
+  void router.push(`/materials/${row.id}`)
+}
+
+function cardSub(row: Material) {
+  const parts = [row.grade, row.subject].filter(Boolean)
+  const auth = authLabel[row.auth_status] || row.auth_status
+  const files = row.files?.length || 0
+  parts.push(auth)
+  parts.push(`${files} 图`)
+  return parts.join(' · ')
+}
+
+function formatShortTime(v?: string | null) {
+  if (!v) return ''
+  try {
+    const d = new Date(v)
+    if (Number.isNaN(d.getTime())) return ''
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${m}-${day}`
+  } catch {
+    return ''
+  }
+}
+
 async function load(opts?: { fromQuery?: boolean; append?: boolean }) {
-  const append = !!opts?.append && isCompact.value
+  const append = !!opts?.append && isApp.value
   const snap = opts?.fromQuery || append ? null : takeSnapshotForLoad(route.path)
   if (opts?.fromQuery) clearSnapshot()
 
   if (append) loadingMore.value = true
   else loading.value = true
   try {
-    if (isCompact.value) {
+    if (isApp.value) {
       // 移动端：按 chunk 拉取；append 时 page 已 +1
       if (!append) page.value = 1
       const res = await listMaterialsApi(listQuery(page.value, SCROLL_CHUNK))
@@ -289,14 +319,14 @@ async function load(opts?: { fromQuery?: boolean; append?: boolean }) {
 }
 
 async function loadMore() {
-  if (!isCompact.value || loadingMore.value || loading.value || !hasMoreInfinite.value) return
+  if (!isApp.value || loadingMore.value || loading.value || !hasMoreInfinite.value) return
   page.value += 1
   await load({ append: true })
 }
 
 function setupScrollObserver() {
   teardownScrollObserver()
-  if (!isCompact.value) return
+  if (!isApp.value) return
   const el = sentinelRef.value
   if (!el) return
   scrollObserver = new IntersectionObserver(
@@ -352,7 +382,7 @@ async function onDelete(row: Material) {
   }
 }
 
-watch(isCompact, async (compact, wasCompact) => {
+watch(isApp, async (compact, wasCompact) => {
   if (compact === wasCompact) return
   page.value = 1
   await load({ fromQuery: true })
@@ -361,7 +391,7 @@ watch(isCompact, async (compact, wasCompact) => {
 })
 
 watch(sentinelRef, () => {
-  if (isCompact.value) setupScrollObserver()
+  if (isApp.value) setupScrollObserver()
 })
 
 onMounted(async () => {
@@ -376,7 +406,7 @@ onUnmounted(() => teardownScrollObserver())
 
 <template>
   <div class="material-page">
-    <div class="page-toolbar" :class="{ 'is-compact': isCompact }">
+    <div class="page-toolbar" :class="{ 'is-compact': isApp }">
       <el-page-header class="is-title-only" content="素材管理" />
       <el-button class="tb-btn tb-btn--primary" type="primary" @click="openUpload">
         <el-icon><Plus /></el-icon>
@@ -428,70 +458,82 @@ onUnmounted(() => teardownScrollObserver())
       </el-card>
     </div>
 
-    <!-- wap 筛选 -->
-    <div class="mat-m m-filter">
-      <div class="m-filter-search">
-        <el-icon class="m-filter-search__icon"><Search /></el-icon>
-        <input
-          v-model="filters.q"
-          class="m-filter-search__input"
-          type="search"
-          enterkeyhint="search"
-          placeholder="搜索标题"
-          @keyup.enter="runQuery"
-        />
-        <button type="button" class="m-filter-search__btn" @click="runQuery">查询</button>
-      </div>
-      <div class="m-filter-row">
-        <el-select
-          v-model="filters.status"
-          class="m-filter-select"
-          clearable
-          placeholder="状态"
-          teleported
-          :popper-options="{ strategy: 'fixed' }"
-          popper-class="mat-m-select-popper"
-        >
-          <el-option v-for="(label, key) in statusLabel" :key="key" :label="label" :value="key" />
-        </el-select>
-        <button
-          type="button"
-          class="m-filter-more"
-          :class="{ 'is-active': filterExpanded || activeFilterCount > 0 }"
-          @click="toggleFilterExpand"
-        >
-          更多{{ activeFilterCount ? ` · ${activeFilterCount}` : '' }}
-          <el-icon :class="{ 'is-open': filterExpanded }"><ArrowDown /></el-icon>
-        </button>
-      </div>
-      <div v-show="filterExpanded" class="m-filter-panel">
-        <el-input v-model="filters.grade" clearable placeholder="年级" />
-        <el-input v-model="filters.subject" clearable placeholder="科目" />
-        <div class="m-filter-panel__actions">
-          <button type="button" class="m-filter-link" @click="resetFilters">重置</button>
-          <button type="button" class="m-filter-apply" @click="runQuery">完成</button>
-        </div>
-      </div>
-    </div>
+    <CompactFilterBar
+      class="mat-m"
+      :active-count="activeFilterCount"
+      :total="total"
+      label="条素材"
+      @open="filterExpanded = true"
+    />
+    <MobileFilterSheet
+      v-model="filterExpanded"
+      :active-count="activeFilterCount"
+      @apply="runQuery"
+      @reset="resetFilters"
+    >
+      <el-form label-position="top" @submit.prevent="runQuery">
+        <el-form-item label="关键词">
+          <el-input v-model="filters.q" clearable placeholder="标题 / 痛点" />
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="filters.status" clearable placeholder="全部状态">
+            <el-option v-for="(label, key) in statusLabel" :key="key" :label="label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="年级">
+          <el-input v-model="filters.grade" clearable placeholder="全部年级" />
+        </el-form-item>
+        <el-form-item label="科目">
+          <el-input v-model="filters.subject" clearable placeholder="全部科目" />
+        </el-form-item>
+      </el-form>
+    </MobileFilterSheet>
 
     <!-- 移动卡片（互斥折叠） -->
     <div v-loading="loading" class="mat-m mat-card-list">
-      <div v-if="!total && !loading" class="mat-card mat-card--empty">暂无素材</div>
+      <div v-if="!total && !loading" class="mat-card mat-card--empty">
+        <div class="mat-empty-ico" aria-hidden="true">
+          <el-icon :size="28"><Picture /></el-icon>
+        </div>
+        <p class="mat-empty-title">暂无素材</p>
+        <p class="mat-empty-desc">上传课堂 / 试听场景，方便后续生成文案</p>
+        <el-button type="primary" @click="openUpload">
+          <el-icon><Plus /></el-icon>
+          上传素材
+        </el-button>
+      </div>
       <div
         v-for="row in infiniteRows"
         :key="row.id"
         class="mat-card"
-        :class="{ 'is-expanded': isExpanded(row.id) }"
+        :class="{
+          'is-expanded': isExpanded(row.id),
+          'is-new': row.status === 'new',
+          'is-usable': row.status === 'usable',
+        }"
       >
         <div class="mat-card__top" @click="toggleCard(row.id, $event)">
-          <div class="mat-card__title">{{ row.title }}</div>
-          <el-tag :type="statusTagType(row.status)" size="small" effect="plain" round>
-            {{ statusLabel[row.status] || row.status }}
-          </el-tag>
+          <div class="mat-card__thumb" :class="{ 'has-files': (row.files?.length || 0) > 0 }">
+            <el-icon :size="18"><Picture /></el-icon>
+            <span v-if="row.files?.length" class="mat-card__thumb-count">{{ row.files.length }}</span>
+          </div>
+          <div class="mat-card__main">
+            <div class="mat-card__title">{{ row.title }}</div>
+            <div class="mat-card__sub">{{ cardSub(row) }}</div>
+          </div>
+          <div class="mat-card__badges">
+            <el-tag :type="statusTagType(row.status)" size="small" effect="plain" round>
+              {{ statusLabel[row.status] || row.status }}
+            </el-tag>
+            <span v-if="formatShortTime(row.created_at)" class="mat-card__time">
+              {{ formatShortTime(row.created_at) }}
+            </span>
+          </div>
           <button
             type="button"
             class="m-card-acc-toggle"
             :aria-expanded="isExpanded(row.id)"
+            :aria-label="isExpanded(row.id) ? '收起素材详情' : '展开素材详情'"
             @click.stop="toggleForce(row.id)"
           >
             <el-icon class="m-card-acc-chevron" :class="{ 'is-open': isExpanded(row.id) }">
@@ -501,15 +543,29 @@ onUnmounted(() => teardownScrollObserver())
         </div>
         <div v-show="isExpanded(row.id)" class="m-card-acc-body">
           <div class="mat-card__meta">
-            <span v-if="row.grade"><span class="k">年级</span>{{ row.grade }}</span>
-            <span v-if="row.subject"><span class="k">科目</span>{{ row.subject }}</span>
-            <span><span class="k">授权</span>{{ authLabel[row.auth_status] || row.auth_status }}</span>
-            <span><span class="k">图片</span>{{ row.files?.length || 0 }}</span>
+            <div v-if="row.grade || row.subject" class="mat-meta-item">
+              <span class="mat-meta-k">年级科目</span>
+              <span class="mat-meta-v">{{ [row.grade, row.subject].filter(Boolean).join(' · ') || '—' }}</span>
+            </div>
+            <div class="mat-meta-item">
+              <span class="mat-meta-k">授权</span>
+              <span class="mat-meta-v">
+                <el-tag :type="authTagType(row.auth_status)" size="small" effect="plain" round>
+                  {{ authLabel[row.auth_status] || row.auth_status }}
+                </el-tag>
+              </span>
+            </div>
+            <div class="mat-meta-item">
+              <span class="mat-meta-k">图片</span>
+              <span class="mat-meta-v">{{ row.files?.length || 0 }} 张</span>
+            </div>
+            <div v-if="row.pain_point" class="mat-meta-item mat-meta-item--full">
+              <span class="mat-meta-k">痛点</span>
+              <span class="mat-meta-v mat-meta-v--clip">{{ row.pain_point }}</span>
+            </div>
           </div>
           <div class="mat-card__actions">
-            <el-button type="primary" size="small" @click="router.push(`/materials/${row.id}`)">
-              详情
-            </el-button>
+            <el-button type="primary" size="small" @click="goDetail(row)">查看详情</el-button>
             <el-button
               v-if="!auth.isTeacher && row.status === 'new'"
               size="small"
@@ -523,11 +579,15 @@ onUnmounted(() => teardownScrollObserver())
           </div>
         </div>
       </div>
-      <div v-if="total" ref="sentinelRef" class="scroll-sentinel">
-        <span v-if="hasMoreInfinite || loadingMore" class="scroll-hint">
-          {{ loadingMore ? '加载中…' : '上拉加载更多' }}
-        </span>
-        <span v-else class="scroll-hint">已加载全部 {{ total }} 条</span>
+      <div ref="sentinelRef" class="list-load-sentinel">
+        <ListLoadStatus
+          :has-more="hasMoreInfinite"
+          :loading="loadingMore"
+          :loaded="rows.length"
+          :total="total"
+          @more="loadMore"
+          @retry="loadMore"
+        />
       </div>
     </div>
 
@@ -618,6 +678,7 @@ onUnmounted(() => teardownScrollObserver())
       </div>
     </div>
 
+    <!-- PC 快捷上传弹窗（WAP/Pad 已跳转 /upload） -->
     <el-dialog
       v-model="uploadDialog"
       title="上传素材"
@@ -668,8 +729,10 @@ onUnmounted(() => teardownScrollObserver())
             :auto-upload="false"
             accept="image/*"
             multiple
+            aria-label="添加素材图片"
           >
             <el-icon><Plus /></el-icon>
+            <span class="oc-visually-hidden">添加素材图片</span>
           </el-upload>
         </el-form-item>
       </el-form>
@@ -694,7 +757,7 @@ onUnmounted(() => teardownScrollObserver())
   display: block;
 }
 
-@media (min-width: 992px) {
+@media (min-width: 1200px) {
   .mat-pc {
     display: block;
   }
@@ -708,155 +771,12 @@ onUnmounted(() => teardownScrollObserver())
   gap: 10px;
 }
 
-/* wap 筛选 */
-.m-filter {
-  position: relative;
-  z-index: 20;
-  margin-top: 8px;
-  padding: 10px 12px;
-  background: var(--oc-card, #fffdf8);
-  border: 1px solid var(--oc-border, #e8e0d0);
-  border-radius: 12px;
-  overflow: visible;
-}
-
-.m-filter-search {
-  display: flex;
-  align-items: center;
-  height: 40px;
-  padding: 0 4px 0 12px;
-  background: #f5f0e6;
-  border: 1px solid var(--oc-border, #e8e0d0);
-  border-radius: 10px;
-}
-
-.m-filter-search__icon {
-  color: #a8a29e;
-  font-size: 16px;
-  flex-shrink: 0;
-}
-
-.m-filter-search__input {
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-  margin: 0 8px;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-size: 14px;
-  color: var(--oc-ink, #44403c);
-  appearance: none;
-}
-
-.m-filter-search__input::-webkit-search-cancel-button {
-  -webkit-appearance: none;
-}
-
-.m-filter-search__input::placeholder {
-  color: #a8a29e;
-}
-
-.m-filter-search__btn {
-  flex-shrink: 0;
-  height: 32px;
-  padding: 0 14px;
-  border: none;
-  border-radius: 8px;
-  background: var(--oc-primary, #a16207);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.m-filter-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.m-filter-select {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.m-filter-select :deep(.el-select__wrapper) {
-  min-height: 34px;
-  border-radius: 8px;
-  background: #faf6ef !important;
-  box-shadow: 0 0 0 1px var(--oc-border, #e8e0d0) inset !important;
-}
-
-.m-filter-more {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--oc-border, #e8e0d0);
-  border-radius: 8px;
-  background: #fffdf8;
-  color: var(--oc-ink, #44403c);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.m-filter-more.is-active {
-  border-color: #d4b483;
-  color: var(--oc-primary, #a16207);
-  background: #faf3e6;
-}
-
-.m-filter-more .el-icon.is-open {
-  transform: rotate(180deg);
-}
-
-.m-filter-panel {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px dashed var(--oc-border, #e8e0d0);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.m-filter-panel__actions {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 12px;
-}
-
-.m-filter-link {
-  border: none;
-  background: transparent;
-  color: var(--oc-muted, #78716c);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.m-filter-apply {
-  height: 32px;
-  padding: 0 16px;
-  border: none;
-  border-radius: 8px;
-  background: var(--oc-primary, #a16207);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
 .mat-card-list {
-  margin-top: 12px;
+  margin-top: 4px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+  padding-bottom: 8px;
 }
 
 .mat-card {
@@ -864,14 +784,57 @@ onUnmounted(() => teardownScrollObserver())
   border-radius: 14px;
   border: 2px solid var(--oc-border, #e8e0d0);
   background: var(--oc-card, #fffdf8);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mat-card.is-new {
+  border-color: rgba(64, 158, 255, 0.28);
+}
+
+.mat-card.is-usable {
+  border-color: rgba(103, 194, 58, 0.28);
 }
 
 .mat-card--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   text-align: center;
   color: var(--oc-muted, #78716c);
   font-size: 13px;
-  padding: 28px 14px;
+  padding: 36px 18px;
   border-style: dashed;
+  border-color: rgba(181, 145, 83, 0.35);
+  background: linear-gradient(180deg, #fffefb, #faf6ee);
+}
+
+.mat-empty-ico {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--oc-primary, #a16207);
+  background: linear-gradient(145deg, #f5e6c8, #e8d5b0);
+  box-shadow: 0 6px 14px rgba(161, 98, 7, 0.14);
+  margin-bottom: 4px;
+}
+
+.mat-empty-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--oc-ink, #44403c);
+}
+
+.mat-empty-desc {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--oc-muted, #78716c);
+  max-width: 16rem;
 }
 
 .mat-card__top {
@@ -883,32 +846,129 @@ onUnmounted(() => teardownScrollObserver())
   user-select: none;
 }
 
-.mat-card__title {
+.mat-card__thumb {
+  position: relative;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #a8a29e;
+  background: linear-gradient(145deg, #f5f0e6, #ebe4d6);
+  border: 1px solid rgba(232, 224, 208, 0.95);
+}
+
+.mat-card__thumb.has-files {
+  color: #fffdf8;
+  background: linear-gradient(145deg, #c98718, #a16207);
+  border-color: transparent;
+  box-shadow: 0 4px 10px rgba(161, 98, 7, 0.22);
+}
+
+.mat-card__thumb-count {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #44403c;
+  color: #fffdf8;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid #fffdf8;
+}
+
+.mat-card__main {
   flex: 1;
   min-width: 0;
+}
+
+.mat-card__title {
   font-size: 15px;
   font-weight: 650;
   color: var(--oc-ink, #44403c);
-  cursor: pointer;
+  line-height: 1.35;
   word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mat-card__sub {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--oc-muted, #78716c);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mat-card__badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.mat-card__time {
+  font-size: 11px;
+  color: #a8a29e;
+  font-variant-numeric: tabular-nums;
 }
 
 .mat-card__meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-  margin-top: 10px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: #faf6ee;
-  font-size: 13px;
-  color: var(--oc-ink, #44403c);
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 0;
+  padding: 12px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #faf6ee, #f7f2e9);
+  border: 1px solid rgba(232, 224, 208, 0.85);
 }
 
-.mat-card__meta .k {
-  color: var(--oc-muted, #78716c);
-  margin-right: 4px;
+.mat-meta-item {
+  display: flex;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  min-width: 0;
+  align-items: flex-start;
+}
+
+.mat-meta-k {
+  flex-shrink: 0;
+  min-width: 3.6em;
+  color: #a8a29e;
   font-size: 12px;
+  font-weight: 550;
+  padding-top: 1px;
+}
+
+.mat-meta-v {
+  min-width: 0;
+  color: var(--oc-ink, #44403c);
+  word-break: break-word;
+}
+
+.mat-meta-v--clip {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #57534e;
 }
 
 .mat-card__actions {
@@ -924,42 +984,34 @@ onUnmounted(() => teardownScrollObserver())
   min-width: 0;
 }
 
-.scroll-sentinel {
-  padding: 12px 0 4px;
-  text-align: center;
-}
-
-.scroll-hint {
-  font-size: 12px;
-  color: var(--oc-muted, #78716c);
-}
-
 .pc-mat-table :deep(.el-table__row:hover > td.el-table__cell) {
   background: #faf6ee !important;
 }
 
-@media (max-width: 991px) {
+@media (max-width: 1199px) {
   .page-toolbar {
     flex-wrap: wrap;
   }
 
   .tb-btn--primary {
-    width: 100%;
-    height: 40px;
+    width: auto;
+    min-height: 40px;
+    border-radius: 12px;
+    font-weight: 650;
   }
+}
 
-  .mat-upload-row {
+@media (min-width: 768px) and (max-width: 1199px) {
+  .mat-card-list {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0 10px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: 14px;
   }
 
-  .mat-upload-form :deep(.el-form-item) {
-    margin-bottom: 12px;
-  }
-
-  .mat-upload-form :deep(.el-form-item__label) {
-    margin-bottom: 4px;
+  .mat-card--empty,
+  .list-load-sentinel {
+    grid-column: 1 / -1;
   }
 }
 
@@ -977,34 +1029,43 @@ onUnmounted(() => teardownScrollObserver())
 .mat-upload-dialog.el-dialog {
   max-width: 560px;
   width: min(90vw, 560px);
+  border-radius: 16px;
+  overflow: hidden;
 }
 
-@media (max-width: 991px) {
-  /*
-   * 素材上传字段多，pad 再压一档高度，避免贴底滚动时底部闪空白。
-   * 全局 dialog 规则见 style.css；此处仅本弹窗更严。
-   */
-  .mat-upload-dialog.el-dialog {
-    max-height: calc(100vh - 64px) !important;
-    max-height: calc(100dvh - 64px) !important;
-    max-height: calc(100svh - 64px) !important;
-  }
-
-  .mat-upload-dialog .el-dialog__body {
-    overscroll-behavior: none;
-    overscroll-behavior-y: none;
-  }
-
-  .mat-upload-dialog .el-upload--picture-card,
-  .mat-upload-dialog .el-upload-list--picture-card .el-upload-list__item {
-    width: 72px;
-    height: 72px;
-  }
+.mat-upload-dialog .el-dialog__header {
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid rgba(232, 224, 208, 0.9);
+  margin-right: 0;
 }
-</style>
 
-<style>
-.mat-m-select-popper {
-  z-index: 5000 !important;
+.mat-upload-dialog .el-dialog__title {
+  font-weight: 700;
+  color: #44403c;
+}
+
+.mat-upload-dialog .el-dialog__body {
+  padding: 16px 20px;
+}
+
+.mat-upload-dialog .el-dialog__footer {
+  padding: 12px 20px 16px;
+  border-top: 1px solid rgba(232, 224, 208, 0.9);
+}
+
+.mat-upload-form .el-form-item {
+  margin-bottom: 14px;
+}
+
+.mat-upload-form .el-form-item__label {
+  font-weight: 600;
+  color: #44403c;
+}
+
+.mat-upload-dialog .el-upload--picture-card,
+.mat-upload-dialog .el-upload-list--picture-card .el-upload-list__item {
+  width: 88px;
+  height: 88px;
+  border-radius: 12px;
 }
 </style>

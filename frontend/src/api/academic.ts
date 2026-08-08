@@ -324,14 +324,20 @@ export interface TeacherManage {
   is_active: boolean
 }
 
-export async function listCoursesApi(params: {
-  q?: string
-  course_type?: string
-  enabled?: boolean
-  page?: number
-  page_size?: number
-} = {}): Promise<PageResult<Course>> {
-  const res = await client.get('/academic/courses', { params })
+export async function listCoursesApi(
+  params: {
+    q?: string
+    course_type?: string
+    enabled?: boolean
+    page?: number
+    page_size?: number
+  } = {},
+  opts?: { skipErrorToast?: boolean },
+): Promise<PageResult<Course>> {
+  const res = await client.get('/academic/courses', {
+    params,
+    skipErrorToast: opts?.skipErrorToast,
+  } as import('./client').AppAxiosRequestConfig)
   return asPageResult<Course>(res.data.data, params.page ?? 1, params.page_size ?? 20)
 }
 
@@ -362,16 +368,22 @@ export async function deleteCourseApi(id: number): Promise<void> {
   await client.delete(`/academic/courses/${id}`)
 }
 
-export async function listClassesApi(params: {
-  mode?: string
-  q?: string
-  course_id?: number
-  teacher_id?: number
-  only_mine?: boolean
-  page?: number
-  page_size?: number
-} = {}): Promise<PageResult<ClassRoom>> {
-  const res = await client.get('/academic/classes', { params })
+export async function listClassesApi(
+  params: {
+    mode?: string
+    q?: string
+    course_id?: number
+    teacher_id?: number
+    only_mine?: boolean
+    page?: number
+    page_size?: number
+  } = {},
+  opts?: { skipErrorToast?: boolean },
+): Promise<PageResult<ClassRoom>> {
+  const res = await client.get('/academic/classes', {
+    params,
+    skipErrorToast: opts?.skipErrorToast,
+  } as import('./client').AppAxiosRequestConfig)
   return asPageResult<ClassRoom>(res.data.data, params.page ?? 1, params.page_size ?? 20)
 }
 
@@ -649,11 +661,17 @@ export async function voidClassRecordApi(id: number): Promise<ClassRecord> {
   return res.data.data
 }
 
-export async function listAcademicTeachersApi(params: {
-  q?: string
-  page?: number
-  page_size?: number
-} = {}): Promise<PageResult<TeacherManage>> {
-  const res = await client.get('/academic/teachers', { params })
+export async function listAcademicTeachersApi(
+  params: {
+    q?: string
+    page?: number
+    page_size?: number
+  } = {},
+  opts?: { skipErrorToast?: boolean },
+): Promise<PageResult<TeacherManage>> {
+  const res = await client.get('/academic/teachers', {
+    params,
+    skipErrorToast: opts?.skipErrorToast,
+  } as import('./client').AppAxiosRequestConfig)
   return asPageResult<TeacherManage>(res.data.data, params.page ?? 1, params.page_size ?? 50)
 }

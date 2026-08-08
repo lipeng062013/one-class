@@ -7,7 +7,10 @@ import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useCardAccordion } from '../../composables/useCardAccordion'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
 import { useServerPagedList } from '../../composables/useServerPagedList'
+import ListLoadStatus from '../../components/ListLoadStatus.vue'
 import PcPagerBar from '../../components/PcPagerBar.vue'
+import CompactFilterBar from '../../components/CompactFilterBar.vue'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
 
 const LIST_STATE_KEY = 'oc-copy-list-state'
 
@@ -27,7 +30,7 @@ const PLATFORM_LABELS: Record<string, string> = {
 
 const route = useRoute()
 const router = useRouter()
-const { isCompact } = useBreakpoint()
+const { isApp } = useBreakpoint()
 const { isExpanded, toggle: toggleCard, toggleForce, collapseAll } = useCardAccordion()
 
 const pcHeaderStyle = {
@@ -59,12 +62,13 @@ const {
   PAGE_SIZES,
   sentinelRef,
   load: loadPage,
+  loadMore,
   resetAndLoad,
   onPageChange,
   onPageSizeChange,
   setupScrollObserver,
 } = useServerPagedList<GeneratedCopy>({
-  isCompact,
+  isCompact: isApp,
   getId: (r) => r.id,
   fetchPage: (p, size) =>
     listCopies({
@@ -101,7 +105,7 @@ function platformLabel(platform?: string | null) {
 
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('copies', {
   visibleCount,
-  enabled: isCompact,
+  enabled: isApp,
   stateStorageKey: LIST_STATE_KEY,
 })
 
@@ -121,7 +125,7 @@ function restoreListState() {
       filters.mode = s.filters.mode ?? ''
       filters.platform = s.filters.platform ?? ''
     }
-    if (!isCompact.value) {
+    if (!isApp.value) {
       if (typeof s.page === 'number' && s.page > 0) page.value = s.page
       if (typeof s.pageSize === 'number' && PAGE_SIZES.includes(s.pageSize)) {
         pageSize.value = s.pageSize
@@ -174,10 +178,6 @@ function onPcPageChange() {
 function onPcPageSizeChange() {
   onPageSizeChange()
   saveListState()
-}
-
-function toggleFilterExpand() {
-  filterExpanded.value = !filterExpanded.value
 }
 
 function onSelectionChange(selection: GeneratedCopy[]) {
@@ -268,7 +268,7 @@ async function onBulkDelete() {
 
 onMounted(async () => {
   restoreListState()
-  await load({ fromQuery: isCompact.value })
+  await load({ fromQuery: isApp.value })
   await nextTick()
   if (sentinelRef.value) setupScrollObserver()
 })
@@ -276,7 +276,7 @@ onMounted(async () => {
 
 <template>
   <div class="copy-page">
-    <div class="page-toolbar" :class="{ 'is-compact': isCompact }">
+    <div class="page-toolbar" :class="{ 'is-compact': isApp }">
       <el-page-header class="is-title-only" content="文案列表" />
       <div class="toolbar-right">
         <el-button
@@ -350,64 +350,14 @@ onMounted(async () => {
       </el-card>
     </div>
 
-    <div class="copy-m m-filter">
-      <div class="m-filter-search">
-        <el-icon class="m-filter-search__icon"><Search /></el-icon>
-        <input
-          v-model="filters.q"
-          class="m-filter-search__input"
-          type="search"
-          enterkeyhint="search"
-          placeholder="搜索标题"
-          @keyup.enter="runQuery"
-        />
-        <button type="button" class="m-filter-search__btn" @click="runQuery">查询</button>
-      </div>
-      <div class="m-filter-row">
-        <el-select
-          v-model="filters.mode"
-          class="m-filter-select"
-          clearable
-          placeholder="模式"
-          teleported
-          :popper-options="{ strategy: 'fixed' }"
-          popper-class="copy-m-select-popper"
-        >
-          <el-option v-for="(label, key) in MODE_LABELS" :key="key" :label="label" :value="key" />
-        </el-select>
-        <el-select
-          v-model="filters.platform"
-          class="m-filter-select"
-          clearable
-          placeholder="平台"
-          teleported
-          :popper-options="{ strategy: 'fixed' }"
-          popper-class="copy-m-select-popper"
-        >
-          <el-option
-            v-for="(label, key) in PLATFORM_LABELS"
-            :key="key"
-            :label="label"
-            :value="key"
-          />
-        </el-select>
-        <button
-          type="button"
-          class="m-filter-more"
-          :class="{ 'is-active': filterExpanded || activeFilterCount > 0 }"
-          @click="toggleFilterExpand"
-        >
-          更多{{ activeFilterCount ? ` · ${activeFilterCount}` : '' }}
-          <el-icon :class="{ 'is-open': filterExpanded }"><ArrowDown /></el-icon>
-        </button>
-      </div>
-      <div v-show="filterExpanded" class="m-filter-panel">
-        <div class="m-filter-panel__actions">
-          <button type="button" class="m-filter-link" @click="resetFilters">重置</button>
-          <button type="button" class="m-filter-apply" @click="runQuery">完成</button>
-        </div>
-      </div>
-    </div>
+    <CompactFilterBar class="copy-m" :active-count="activeFilterCount" :total="total" label="条文案" @open="filterExpanded = true" />
+    <MobileFilterSheet v-model="filterExpanded" :active-count="activeFilterCount" @apply="runQuery" @reset="resetFilters">
+      <el-form label-position="top" @submit.prevent="runQuery">
+        <el-form-item label="关键词"><el-input v-model="filters.q" clearable placeholder="标题 / 正文" /></el-form-item>
+        <el-form-item label="生成模式"><el-select v-model="filters.mode" clearable placeholder="全部模式"><el-option v-for="(label, key) in MODE_LABELS" :key="key" :label="label" :value="key" /></el-select></el-form-item>
+        <el-form-item label="发布平台"><el-select v-model="filters.platform" clearable placeholder="全部平台"><el-option v-for="(label, key) in PLATFORM_LABELS" :key="key" :label="label" :value="key" /></el-select></el-form-item>
+      </el-form>
+    </MobileFilterSheet>
 
     <div v-loading="loading" class="copy-m copy-card-list">
       <div v-if="!total && !loading" class="copy-card copy-card--empty">暂无文案</div>
@@ -432,6 +382,7 @@ onMounted(async () => {
             type="button"
             class="m-card-acc-toggle"
             :aria-expanded="isExpanded(row.id)"
+            :aria-label="isExpanded(row.id) ? '收起文案详情' : '展开文案详情'"
             @click.stop="toggleForce(row.id)"
           >
             <el-icon class="m-card-acc-chevron" :class="{ 'is-open': isExpanded(row.id) }">
@@ -452,11 +403,15 @@ onMounted(async () => {
           </div>
         </div>
       </div>
-      <div v-if="total" ref="sentinelRef" class="scroll-sentinel">
-        <span v-if="hasMoreInfinite || loadingMore" class="scroll-hint">
-          {{ loadingMore ? '加载中…' : '上拉加载更多' }}
-        </span>
-        <span v-else class="scroll-hint">已加载 {{ rows.length }} / {{ total }} 条</span>
+      <div ref="sentinelRef" class="list-load-sentinel">
+        <ListLoadStatus
+          :has-more="hasMoreInfinite"
+          :loading="loadingMore"
+          :loaded="rows.length"
+          :total="total"
+          @more="loadMore"
+          @retry="loadMore"
+        />
       </div>
     </div>
 
@@ -528,7 +483,7 @@ onMounted(async () => {
       </el-card>
 
       <PcPagerBar
-        v-if="!isCompact"
+        v-if="!isApp"
         v-model:page="page"
         v-model:page-size="pageSize"
         :total="total"
@@ -552,7 +507,7 @@ onMounted(async () => {
   display: block;
 }
 
-@media (min-width: 992px) {
+@media (min-width: 1200px) {
   .copy-pc {
     display: block;
   }
@@ -826,23 +781,13 @@ onMounted(async () => {
   flex-wrap: wrap;
 }
 
-.scroll-sentinel {
-  padding: 12px 0 4px;
-  text-align: center;
-}
-
-.scroll-hint {
-  font-size: 12px;
-  color: var(--oc-muted, #78716c);
-}
-
 .pc-copy-table :deep(.el-table__row:hover > td.el-table__cell) {
   background: #faf6ee !important;
 }
 
-@media (max-width: 991px) {
+@media (max-width: 1199px) {
   .toolbar-right {
-    width: 100%;
+    width: auto;
   }
 
   .toolbar-right .tb-btn {

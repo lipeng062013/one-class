@@ -29,6 +29,13 @@ from app.modules.academic.schemas import (
 router = APIRouter(prefix="/academic", tags=["academic"])
 
 _staff = require_permissions("academic.read", "academic.write")
+# 业务页筛选项/报名选课目录：教务读写、报名权、财务只读均可（运营有 finance.read 但无 academic.read）
+_catalog = require_permissions(
+    "academic.read",
+    "academic.write",
+    "enrollments.manage",
+    "finance.read",
+)
 # 点名/课消写操作：仅 academic.write（老师默认只有 academic.read，无需点名）
 _write = require_permissions("academic.write")
 _admin = require_permissions("academic.courses_admin")
@@ -45,7 +52,7 @@ def list_courses(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    _: User = Depends(_staff),
+    _: User = Depends(_catalog),
 ):
     return ok(
         svc.list_courses(
@@ -58,7 +65,7 @@ def list_courses(
 def get_course(
     course_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(_staff),
+    _: User = Depends(_catalog),
 ):
     from app.models.academic import Course
 
@@ -135,7 +142,7 @@ def list_classes(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    user: User = Depends(_staff),
+    user: User = Depends(_catalog),
 ):
     return ok(
         svc.list_classes(
@@ -613,6 +620,6 @@ def list_teachers(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_db),
-    _: User = Depends(_staff),
+    _: User = Depends(_catalog),
 ):
     return ok(svc.list_teachers_manage(db, q=q, page=page, page_size=page_size))

@@ -10,6 +10,11 @@ import {
   type TodoItem,
 } from '../api/todos'
 import { listTodayTodosApi, type TodayTodo } from '../api/dashboard'
+import AppSheet from './AppSheet.vue'
+
+const props = withDefaults(defineProps<{ compact?: boolean }>(), {
+  compact: false,
+})
 
 type WorkbenchTodo = TodoItem &
   Partial<Pick<TodayTodo, 'path' | 'source' | 'ref_id' | 'kind'>>
@@ -20,6 +25,7 @@ const rows = ref<WorkbenchTodo[]>([])
 const newTitle = ref('')
 const newContent = ref('')
 const adding = ref(false)
+const addSheetVisible = ref(false)
 
 const pending = computed(() => rows.value.filter((t) => !t.is_done))
 const done = computed(() => rows.value.filter((t) => t.is_done))
@@ -45,7 +51,7 @@ async function addTodo() {
   const title = newTitle.value.trim()
   if (!title) {
     ElMessage.warning('请填写待办内容')
-    return
+    return false
   }
   adding.value = true
   try {
@@ -54,21 +60,51 @@ async function addTodo() {
     newContent.value = ''
     ElMessage.success('已添加')
     await load()
+    return true
   } catch {
     /* interceptor */
+    return false
   } finally {
     adding.value = false
   }
 }
 
+async function addTodoFromSheet() {
+  if (await addTodo()) addSheetVisible.value = false
+}
+
+function pathFromTodoContent(content?: string | null): string | null {
+  if (!content) return null
+  const m = content.match(/(?:^|\n)path:(\/[^\s\n]+)/)
+  return m?.[1] ?? null
+}
+
 function openSystemTodo(item: WorkbenchTodo) {
-  if (item.path) void router.push(item.path)
+  if (item.path) {
+    void router.push(item.path)
+    return
+  }
+  const fromContent = pathFromTodoContent(item.content)
+  if (fromContent) void router.push(fromContent)
+}
+
+function openManualTodo(item: WorkbenchTodo) {
+  const path = pathFromTodoContent(item.content)
+  if (path) {
+    void router.push(path)
+    return
+  }
 }
 
 async function toggleDone(item: WorkbenchTodo) {
   // 系统课表待办：点名后自动完成，不可手勾；点击跳转业务页
   if (isSystemTodo(item)) {
     openSystemTodo(item)
+    return
+  }
+  // 含 path: 的个人待办（如报名成功待调配）优先跳转
+  if (pathFromTodoContent(item.content) && !item.is_done) {
+    openManualTodo(item)
     return
   }
   await patchTodoApi(item.id, { is_done: !item.is_done })
@@ -94,7 +130,7 @@ onMounted(load)
 </script>
 
 <template>
-  <section class="todo-panel" v-loading="loading">
+  <section class="todo-panel" :class="{ 'is-compact': props.compact }" v-loading="loading">
     <div class="todo-head">
       <div class="todo-head-left">
         <span class="todo-icon" aria-hidden="true">
@@ -102,7 +138,7 @@ onMounted(load)
         </span>
         <div>
           <h2 class="todo-title">今日待办</h2>
-          <p class="todo-sub">课表点名后自动完成 · 也可手写待办</p>
+          <p v-if="!props.compact" class="todo-sub">课表点名后自动完成 · 也可手写待办</p>
         </div>
       </div>
       <div class="todo-stats">
@@ -112,10 +148,21 @@ onMounted(load)
         <el-tag v-if="doneCount" size="small" type="success" effect="plain">
           {{ doneCount }} 已完成
         </el-tag>
+        <el-button
+          v-if="props.compact"
+          class="compact-add-btn"
+          text
+          circle
+          aria-label="新增待办"
+          title="新增待办"
+          @click="addSheetVisible = true"
+        >
+          <el-icon><Plus /></el-icon>
+        </el-button>
       </div>
     </div>
 
-    <div class="add-box">
+    <div v-if="!props.compact" class="add-box">
       <div class="add-row">
         <el-input
           v-model="newTitle"
@@ -232,8 +279,41 @@ onMounted(load)
     </ul>
 
     <p v-if="totalCount > 0" class="todo-foot">
-      共 {{ totalCount }} 条 · 手写待办可勾选完成 · 课表待办点名后自动完成
+      <template v-if="props.compact">共 {{ totalCount }} 条，列表内可滚动查看</template>
+      <template v-else>共 {{ totalCount }} 条 · 手写待办可勾选完成 · 课表待办点名后自动完成</template>
     </p>
+
+    <AppSheet
+      v-if="props.compact"
+      v-model="addSheetVisible"
+      title="新增待办"
+      size="420px"
+      compact-size="min(52%, 420px)"
+      force-bottom
+      modal-class="todo-add-sheet"
+    >
+      <div class="compact-add-form">
+        <p class="compact-add-tip">课表待办会在点名后自动完成；这里添加的是手写待办。</p>
+        <el-input
+          v-model="newTitle"
+          placeholder="待办事项（必填）"
+          clearable
+          autofocus
+          @keyup.enter="addTodoFromSheet"
+        />
+        <el-input
+          v-model="newContent"
+          class="add-note"
+          type="textarea"
+          :rows="3"
+          placeholder="备注（可选）"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="addSheetVisible = false">取消</el-button>
+        <el-button type="primary" :loading="adding" @click="addTodoFromSheet">添加</el-button>
+      </template>
+    </AppSheet>
   </section>
 </template>
 
@@ -333,6 +413,25 @@ onMounted(load)
   gap: 6px;
 }
 
+/* PC 完整版限制列表高度，避免待办数量把工作区无限拉长 */
+.todo-panel:not(.is-compact) .todo-list {
+  max-height: min(420px, 45vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--oc-border, #e8e0d0) transparent;
+}
+
+.todo-panel:not(.is-compact) .todo-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.todo-panel:not(.is-compact) .todo-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--oc-border, #e8e0d0);
+}
+
 .todo-item {
   display: flex;
   align-items: flex-start;
@@ -411,6 +510,115 @@ onMounted(load)
   font-size: 12px;
   color: var(--oc-muted, #78716c);
   text-align: center;
+}
+
+.todo-panel.is-compact {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.is-compact .todo-head {
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.is-compact .todo-head-left {
+  gap: 10px;
+}
+
+.is-compact .todo-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  background: linear-gradient(145deg, #f5e6c8, #e8d5b0);
+  box-shadow: 0 4px 10px rgba(161, 98, 7, 0.12);
+}
+
+.is-compact .todo-title {
+  font-size: 15px;
+  font-weight: 720;
+}
+
+.is-compact .todo-stats {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.compact-add-btn {
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 12px !important;
+  border: 1px solid rgba(161, 98, 7, 0.22) !important;
+  background: linear-gradient(180deg, #fffefb, #f5e6c8) !important;
+  color: #6b4f25 !important;
+}
+
+.is-compact .todo-list {
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  border-radius: 14px;
+  border: 1px solid rgba(181, 145, 83, 0.16);
+  background: linear-gradient(180deg, rgba(255, 254, 251, 0.9), rgba(250, 246, 238, 0.65));
+}
+
+.is-compact .todo-item {
+  margin: 0;
+  padding: 10px 10px;
+  border-radius: 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(181, 145, 83, 0.12);
+  background: transparent;
+}
+
+.is-compact .todo-item:last-child {
+  border-bottom: 0;
+}
+
+.is-compact .todo-item.is-system {
+  background: rgba(255, 253, 248, 0.72);
+}
+
+.is-compact :deep(.el-empty) {
+  min-height: 88px;
+  padding: 12px 0;
+  border-radius: 14px;
+  border: 1px dashed rgba(181, 145, 83, 0.28);
+  background: rgba(255, 253, 248, 0.7);
+}
+
+.is-compact :deep(.el-empty__image) {
+  display: none;
+}
+
+.is-compact :deep(.el-empty__description) {
+  margin-top: 0;
+}
+
+.is-compact .todo-foot {
+  margin-top: 10px;
+  font-weight: 550;
+}
+
+.compact-add-form {
+  display: grid;
+  gap: 12px;
+}
+
+.compact-add-tip {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed rgba(161, 98, 7, 0.28);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fff9eb, #fffdf8);
+  color: #8b5406;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
 }
 
 @media (max-width: 767px) {

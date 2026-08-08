@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 import { listAcademicTeachersApi, type TeacherManage } from '../../api/academic'
 import PcPagerBar from '../../components/PcPagerBar.vue'
+import CompactFilterBar from '../../components/CompactFilterBar.vue'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 
 const keyword = ref('')
@@ -12,7 +14,8 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(100)
 const collapsedGroups = ref<TeacherGroupKey[]>([])
-const { isCompact } = useBreakpoint()
+const filterVisible = ref(false)
+const { isApp } = useBreakpoint()
 
 type TeacherGroupKey = 'owner' | 'manager' | 'teacher' | 'other'
 
@@ -56,12 +59,17 @@ const groupedRows = computed<TeacherGroup[]>(() => {
 })
 
 const isPaginated = computed(() => total.value > pageSize.value)
+const activeFilterCount = computed(() => Number(Boolean(keyword.value.trim())))
 
 function isGroupCollapsed(key: TeacherGroupKey) {
   return collapsedGroups.value.includes(key)
 }
 
 function toggleGroup(key: TeacherGroupKey) {
+  if (isApp.value && isGroupCollapsed(key)) {
+    collapsedGroups.value = groupedRows.value.map((group) => group.key).filter((item) => item !== key)
+    return
+  }
   collapsedGroups.value = isGroupCollapsed(key)
     ? collapsedGroups.value.filter((item) => item !== key)
     : [...collapsedGroups.value, key]
@@ -97,7 +105,13 @@ function runQuery() {
   void load()
 }
 
+function resetFilters() {
+  keyword.value = ''
+  runQuery()
+}
+
 onMounted(() => {
+  if (isApp.value) collapsedGroups.value = ['manager', 'teacher', 'other']
   void load()
 })
 </script>
@@ -108,14 +122,14 @@ onMounted(() => {
       <el-page-header class="is-title-only" content="老师管理" />
     </div>
 
-    <el-card class="pc-filters" shadow="never">
+    <el-card v-if="!isApp" class="pc-filters" shadow="never">
       <el-form :inline="true" class="pc-filter-form" @submit.prevent="runQuery">
         <el-form-item label="姓名">
           <el-input
             v-model="keyword"
             clearable
             placeholder="搜索老师"
-            :style="isCompact ? 'width: 100%' : 'width: 180px'"
+            style="width: 180px"
             @keyup.enter="runQuery"
           />
         </el-form-item>
@@ -125,9 +139,35 @@ onMounted(() => {
       </el-form>
     </el-card>
 
+    <CompactFilterBar
+      v-if="isApp"
+      :active-count="activeFilterCount"
+      :total="total"
+      label="位老师"
+      @open="filterVisible = true"
+    />
+
+    <MobileFilterSheet
+      v-model="filterVisible"
+      :active-count="activeFilterCount"
+      @apply="runQuery"
+      @reset="resetFilters"
+    >
+      <el-form label-position="top" @submit.prevent="runQuery">
+        <el-form-item label="姓名">
+          <el-input v-model="keyword" clearable placeholder="搜索老师" @keyup.enter="runQuery" />
+        </el-form-item>
+      </el-form>
+    </MobileFilterSheet>
+
     <!-- wap/pad 卡片 -->
-    <div v-if="isCompact" v-loading="loading" class="teacher-m">
-      <div v-if="!rows.length && !loading" class="m-card m-card-empty">暂无老师</div>
+    <div v-if="isApp" v-loading="loading" class="teacher-m">
+      <div v-if="!rows.length && !loading" class="m-card m-card-empty teacher-empty">
+        <span class="teacher-empty-ico" aria-hidden="true">👨‍🏫</span>
+        <strong>暂无老师</strong>
+        <em>教学人员来自系统账号，请在用户管理中开通角色</em>
+      </div>
+
       <section
         v-for="group in groupedRows"
         :key="group.key"
@@ -156,11 +196,11 @@ onMounted(() => {
           </el-icon>
         </button>
         <div v-show="!isGroupCollapsed(group.key)" class="m-card-list">
-          <div v-for="row in group.rows" :key="row.id" class="m-card">
+          <article v-for="row in group.rows" :key="row.id" class="m-card teacher-m-card">
             <div class="m-card-head">
               <div class="pc-name-cell">
                 <span class="pc-avatar">{{ (row.name || '?').slice(0, 1) }}</span>
-                <div>
+                <div class="teacher-m-text">
                   <div class="m-card-title">{{ row.name }}</div>
                   <div class="pc-muted">{{ row.username }}</div>
                 </div>
@@ -169,11 +209,14 @@ onMounted(() => {
                 {{ row.status }}
               </el-tag>
             </div>
-            <div class="m-card-meta">
-              <span><span class="k">角色</span>{{ row.role || '—' }}</span>
-              <span><span class="k">带班</span>{{ row.class_count }} 个</span>
+            <div class="teacher-m-chips">
+              <span class="tm-chip tone-role">{{ row.role || '未设角色' }}</span>
+              <span class="tm-chip" :class="row.is_active ? 'tone-ok' : 'tone-off'">
+                {{ row.status || (row.is_active ? '在职' : '停用') }}
+              </span>
+              <span class="tm-chip">带班 {{ row.class_count }} 个</span>
             </div>
-          </div>
+          </article>
         </div>
       </section>
     </div>
@@ -268,7 +311,7 @@ onMounted(() => {
 }
 
 .teacher-m {
-  margin-top: 12px;
+  margin-top: 4px;
 }
 
 .pc-group-list {
@@ -439,6 +482,7 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
   min-width: 0;
+  flex: 1;
 }
 
 .pc-avatar {
@@ -471,15 +515,109 @@ onMounted(() => {
   color: var(--oc-ink, #44403c);
 }
 
-@media (max-width: 767px) {
+.teacher-m-card .m-card-head {
+  margin-bottom: 0;
+  align-items: flex-start;
+}
+
+.teacher-m-text {
+  min-width: 0;
+}
+
+.teacher-m-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.tm-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 26px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #57534e;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(181, 145, 83, 0.2);
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.tm-chip.tone-role {
+  color: #a16207;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.tm-chip.tone-ok {
+  color: #15803d;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.tm-chip.tone-off {
+  color: #78716c;
+  background: #f5f5f4;
+  border-color: #e7e5e4;
+}
+
+.teacher-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 36px 20px !important;
+  text-align: center;
+}
+
+.teacher-empty-ico {
+  font-size: 28px;
+  line-height: 1;
+  filter: grayscale(0.1);
+}
+
+.teacher-empty strong {
+  font-size: 15px;
+  font-weight: 700;
+  color: #44403c;
+}
+
+.teacher-empty em {
+  font-style: normal;
+  font-size: 12px;
+  color: #8a8178;
+  line-height: 1.4;
+  max-width: 260px;
+}
+
+@media (max-width: 1199px) {
   .teacher-group + .teacher-group {
-    margin-top: 16px;
+    margin-top: 14px;
   }
 
   .group-heading {
-    min-height: 42px;
-    padding: 0 12px;
-    border-radius: 6px;
+    min-height: 48px;
+    padding: 0 14px;
+    border-radius: 14px;
+    box-shadow: 0 4px 12px rgba(68, 64, 60, 0.05);
+  }
+
+  .group-heading[aria-expanded='true'] {
+    border-radius: 14px 14px 0 0;
+  }
+
+  .teacher-group .m-card-list {
+    margin-top: 0;
+    padding: 10px 0 0;
+    gap: 10px;
+  }
+
+  .teacher-m-card {
+    border-radius: 14px;
   }
 
   .teacher-page :deep(.teacher-pager.pager-bar.pc-pager) {
@@ -490,9 +628,12 @@ onMounted(() => {
   .group-title-wrap span {
     display: none;
   }
+}
 
-  .teacher-group .m-card-list {
-    margin-top: 8px;
+@media (max-width: 767px) {
+  .group-heading {
+    min-height: 46px;
+    padding: 0 12px;
   }
 }
 </style>

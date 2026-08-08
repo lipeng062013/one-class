@@ -1,4 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from pathlib import Path
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -7,6 +11,7 @@ from app.core.responses import fail, ok
 from app.models.lead import Lead
 from app.models.user import User
 from app.modules.leads import service as svc
+from app.modules.leads import excel_import
 from app.modules.leads.schemas import (
     LeadActivityCreate,
     LeadCollaboratorAdd,
@@ -76,6 +81,44 @@ def create_lead(
     return ok(svc.serialize_lead(db, lead), status_code=201)
 
 
+@router.get("/import-template")
+def download_import_template(
+    _: User = Depends(require_permissions("leads.write")),
+):
+    filename = quote("线索导入模板.xlsx")
+    return Response(
+        content=excel_import.build_template(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
+@router.post("/import")
+async def import_leads(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permissions("leads.write")),
+):
+    extension = Path(file.filename or "").suffix.lower()
+    if extension not in {".xls", ".xlsx"}:
+        return fail("INVALID_FILE", "仅支持 .xls 或 .xlsx 文件", status_code=400)
+    content = await file.read(excel_import.MAX_FILE_SIZE + 1)
+    if len(content) > excel_import.MAX_FILE_SIZE:
+        return fail("FILE_TOO_LARGE", "文件大小不能超过 5 MB", status_code=400)
+    if not content:
+        return fail("INVALID_FILE", "上传文件为空", status_code=400)
+    try:
+        rows = excel_import.parse_workbook(content, extension)
+        result = excel_import.import_rows(db, rows, user)
+    except excel_import.ImportFileError as exc:
+        db.rollback()
+        return fail("INVALID_FILE", str(exc), status_code=400)
+    except Exception:
+        db.rollback()
+        return fail("IMPORT_FAILED", "导入失败，本批次未写入任何数据", status_code=500)
+    return ok(result)
+
+
 @router.get("/{lead_id}")
 def get_lead(
     lead_id: int,
@@ -105,8 +148,17 @@ def patch_lead(
     if "status" in data and data["status"] is not None:
         _validate_status(data["status"])
 
-    lead = svc.update_lead(db, lead, data, user)
-    return ok(svc.serialize_lead(db, lead, include_followers=True))
+    result = svc.update_lead(db, lead, data, user)
+    if isinstance(result, str):
+        return fail("LEAD_LOCKED", result, status_code=403)
+    lead, conversion = result
+    payload = svc.serialize_lead(db, lead, include_followers=True)
+    if conversion:
+        payload["converted_student_id"] = conversion.get("converted_student_id")
+        payload["conversion_status"] = conversion.get("conversion_status")
+        if conversion.get("message"):
+            payload["conversion_message"] = conversion["message"]
+    return ok(payload)
 
 
 @router.get("/{lead_id}/activities")
@@ -145,7 +197,7 @@ def post_activity(
     if not content:
         return fail("INVALID", "请填写跟进内容", status_code=400)
 
-    act = svc.create_follow_activity(
+    result = svc.create_follow_activity(
         db,
         lead,
         user,
@@ -155,10 +207,23 @@ def post_activity(
         status=body.status,
         join_as_collaborator=body.join_as_collaborator,
     )
+    if isinstance(result, str):
+        return fail("LEAD_LOCKED", result, status_code=403)
+    conversion = None
+    if isinstance(result, tuple):
+        act, conversion = result
+    else:
+        act = result
+    lead_payload = svc.serialize_lead(db, lead, include_followers=True)
+    if conversion:
+        lead_payload["converted_student_id"] = conversion.get("converted_student_id")
+        lead_payload["conversion_status"] = conversion.get("conversion_status")
+        if conversion.get("message"):
+            lead_payload["conversion_message"] = conversion["message"]
     return ok(
         {
             "activity": svc.serialize_activity(db, act),
-            "lead": svc.serialize_lead(db, lead, include_followers=True),
+            "lead": lead_payload,
         },
         status_code=201,
     )
@@ -193,6 +258,9 @@ def join_as_collaborator(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
     if lead.owner_id == user.id:
         return ok(svc.serialize_lead(db, lead, include_followers=True))
+    lock_err = svc.assert_lead_mutable(lead, user, action="team")
+    if lock_err:
+        return fail("LEAD_LOCKED", lock_err, status_code=403)
     svc.ensure_collaborator(db, lead, user, note="主动加入协作", actor=user, log=True)
     db.commit()
     db.refresh(lead)

@@ -26,7 +26,7 @@ type ViewMode = 'table' | 'grid'
 
 const route = useRoute()
 const router = useRouter()
-const { isCompact } = useBreakpoint()
+const { isApp } = useBreakpoint()
 const loading = ref(false)
 const loadingMore = ref(false)
 const bulkLoading = ref(false)
@@ -56,7 +56,7 @@ let scrollObserver: IntersectionObserver | null = null
 
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('posters', {
   visibleCount,
-  enabled: isCompact,
+  enabled: isApp,
 })
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value) || 1))
@@ -202,7 +202,7 @@ async function load(opts?: { fromQuery?: boolean; append?: boolean }) {
   const snap = opts?.fromQuery || opts?.append ? null : takeSnapshotForLoad(route.path)
   if (opts?.fromQuery) clearSnapshot()
 
-  const compact = isCompact.value
+  const compact = isApp.value
   const append = !!opts?.append && compact
 
   if (append) {
@@ -255,7 +255,7 @@ async function load(opts?: { fromQuery?: boolean; append?: boolean }) {
 }
 
 async function loadMorePosters() {
-  if (!isCompact.value || loadingMore.value || loading.value) return
+  if (!isApp.value || loadingMore.value || loading.value) return
   if (rows.value.length >= total.value) return
   page.value += 1
   await load({ append: true })
@@ -263,7 +263,7 @@ async function loadMorePosters() {
 
 function setupScrollObserver() {
   teardownScrollObserver()
-  if (!isCompact.value) return
+  if (!isApp.value) return
   const el = sentinelRef.value
   if (!el) return
   scrollObserver = new IntersectionObserver(
@@ -430,9 +430,9 @@ async function onBulkDelete() {
 }
 
 watch(
-  [viewMode, gridRows, isCompact],
+  [viewMode, gridRows, isApp],
   () => {
-    const needGrid = isCompact.value || viewMode.value === 'grid'
+    const needGrid = isApp.value || viewMode.value === 'grid'
     if (needGrid) loadPreviewsFor(gridRows.value)
   },
   { immediate: true },
@@ -440,7 +440,7 @@ watch(
 
 watch(pageSize, () => clampPage())
 
-watch(isCompact, async () => {
+watch(isApp, async () => {
   await nextTick()
   setupScrollObserver()
 })
@@ -463,7 +463,7 @@ onUnmounted(() => {
     <div class="page-toolbar poster-toolbar">
       <el-page-header class="is-title-only" content="海报列表" />
       <div class="toolbar-right">
-        <div v-if="!isCompact" class="view-switch" role="group" aria-label="视图切换">
+        <div v-if="!isApp" class="view-switch" role="group" aria-label="视图切换">
           <button
             type="button"
             class="view-switch__btn"
@@ -484,7 +484,7 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <span v-if="!isCompact" class="toolbar-sep" aria-hidden="true" />
+        <span v-if="!isApp" class="toolbar-sep" aria-hidden="true" />
 
         <el-button
           class="toolbar-btn"
@@ -571,7 +571,7 @@ onUnmounted(() => {
     </el-dialog>
 
     <!-- Mobile / pad: 卡片列表（含缩略图） -->
-    <div v-if="isCompact" v-loading="loading" class="m-card-list">
+    <div v-if="isApp" v-loading="loading" class="m-card-list">
       <div v-if="!rows.length && !loading" class="m-card m-card-empty">暂无海报</div>
       <div
         v-for="row in rows"
@@ -620,7 +620,7 @@ onUnmounted(() => {
     </div>
 
     <!-- PC 摘要条（内容类列表：无 pc-avatar） -->
-    <el-card v-if="!isCompact" class="filters pc-filters poster-summary-card" shadow="never">
+    <el-card v-if="!isApp" class="filters pc-filters poster-summary-card" shadow="never">
       <div class="pc-filters-head" style="margin-bottom: 0">
         <div class="pc-filters-head-main">
           <span class="pc-filters-title">海报作品</span>
@@ -638,7 +638,7 @@ onUnmounted(() => {
     </el-card>
 
     <!-- Desktop table -->
-    <template v-if="!isCompact && viewMode === 'table'">
+    <template v-if="!isApp && viewMode === 'table'">
       <el-card class="pc-table-card" v-loading="loading" shadow="never">
         <div v-if="selectedCount" class="pc-selection-bar">
           <span>
@@ -698,7 +698,7 @@ onUnmounted(() => {
     </template>
 
     <!-- Desktop image grid -->
-    <template v-if="!isCompact && viewMode === 'grid'">
+    <template v-if="!isApp && viewMode === 'grid'">
       <div v-loading="loading || previewLoading" class="poster-grid">
         <div v-if="!rows.length && !loading" class="grid-empty">暂无海报</div>
         <div
@@ -744,7 +744,7 @@ onUnmounted(() => {
     </template>
 
     <PcPagerBar
-      v-if="!isCompact"
+      v-if="!isApp"
       v-model:page="page"
       v-model:page-size="pageSize"
       :total="total"
@@ -1016,10 +1016,11 @@ onUnmounted(() => {
   box-shadow: 0 3px 10px rgba(161, 98, 7, 0.28);
 }
 
-@media (max-width: 991px) {
+@media (max-width: 1199px) {
   .poster-toolbar {
-    flex-direction: column;
-    align-items: stretch;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
     gap: 10px;
   }
 
@@ -1247,7 +1248,7 @@ onUnmounted(() => {
 }
 
 /* 平板稍宽：仍保持 2 列，间距略大 */
-@media (min-width: 600px) and (max-width: 991px) {
+@media (min-width: 600px) and (max-width: 1199px) {
   .m-card-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
@@ -1311,7 +1312,7 @@ onUnmounted(() => {
   justify-content: center;
 }
 
-@media (min-width: 600px) and (max-width: 991px) {
+@media (min-width: 600px) and (max-width: 1199px) {
   .m-preview-wrap {
     height: 180px;
     min-height: 180px;

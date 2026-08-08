@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   getConsumptionDetailApi,
@@ -16,12 +16,26 @@ import {
   type Course,
   type TeacherManage,
 } from '../../api/academic'
+import ListLoadStatus from '../../components/ListLoadStatus.vue'
 import PcPagerBar from '../../components/PcPagerBar.vue'
+import CompactFilterBar from '../../components/CompactFilterBar.vue'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useResponsiveSurface } from '../../composables/useResponsiveSurface'
+import { SCROLL_CHUNK } from '../../composables/useServerPagedList'
 
-const { isCompact } = useBreakpoint()
+const { isApp } = useBreakpoint()
+const { surface: detailSurface, surfaceProps: detailSurfaceProps } = useResponsiveSurface({
+  dialogWidth: '760px',
+  dialogMaxWidth: '760px',
+  compactSize: '92%',
+  modalClass: 'consume-detail-sheet',
+  size: '520px',
+})
+const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
+const loadingMore = ref(false)
 const optionLoading = ref(false)
 const exporting = ref(false)
 const detailLoading = ref(false)
@@ -31,10 +45,14 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 const totalAmount = ref(0)
+const sentinelRef = ref<HTMLElement | null>(null)
+let scrollObserver: IntersectionObserver | null = null
+const hasMore = computed(() => rows.value.length < total.value)
 const classes = ref<ClassRoom[]>([])
 const courses = ref<Course[]>([])
 const teachers = ref<TeacherManage[]>([])
 const detail = ref<CourseConsumptionDetail | null>(null)
+const filterVisible = ref(false)
 
 const filters = reactive({
   student: '',
@@ -62,6 +80,20 @@ const pcHeaderStyle = {
 const grades = computed(() => uniqueOptions(courses.value.map((item) => item.grade)))
 const subjects = computed(() => uniqueOptions(courses.value.map((item) => item.subject)))
 const terms = computed(() => uniqueOptions(courses.value.map((item) => item.term)))
+const activeFilterCount = computed(() =>
+  Number(Boolean(filters.student.trim())) +
+  Number(Boolean(filters.date_range.length)) +
+  Number(Boolean(filters.class_id)) +
+  Number(Boolean(filters.course_id)) +
+  Number(Boolean(filters.course_type)) +
+  Number(Boolean(filters.teacher_id)) +
+  Number(Boolean(filters.consume_type)) +
+  Number(Boolean(filters.source)) +
+  Number(Boolean(filters.status)) +
+  Number(Boolean(filters.grade)) +
+  Number(Boolean(filters.subject)) +
+  Number(Boolean(filters.term)),
+)
 
 function uniqueOptions(values: Array<string | undefined | null>) {
   return Array.from(new Set(values.map((v) => (v || '').trim()).filter(Boolean)))
@@ -103,10 +135,18 @@ function classTime(row: CourseConsumptionDetail | null) {
 async function loadOptions() {
   optionLoading.value = true
   try {
+    // 筛选项：无教务权时静默失败，不弹「无权限」（主列表靠 finance.read）
+    const silent = { skipErrorToast: true }
     const [classRes, courseRes, teacherRes] = await Promise.all([
-      listClassesApi({ page: 1, page_size: 100 }).catch(() => ({ items: [] as ClassRoom[] })),
-      listCoursesApi({ enabled: true, page: 1, page_size: 100 }).catch(() => ({ items: [] as Course[] })),
-      listAcademicTeachersApi({ page: 1, page_size: 100 }).catch(() => ({ items: [] as TeacherManage[] })),
+      listClassesApi({ page: 1, page_size: 100 }, silent).catch(() => ({
+        items: [] as ClassRoom[],
+      })),
+      listCoursesApi({ enabled: true, page: 1, page_size: 100 }, silent).catch(() => ({
+        items: [] as Course[],
+      })),
+      listAcademicTeachersApi({ page: 1, page_size: 100 }, silent).catch(() => ({
+        items: [] as TeacherManage[],
+      })),
     ])
     classes.value = classRes.items
     courses.value = courseRes.items
@@ -138,20 +178,53 @@ function listParams(pageNum: number, size: number) {
   }
 }
 
-async function load() {
-  loading.value = true
+async function load(options?: { append?: boolean }) {
+  const append = Boolean(options?.append && isApp.value)
+  if (isApp.value && !append) page.value = 1
+  if (append) loadingMore.value = true
+  else loading.value = true
   try {
-    const res = await listConsumptionsApi(listParams(page.value, pageSize.value))
-    rows.value = res.items
+    const size = isApp.value ? SCROLL_CHUNK : pageSize.value
+    const res = await listConsumptionsApi(listParams(page.value, size))
+    rows.value = append ? [...rows.value, ...res.items] : res.items
     total.value = res.total
-    totalAmount.value = res.summary?.amount ?? 0
+    if (!append) totalAmount.value = res.summary?.amount ?? 0
   } catch {
-    rows.value = []
-    total.value = 0
-    totalAmount.value = 0
+    if (append) page.value = Math.max(1, page.value - 1)
+    else {
+      rows.value = []
+      total.value = 0
+      totalAmount.value = 0
+    }
   } finally {
     loading.value = false
+    loadingMore.value = false
   }
+}
+
+function loadMore() {
+  if (!isApp.value || loading.value || loadingMore.value || !hasMore.value) return
+  page.value += 1
+  void load({ append: true })
+}
+
+function setupScrollObserver() {
+  teardownScrollObserver()
+  if (!isApp.value) return
+  const el = sentinelRef.value
+  if (!el) return
+  scrollObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((e) => e.isIntersecting)) loadMore()
+    },
+    { root: null, rootMargin: '160px 0px', threshold: 0 },
+  )
+  scrollObserver.observe(el)
+}
+
+function teardownScrollObserver() {
+  scrollObserver?.disconnect()
+  scrollObserver = null
 }
 
 function csvCell(value: unknown) {
@@ -226,7 +299,7 @@ async function exportList() {
     link.click()
     link.remove()
     URL.revokeObjectURL(url)
-    ElMessage.success(`已导出 ${items.length} 条课消记录`)
+    ElMessage.success(`已导出${items.length} 条课消记录`)
   } catch {
     ElMessage.error('导出失败，请稍后重试')
   } finally {
@@ -271,10 +344,31 @@ function goOrder(orderId?: number | null) {
   if (orderId) void router.push(`/finance/orders/${orderId}`)
 }
 
-onMounted(() => {
-  void loadOptions()
-  void load()
+watch(isApp, async () => {
+  page.value = 1
+  await load()
+  await nextTick()
+  if (isApp.value) setupScrollObserver()
+  else teardownScrollObserver()
 })
+
+watch(sentinelRef, async () => {
+  await nextTick()
+  if (isApp.value) setupScrollObserver()
+})
+
+onMounted(async () => {
+  const studentQ = String(route.query.student || route.query.student_q || '').trim()
+  if (studentQ) filters.student = studentQ
+  const courseId = Number(route.query.course_id)
+  if (Number.isFinite(courseId) && courseId > 0) filters.course_id = courseId
+  void loadOptions()
+  await load()
+  await nextTick()
+  if (isApp.value) setupScrollObserver()
+})
+
+onUnmounted(() => teardownScrollObserver())
 </script>
 
 <template>
@@ -284,20 +378,20 @@ onMounted(() => {
     </div>
 
     <el-card class="module-card" shadow="never" v-loading="loading || optionLoading">
-      <div class="filter-grid">
+      <div v-if="!isApp" class="filter-grid">
         <label class="filter-item">
-          <span>搜索学员：</span>
+          <span>搜索学员</span>
           <el-input
             v-model="filters.student"
             clearable
-            placeholder="请输入学员姓名/手机号"
+            placeholder="请输入学员姓名手机号"
             @keyup.enter="runQuery"
           >
             <template #prefix><el-icon><Search /></el-icon></template>
           </el-input>
         </label>
         <label class="filter-item">
-          <span>课消日期：</span>
+          <span>课消日期</span>
           <el-date-picker
             v-model="filters.date_range"
             type="daterange"
@@ -309,38 +403,38 @@ onMounted(() => {
           />
         </label>
         <label class="filter-item">
-          <span>班级名称：</span>
+          <span>班级名称</span>
           <el-select v-model="filters.class_id" clearable filterable placeholder="请选择班级">
             <el-option v-for="item in classes" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </label>
         <label class="filter-item">
-          <span>报名课程：</span>
+          <span>报名课程</span>
           <el-select v-model="filters.course_id" clearable filterable placeholder="请选择课程">
             <el-option v-for="item in courses" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </label>
         <label class="filter-item">
-          <span>课程类型：</span>
+          <span>课程类型</span>
           <el-select v-model="filters.course_type" clearable placeholder="请选择类型">
             <el-option label="班课" value="group" />
             <el-option label="一对一" value="one_to_one" />
           </el-select>
         </label>
         <label class="filter-item">
-          <span>上课老师：</span>
+          <span>上课老师</span>
           <el-select v-model="filters.teacher_id" clearable filterable placeholder="请选择老师">
             <el-option v-for="item in teachers" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </label>
         <label class="filter-item">
-          <span>课消类型：</span>
+          <span>课消类型</span>
           <el-select v-model="filters.consume_type" clearable placeholder="请选择类型">
             <el-option label="课时课消" value="课时课消" />
           </el-select>
         </label>
         <label class="filter-item">
-          <span>课消来源：</span>
+          <span>课消来源</span>
           <el-select v-model="filters.source" clearable placeholder="请选择课消来源">
             <el-option label="点名" value="点名" />
             <el-option label="手动" value="手动" />
@@ -354,53 +448,88 @@ onMounted(() => {
           </el-select>
         </label>
         <label class="filter-item">
-          <span>年级：</span>
+          <span>年级</span>
           <el-select v-model="filters.grade" clearable filterable placeholder="请选择年级">
             <el-option v-for="item in grades" :key="item" :label="item" :value="item" />
           </el-select>
         </label>
         <label class="filter-item">
-          <span>科目：</span>
+          <span>科目</span>
           <el-select v-model="filters.subject" clearable filterable placeholder="请选择科目">
             <el-option v-for="item in subjects" :key="item" :label="item" :value="item" />
           </el-select>
         </label>
         <label class="filter-item">
-          <span>学期：</span>
+          <span>学期</span>
           <el-select v-model="filters.term" clearable filterable placeholder="请选择学期">
             <el-option v-for="item in terms" :key="item" :label="item" :value="item" />
           </el-select>
         </label>
       </div>
 
-      <div class="filter-actions">
+      <div v-if="!isApp" class="filter-actions">
         <el-checkbox v-model="filters.hide_void" @change="runQuery">过滤已作废</el-checkbox>
         <el-button :icon="'RefreshLeft'" @click="resetFilters">重置</el-button>
         <el-button type="primary" :icon="'Search'" @click="runQuery">查询</el-button>
         <el-button :icon="'Download'" :loading="exporting" @click="exportList">导出</el-button>
       </div>
 
+      <CompactFilterBar v-if="isApp" :active-count="activeFilterCount" :total="total" label="条课消" @open="filterVisible = true" />
+      <MobileFilterSheet v-model="filterVisible" :active-count="activeFilterCount" @apply="runQuery" @reset="resetFilters">
+        <el-form label-position="top">
+          <el-form-item label="搜索学员"><el-input v-model="filters.student" clearable placeholder="姓名 / 手机号" /></el-form-item>
+          <el-form-item label="课消日期"><el-date-picker v-model="filters.date_range" type="daterange" value-format="YYYY-MM-DD" range-separator="~" start-placeholder="开始日期" end-placeholder="结束日期" clearable /></el-form-item>
+          <el-form-item label="班级"><el-select v-model="filters.class_id" clearable filterable placeholder="全部班级"><el-option v-for="item in classes" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item>
+          <el-form-item label="课程"><el-select v-model="filters.course_id" clearable filterable placeholder="全部课程"><el-option v-for="item in courses" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item>
+          <el-form-item label="课程类型"><el-select v-model="filters.course_type" clearable placeholder="全部类型"><el-option label="班课" value="group" /><el-option label="一对一" value="one_to_one" /></el-select></el-form-item>
+          <el-form-item label="上课老师"><el-select v-model="filters.teacher_id" clearable filterable placeholder="全部老师"><el-option v-for="item in teachers" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item>
+          <el-form-item label="课消来源"><el-select v-model="filters.source" clearable placeholder="全部来源"><el-option label="点名" value="点名" /><el-option label="手动" value="手动" /></el-select></el-form-item>
+          <el-form-item label="课消状态"><el-select v-model="filters.status" clearable placeholder="全部状态"><el-option label="正常" value="normal" /><el-option label="已作废" value="void" /></el-select></el-form-item>
+          <el-form-item label="年级"><el-select v-model="filters.grade" clearable filterable placeholder="全部年级"><el-option v-for="item in grades" :key="item" :label="item" :value="item" /></el-select></el-form-item>
+          <el-form-item label="科目"><el-select v-model="filters.subject" clearable filterable placeholder="全部科目"><el-option v-for="item in subjects" :key="item" :label="item" :value="item" /></el-select></el-form-item>
+          <el-form-item label="学期"><el-select v-model="filters.term" clearable filterable placeholder="全部学期"><el-option v-for="item in terms" :key="item" :label="item" :value="item" /></el-select></el-form-item>
+          <el-form-item><el-checkbox v-model="filters.hide_void">过滤已作废</el-checkbox></el-form-item>
+        </el-form>
+      </MobileFilterSheet>
+
       <div class="summary-bar">
-        课消金额(元)：
+        课消金额(元)
         <strong>{{ formatMoney(totalAmount) }}</strong>
       </div>
 
-      <div v-if="isCompact" class="m-card-list">
-        <div v-if="!rows.length && !loading" class="m-card m-card-empty">暂无课消记录</div>
+      <div v-if="isApp" class="m-card-list">
+        <div v-if="!rows.length && !loading" class="m-card m-card-empty oc-app-empty">
+          <span class="consume-empty-ico" aria-hidden="true">📚</span>
+          <strong>暂无课消记录</strong>
+          <em>{{ activeFilterCount ? '当前筛选没有匹配课消，可清空条件后重试' : '点名扣课后会出现在这里' }}</em>
+        </div>
         <button v-for="row in rows" :key="row.id" type="button" class="m-card consume-card" @click="openDetail(row)">
           <div class="m-card-head">
-            <div class="m-card-title">{{ row.student || '—' }}</div>
+            <div class="consume-who">
+              <span class="name-avatar">{{ (row.student || '?').slice(0, 1) }}</span>
+              <div>
+                <div class="m-card-title">{{ row.student || '—' }}</div>
+                <div class="consume-sub">{{ formatTime(row.consumed_at) }}</div>
+              </div>
+            </div>
             <span class="pc-mono">¥ {{ formatMoney(row.amount) }}</span>
           </div>
-          <div class="m-card-meta">
-            <span><span class="k">时间</span>{{ formatTime(row.consumed_at) }}</span>
-            <span><span class="k">班级</span>{{ row.class_name || '—' }}</span>
-            <span><span class="k">课程</span>{{ row.course_name || '—' }}</span>
-            <span><span class="k">老师</span>{{ row.teacher || '—' }}</span>
-            <span><span class="k">额度</span>{{ row.hours_label || '—' }}</span>
-            <span v-if="row.uncovered_hours > 0" class="shortage"><span class="k">欠课时</span>{{ row.uncovered_hours }}</span>
+          <div class="oc-meta-chips consume-chips">
+            <span v-if="row.class_name" class="oc-meta-chip">{{ row.class_name }}</span>
+            <span v-if="row.course_name" class="oc-meta-chip">{{ row.course_name }}</span>
+            <span v-if="row.teacher" class="oc-meta-chip">老师 {{ row.teacher }}</span>
+            <span class="oc-meta-chip is-gold">{{ row.hours_label || formatHours(row.hours) }}</span>
+            <span v-if="row.source" class="oc-meta-chip">{{ row.source }}</span>
+            <span v-if="row.uncovered_hours > 0" class="oc-meta-chip is-danger">欠 {{ row.uncovered_hours }} 课时</span>
           </div>
         </button>
+        <div ref="sentinelRef" class="list-load-sentinel"><ListLoadStatus :has-more="hasMore"
+          :loading="loadingMore"
+          :loaded="rows.length"
+          :total="total"
+          @more="loadMore"
+          @retry="loadMore"
+        /></div>
       </div>
 
       <div v-else class="oc-compact-table-wrap">
@@ -444,27 +573,45 @@ onMounted(() => {
       @change="load"
     />
 
-    <el-dialog v-model="detailVisible" title="查看详情" width="760px" class="consume-detail-dialog">
+    <component
+      :is="detailSurface"
+      v-model="detailVisible"
+      v-bind="detailSurfaceProps"
+      title="课消详情"
+    >
       <div v-loading="detailLoading" class="detail-body">
         <template v-if="detail">
-          <div class="detail-source">课消来源：{{ detail.source || '—' }}</div>
+          <div class="detail-hero">
+            <div class="detail-hero-main">
+              <strong>{{ detail.student || '—' }}</strong>
+              <span>{{ detail.course_name || '未关联课程' }}</span>
+            </div>
+            <span class="detail-hero-amt">¥ {{ formatMoney(detail.amount) }}</span>
+          </div>
+          <div class="oc-meta-chips detail-chips">
+            <span class="oc-meta-chip">来源 {{ detail.source || '—' }}</span>
+            <span class="oc-meta-chip is-gold">{{ formatHours(detail.hours) }}</span>
+            <span v-if="detail.class_name" class="oc-meta-chip">{{ detail.class_name }}</span>
+            <span v-if="detail.teacher" class="oc-meta-chip">老师 {{ detail.teacher }}</span>
+          </div>
           <div class="detail-panel">
             <div class="detail-grid">
-              <div><span>学员姓名：</span>{{ detail.student || '—' }}</div>
-              <div><span>上课班级：</span>{{ detail.class_name || '—' }}</div>
-              <div><span>课程名称：</span>{{ detail.course_name || '—' }}</div>
-              <div><span>上课时间：</span>{{ classTime(detail) }}</div>
-              <div><span>到课状态：</span>{{ detail.attendance_status_label || detail.status_label || detail.status || '—' }}</div>
-              <div><span>上课老师：</span>{{ detail.teacher || '—' }}</div>
-              <div><span>课时变更：</span>{{ formatHours(detail.hours) }}</div>
-              <div><span>操作人：</span>{{ detail.operator || '—' }}</div>
-              <div><span>课消时间：</span>{{ formatTime(detail.consumed_at) }}</div>
-              <div><span>操作时间：</span>{{ formatTime(detail.operation_time || detail.created_at) }}</div>
+              <div><span>上课时间</span>{{ classTime(detail) }}</div>
+              <div><span>到课状态</span>{{ detail.attendance_status_label || detail.status_label || detail.status || '—' }}</div>
+              <div><span>操作人</span>{{ detail.operator || '—' }}</div>
+              <div><span>课消时间</span>{{ formatTime(detail.consumed_at) }}</div>
+              <div><span>操作时间</span>{{ formatTime(detail.operation_time || detail.created_at) }}</div>
             </div>
           </div>
 
           <div class="detail-section-title">消耗订单</div>
-          <el-table :data="detail.orders" border :header-cell-style="pcHeaderStyle" empty-text="暂无消耗订单">
+          <el-table
+            v-if="!isApp"
+            :data="detail.orders"
+            border
+            :header-cell-style="pcHeaderStyle"
+            empty-text="暂无消耗订单"
+          >
             <el-table-column prop="order_no" label="订单号" min-width="170" show-overflow-tooltip>
               <template #default="{ row }">
                 <button
@@ -480,7 +627,7 @@ onMounted(() => {
             </el-table-column>
             <el-table-column prop="course_name" label="购买课程" min-width="150" show-overflow-tooltip />
             <el-table-column label="单价" width="110" align="right">
-              <template #default="{ row }">{{ formatMoney(row.unit_price) }}元/课时</template>
+              <template #default="{ row }">{{ formatMoney(row.unit_price) }} 元/课时</template>
             </el-table-column>
             <el-table-column label="消耗购买数量" width="130" align="center">
               <template #default="{ row }">{{ formatHours(row.hours) }}</template>
@@ -492,9 +639,38 @@ onMounted(() => {
               <template #default="{ row }">{{ formatMoney(row.amount) }}</template>
             </el-table-column>
           </el-table>
+          <div v-else class="detail-order-list">
+            <article v-for="(row, idx) in detail.orders || []" :key="idx" class="detail-order-card">
+              <div class="detail-order-head">
+                <button
+                  v-if="row.order_id && row.order_no"
+                  type="button"
+                  class="link-btn order-no"
+                  @click.stop="goOrder(row.order_id)"
+                >
+                  {{ row.order_no }}
+                </button>
+                <strong v-else class="order-no">{{ row.order_no || '—' }}</strong>
+                <span class="pc-mono">¥ {{ formatMoney(row.amount) }}</span>
+              </div>
+              <div class="oc-meta-chips">
+                <span v-if="row.course_name" class="oc-meta-chip">{{ row.course_name }}</span>
+                <span class="oc-meta-chip">{{ formatMoney(row.unit_price) }} 元/课时</span>
+                <span class="oc-meta-chip">购买 {{ formatHours(row.hours) }}</span>
+                <span v-if="row.gift_hours" class="oc-meta-chip">赠送 {{ formatHours(row.gift_hours) }}</span>
+              </div>
+            </article>
+            <div v-if="!detail.orders?.length" class="oc-app-empty detail-order-empty">
+              <strong>暂无消耗订单</strong>
+              <em>本条课消未关联订单明细</em>
+            </div>
+          </div>
         </template>
       </div>
-    </el-dialog>
+      <template #footer>
+        <el-button type="primary" @click="detailVisible = false">关闭</el-button>
+      </template>
+    </component>
   </div>
 </template>
 
@@ -576,23 +752,91 @@ onMounted(() => {
   border: 1px solid var(--oc-border, #e8e0d0);
   text-align: left;
   cursor: pointer;
+  background: var(--oc-card, #fffdf8);
+}
+
+.consume-who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.name-avatar {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(145deg, #e8d5b0, #c9a066);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.consume-sub {
+  margin-top: 2px;
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+}
+
+.consume-chips {
+  margin-top: 10px;
+}
+
+.consume-empty-ico {
+  font-size: 28px;
+  line-height: 1;
 }
 
 .detail-body {
-  min-height: 260px;
+  min-height: 220px;
 }
 
-.detail-source {
-  margin-bottom: 10px;
-  color: #57534e;
+.detail-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.detail-hero-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.detail-hero-main strong {
+  color: var(--oc-ink, #44403c);
+  font-size: 17px;
+}
+
+.detail-hero-main span {
+  color: var(--oc-muted, #78716c);
   font-size: 13px;
 }
 
+.detail-hero-amt {
+  flex-shrink: 0;
+  color: var(--oc-primary, #a16207);
+  font-size: 18px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-chips {
+  margin-bottom: 12px;
+}
+
 .detail-panel {
-  border: 1px solid #ebe3d4;
-  border-radius: 4px;
+  border: 1px solid rgba(181, 145, 83, 0.22);
+  border-radius: 14px;
   padding: 12px 14px;
-  margin-bottom: 18px;
+  margin-bottom: 16px;
+  background: #faf6ee;
 }
 
 .detail-grid {
@@ -604,13 +848,40 @@ onMounted(() => {
 }
 
 .detail-grid span {
+  display: block;
+  margin-bottom: 2px;
   color: #78716c;
+  font-size: 12px;
 }
 
 .detail-section-title {
   margin: 6px 0 10px;
-  font-weight: 650;
+  font-weight: 700;
   color: #44403c;
+}
+
+.detail-order-list {
+  display: grid;
+  gap: 8px;
+}
+
+.detail-order-card {
+  padding: 12px;
+  border: 1px solid rgba(181, 145, 83, 0.2);
+  border-radius: 14px;
+  background: #fffdf8;
+}
+
+.detail-order-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.detail-order-empty {
+  padding: 24px 12px;
 }
 
 .order-no {
@@ -637,7 +908,23 @@ onMounted(() => {
   }
 }
 
-@media (max-width: 991px) {
+@media (max-width: 1199px) {
+  .module-card {
+    margin-top: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .module-card :deep(.el-card__body) {
+    padding: 0;
+  }
+
+  .summary-bar {
+    border-radius: 14px;
+  }
+
   .filter-grid {
     grid-template-columns: 1fr;
     gap: 10px;

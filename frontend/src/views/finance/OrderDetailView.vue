@@ -11,9 +11,20 @@ import {
   type OrderOperationLog,
 } from '../../api/finance'
 import { usePageBack } from '../../composables/usePageBack'
+import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useResponsiveSurface } from '../../composables/useResponsiveSurface'
+import MobileActionBar from '../../components/MobileActionBar.vue'
 
 const route = useRoute()
 const { goBack } = usePageBack('/finance/orders')
+const { isApp } = useBreakpoint()
+const { surface: logsSurface, surfaceProps: logsSurfaceProps } = useResponsiveSurface({
+  dialogWidth: '90%',
+  dialogMaxWidth: '720px',
+  compactSize: '78%',
+  size: '460px',
+  modalClass: 'order-logs-sheet',
+})
 const loading = ref(false)
 const voiding = ref(false)
 const printing = ref(false)
@@ -159,10 +170,11 @@ onMounted(() => {
     <el-empty v-if="!loading && !detail" description="订单不存在或已删除" />
 
     <template v-else-if="detail">
-      <div class="action-bar no-print">
+      <div v-if="!isApp" class="action-bar no-print">
         <el-button class="tb-btn" plain type="primary" :loading="printing" @click="onPrint">
           打印收据
         </el-button>
+        <el-button class="tb-btn" plain @click="onOpLog">操作日志</el-button>
         <el-button
           class="tb-btn"
           plain
@@ -173,27 +185,52 @@ onMounted(() => {
         >
           作废订单
         </el-button>
-        <el-button class="tb-btn" plain @click="onOpLog">操作日志</el-button>
       </div>
 
-      <el-card class="detail-card" shadow="never">
-        <div class="order-head">
-          <div class="order-head-main">
+      <section class="order-hero" :class="{ 'is-void': detail.status === 'void' }">
+        <div class="order-hero-top">
+          <div class="order-hero-main">
+            <div class="order-hero-kicker">订单详情</div>
             <div class="order-no-row">
-              <span class="order-no-label">订单号：</span>
               <span class="order-no">{{ detail.order_no }}</span>
+              <el-tag
+                size="small"
+                effect="plain"
+                round
+                :type="detail.status === 'void' ? 'info' : detail.status === 'paid' ? 'success' : 'warning'"
+              >
+                {{ statusStamp }}
+              </el-tag>
             </div>
             <div class="order-meta">
-              <span>创建时间：{{ formatTime(detail.created_at) }}</span>
-              <span>订单类型：{{ detail.order_type_label }}</span>
-              <span>订单来源：{{ detail.source || '机构创建' }}</span>
+              <span>{{ detail.student || '—' }}{{ detail.phone ? ` · ${detail.phone}` : '' }}</span>
+              <span>{{ detail.order_type_label }}</span>
+              <span>{{ formatTime(detail.created_at) }}</span>
             </div>
           </div>
-          <div class="status-stamp" :class="stampClass" aria-hidden="true">
+          <div v-if="!isApp" class="status-stamp" :class="stampClass" aria-hidden="true">
             {{ statusStamp }}
           </div>
         </div>
 
+        <div class="amount-stats" aria-label="金额摘要">
+          <div class="amount-stat tone-recv">
+            <span class="amount-label">应收</span>
+            <strong>¥ {{ formatMoney(detail.receivable) }}</strong>
+          </div>
+          <div class="amount-stat tone-paid">
+            <span class="amount-label">实收</span>
+            <strong>¥ {{ formatMoney(detail.received) }}</strong>
+          </div>
+          <div class="amount-stat" :class="Number(detail.arrears || 0) > 0 ? 'tone-debt' : 'tone-ok'">
+            <span class="amount-label">欠费</span>
+            <strong>¥ {{ formatMoney(detail.arrears) }}</strong>
+          </div>
+        </div>
+      </section>
+
+      <el-card class="detail-card" shadow="never">
+        <div class="section-title">订单资料</div>
         <div class="info-grid">
           <div class="info-col">
             <div class="info-line">
@@ -208,23 +245,9 @@ onMounted(() => {
               <span class="k">手机号：</span>
               <span class="v">{{ detail.phone || '—' }}</span>
             </div>
-          </div>
-          <div class="info-col">
             <div class="info-line">
-              <span class="k">应收金额(元)：</span>
-              <span class="v">{{ formatMoney(detail.receivable) }}</span>
-            </div>
-            <div class="info-line">
-              <span class="k">实收金额(元)：</span>
-              <span class="v">{{ formatMoney(detail.received) }}</span>
-            </div>
-            <div class="info-line">
-              <span class="k">欠费金额(元)：</span>
-              <span class="v">{{ formatMoney(detail.arrears) }}</span>
-            </div>
-            <div class="info-line">
-              <span class="k">对内备注：</span>
-              <span class="v note">{{ detail.internal_notes || '—' }}</span>
+              <span class="k">订单来源：</span>
+              <span class="v">{{ detail.source || '机构创建' }}</span>
             </div>
           </div>
           <div class="info-col">
@@ -241,6 +264,12 @@ onMounted(() => {
               <span class="v">{{ detail.performance_owner || '—' }}</span>
             </div>
             <div class="info-line">
+              <span class="k">对内备注：</span>
+              <span class="v note">{{ detail.internal_notes || '—' }}</span>
+            </div>
+          </div>
+          <div class="info-col">
+            <div class="info-line">
               <span class="k">对外备注：</span>
               <span class="v note">{{ detail.external_notes || '—' }}</span>
             </div>
@@ -251,6 +280,7 @@ onMounted(() => {
       <el-card class="detail-card section-card" shadow="never">
         <div class="section-title">购买内容</div>
         <el-table
+          v-if="!isApp"
           :data="detail.line_items || []"
           border
           stripe
@@ -293,7 +323,27 @@ onMounted(() => {
           </el-table-column>
         </el-table>
 
+        <div v-else class="detail-mobile-list">
+          <article v-for="(row, idx) in detail.line_items || []" :key="idx" class="detail-mobile-item">
+            <div class="detail-mobile-head">
+              <strong>{{ row.name }}</strong>
+              <span class="recv">¥ {{ formatMoney(row.receivable) }}</span>
+            </div>
+            <div class="detail-mobile-meta">
+              <span>{{ row.price_label }}</span>
+              <span>{{ row.quantity_label }}</span>
+              <span v-if="row.gift_qty">赠送 {{ row.gift_qty }}</span>
+              <span v-if="row.discount">优惠 ¥ {{ formatMoney(row.discount) }}</span>
+            </div>
+            <div v-if="row.class_name" class="detail-mobile-class">
+              {{ row.class_name }} · 有效期至 {{ row.valid_until || '未设置' }}
+            </div>
+          </article>
+          <p v-if="!detail.line_items?.length" class="detail-mobile-empty">暂无购买明细</p>
+        </div>
+
         <div
+          v-if="!isApp"
           v-for="(row, idx) in detail.line_items || []"
           :key="'cls-' + idx"
           class="class-row"
@@ -311,6 +361,7 @@ onMounted(() => {
       <el-card class="detail-card section-card" shadow="never">
         <div class="section-title">支付记录</div>
         <el-table
+          v-if="!isApp"
           :data="detail.payments || []"
           border
           stripe
@@ -335,25 +386,60 @@ onMounted(() => {
             <template #default>—</template>
           </el-table-column>
         </el-table>
+
+
+        <div v-else class="detail-mobile-list">
+          <article v-for="(row, idx) in detail.payments || []" :key="idx" class="detail-mobile-item">
+            <div class="detail-mobile-head">
+              <strong>{{ row.item || '支付' }}</strong>
+              <span class="recv">¥ {{ formatMoney(row.amount) }}</span>
+            </div>
+            <div class="detail-mobile-meta">
+              <span>{{ row.pay_method || '支付方式未填' }}</span>
+              <span>{{ formatDate(row.handled_at) }}</span>
+              <span>{{ row.handler || '经办人未填' }}</span>
+            </div>
+            <div v-if="row.flow_no" class="detail-mobile-class">流水号 {{ row.flow_no }}</div>
+          </article>
+          <p v-if="!detail.payments?.length" class="detail-mobile-empty">暂无支付记录</p>
+        </div>
       </el-card>
+
+      <MobileActionBar :visible="isApp" class="no-print">
+        <el-button
+          class="mab-danger"
+          type="danger"
+          plain
+          :disabled="detail.status === 'void'"
+          :loading="voiding"
+          @click="onVoid"
+        >
+          作废
+        </el-button>
+        <el-button plain @click="onOpLog">日志</el-button>
+        <el-button type="primary" :loading="printing" @click="onPrint">收据</el-button>
+      </MobileActionBar>
     </template>
 
-    <el-dialog
+    <component
+      :is="logsSurface"
       v-model="logsVisible"
+      v-bind="logsSurfaceProps"
       title="操作日志"
-      width="90%"
-      style="max-width: 720px"
-      destroy-on-close
       class="no-print"
     >
-      <div v-loading="logsLoading">
-        <el-empty v-if="!logs.length && !logsLoading" description="暂无操作记录" />
+      <div v-loading="logsLoading" class="logs-body">
+        <div v-if="!logs.length && !logsLoading" class="oc-app-empty">
+          <strong>暂无操作记录</strong>
+          <em>查看、打印或作废订单后会出现在这里</em>
+        </div>
         <el-timeline v-else class="log-timeline">
           <el-timeline-item
             v-for="log in logs"
             :key="log.id"
             :timestamp="formatTime(log.created_at)"
             placement="top"
+            color="#a16207"
           >
             <div class="log-card">
               <div class="log-head">
@@ -369,7 +455,7 @@ onMounted(() => {
         <el-button @click="logsVisible = false">关闭</el-button>
         <el-button type="primary" plain :loading="logsLoading" @click="onOpLog">刷新</el-button>
       </template>
-    </el-dialog>
+    </component>
   </div>
 </template>
 
@@ -389,6 +475,110 @@ onMounted(() => {
   margin-bottom: 12px;
 }
 
+.order-hero {
+  position: relative;
+  margin-bottom: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 16px;
+  background:
+    linear-gradient(145deg, rgba(255, 253, 248, 0.98), rgba(250, 246, 238, 0.92)),
+    #fffdf8;
+  box-shadow: 0 8px 22px rgba(68, 64, 60, 0.05);
+}
+
+.order-hero.is-void {
+  opacity: 0.88;
+}
+
+.order-hero-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.order-hero-kicker {
+  margin-bottom: 4px;
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.order-no-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  color: var(--oc-ink, #44403c);
+}
+
+.order-no {
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  font-size: 18px;
+}
+
+.order-meta {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  font-size: 13px;
+  color: var(--oc-muted, #78716c);
+}
+
+.amount-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.amount-stat {
+  min-width: 0;
+  padding: 12px 12px 11px;
+  border-radius: 14px;
+  border: 1px solid rgba(181, 145, 83, 0.18);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.amount-stat .amount-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.amount-stat strong {
+  display: block;
+  color: var(--oc-ink, #44403c);
+  font-size: 18px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  word-break: break-all;
+}
+
+.amount-stat.tone-recv strong {
+  color: var(--oc-primary, #a16207);
+}
+
+.amount-stat.tone-paid strong {
+  color: #3a6351;
+}
+
+.amount-stat.tone-debt strong {
+  color: #b42318;
+}
+
+.amount-stat.tone-ok strong {
+  color: #3a6351;
+}
+
 .detail-card {
   border-radius: 12px;
   border-color: var(--oc-border, #e8e0d0);
@@ -399,39 +589,6 @@ onMounted(() => {
 
 .detail-card :deep(.el-card__body) {
   padding: 16px 18px;
-}
-
-.order-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--oc-border, #e8e0d0);
-}
-
-.order-no-row {
-  font-size: 15px;
-  color: var(--oc-ink, #44403c);
-}
-
-.order-no-label {
-  font-weight: 500;
-}
-
-.order-no {
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.order-meta {
-  margin-top: 8px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 20px;
-  font-size: 13px;
-  color: var(--oc-muted, #78716c);
 }
 
 .status-stamp {
@@ -544,15 +701,172 @@ onMounted(() => {
   margin-left: 4px;
 }
 
-@media (max-width: 991px) {
+.logs-body {
+  min-height: 160px;
+}
+
+.mab-danger {
+  flex: 0.72 1 0 !important;
+}
+
+@media (max-width: 1199px) {
+  .order-detail {
+    padding-bottom: 8px;
+  }
+
+  .order-hero {
+    margin-bottom: 12px;
+    padding: 14px;
+    border-radius: 18px;
+  }
+
+  .order-no {
+    font-size: 16px;
+  }
+
+  .amount-stats {
+    gap: 8px;
+  }
+
+  .amount-stat {
+    padding: 11px 10px;
+    border-radius: 12px;
+  }
+
+  .amount-stat strong {
+    font-size: 15px;
+  }
+
   .info-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .info-col {
+    display: contents;
+  }
+
+  .info-line {
+    min-width: 0;
+    padding: 10px 11px;
+    border: 1px solid rgba(181, 145, 83, 0.18);
+    border-radius: 12px;
+    background: #faf6ee;
+    line-height: 1.4;
+  }
+
+  .info-line .k,
+  .info-line .v {
+    display: block;
+  }
+
+  .info-line .k {
+    margin-bottom: 3px;
+    font-size: 11px;
+  }
+
+  .detail-card {
+    border-radius: 16px;
+    margin-bottom: 12px;
+    box-shadow: 0 8px 20px rgba(88, 60, 24, 0.05);
+  }
+
+  .detail-card :deep(.el-card__body) {
+    padding: 14px;
+  }
+
+  .detail-mobile-item {
+    border-radius: 14px;
+    border-color: rgba(181, 145, 83, 0.22);
+    border-left-width: 3px;
+    border-left-color: #b7791f;
+    background: #fffdf8;
+    box-shadow: 0 4px 12px rgba(88, 60, 24, 0.04);
+  }
+}
+
+.detail-mobile-list {
+  display: grid;
+  gap: 8px;
+}
+
+.detail-mobile-item {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #dde2e8;
+  border-left: 3px solid #b7791f;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(31, 35, 40, 0.05);
+}
+
+.detail-mobile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.detail-mobile-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--oc-ink, #44403c);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-mobile-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 6px;
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+}
+
+.detail-mobile-class {
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--oc-border, #e8e0d0);
+  color: var(--oc-muted, #78716c);
+  font-size: 11px;
+}
+
+.detail-mobile-empty {
+  margin: 16px 0;
+  color: var(--oc-muted, #78716c);
+  text-align: center;
+}
+
+@media (min-width: 768px) and (max-width: 1199px) {
+  .detail-mobile-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .info-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .amount-stats {
     grid-template-columns: 1fr;
   }
 
-  .status-stamp {
-    width: 56px;
-    height: 56px;
-    font-size: 12px;
+  .amount-stat {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .amount-stat .amount-label {
+    margin-bottom: 0;
+  }
+
+  .class-row {
+    display: none;
   }
 }
 

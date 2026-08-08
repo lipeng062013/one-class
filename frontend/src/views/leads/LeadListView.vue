@@ -1,31 +1,56 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+import {
+  ElMessage,
+  type FormInstance,
+  type FormRules,
+  type UploadFile,
+  type UploadUserFile,
+} from 'element-plus'
 import {
   createLead,
+  downloadLeadImportTemplate,
+  importLeadWorkbook,
   listLeads,
   patchLead,
   peekLeadListCache,
   type Lead,
   type LeadListParams,
+  type LeadImportResult,
   type LeadSource,
   type LeadStatus,
 } from '../../api/leads'
+import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useCardAccordion } from '../../composables/useCardAccordion'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
 import { useServerPagedList } from '../../composables/useServerPagedList'
+import ListLoadStatus from '../../components/ListLoadStatus.vue'
 import PcPagerBar from '../../components/PcPagerBar.vue'
 import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
+import CompactFilterBar from '../../components/CompactFilterBar.vue'
+import { useResponsiveSurface } from '../../composables/useResponsiveSurface'
 import { sanitizePhoneInput, validateRequiredPhone } from '../../utils/phone'
+import { toBusinessDateTimeIso } from '../../utils/datetime'
 
 const LIST_STATE_KEY = 'oc-lead-list-state'
 
 const route = useRoute()
 const router = useRouter()
-const { isCompact } = useBreakpoint()
+const auth = useAuthStore()
+const { isApp } = useBreakpoint()
 const { isExpanded, toggle: toggleCard, toggleForce, collapseAll } = useCardAccordion()
+const { surface: createSurface, surfaceProps: createSurfaceProps } = useResponsiveSurface({
+  dialogMaxWidth: '520px',
+  compactSize: 'min(92%, 720px)',
+  modalClass: 'lead-create-sheet',
+})
+const { surface: importSurface, surfaceProps: importSurfaceProps } = useResponsiveSurface({
+  dialogMaxWidth: '720px',
+  compactSize: 'min(94%, 860px)',
+  modalClass: 'lead-import-sheet',
+})
 
 const pcHeaderStyle = {
   background: '#f5f0e6',
@@ -38,6 +63,13 @@ const createVisible = ref(false)
 const formRef = ref<FormInstance>()
 const saving = ref(false)
 const filterExpanded = ref(false)
+const importVisible = ref(false)
+const importing = ref(false)
+const importProgress = ref(0)
+const importFile = ref<File | null>(null)
+const importFileList = ref<UploadUserFile[]>([])
+const importResult = ref<LeadImportResult | null>(null)
+const canImport = computed(() => auth.hasPermission('leads.write'))
 
 const filters = reactive({
   source: '',
@@ -68,24 +100,18 @@ const {
   PAGE_SIZES,
   sentinelRef,
   load: loadPage,
+  loadMore,
   onPageChange,
   onPageSizeChange,
   setupScrollObserver,
 } = useServerPagedList<Lead>({
-  isCompact,
+  isCompact: isApp,
   getId: (r) => r.id,
   fetchPage: (p, size) => listLeads(buildListParams(p, size)),
 })
 
-/** 当前已加载数据上的轻量排序（仅本批，不跨页） */
-const pagedRows = computed(() =>
-  [...rows.value].sort((a, b) => {
-    const aToday = isToday(a.next_follow_at) || a.status === 'new' ? 1 : 0
-    const bToday = isToday(b.next_follow_at) || b.status === 'new' ? 1 : 0
-    if (aToday !== bToday) return bToday - aToday
-    return (b.id || 0) - (a.id || 0)
-  }),
-)
+/** 保持服务端 id 倒序；当前分页内二次排序会导致编辑后跳位且跨页顺序不一致。*/
+const pagedRows = computed(() => rows.value)
 /** wap/pad 卡片直接用已 append 的 rows（服务端追加），不再二次内存切片 */
 const infiniteRows = computed(() => pagedRows.value)
 const visibleCount = computed(() => rows.value.length)
@@ -179,7 +205,7 @@ const activeFilterCount = computed(() => {
 
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('leads', {
   visibleCount,
-  enabled: isCompact,
+  enabled: isApp,
   stateStorageKey: LIST_STATE_KEY,
 })
 
@@ -198,8 +224,8 @@ function restoreListState() {
       filters.name = s.filters.name ?? ''
       filters.phone = s.filters.phone ?? ''
     }
-    // 仅 PC 恢复页码；紧凑端始终从第 1 页滚动加载
-    if (!isCompact.value) {
+    // 仍PC 恢复页码；紧凑端始终从第 1 页滚动加载
+        if (!isApp.value) {
       if (typeof s.page === 'number' && s.page > 0) page.value = s.page
       if (typeof s.pageSize === 'number' && PAGE_SIZES.includes(s.pageSize)) {
         pageSize.value = s.pageSize
@@ -227,7 +253,7 @@ function clearFilterValues() {
 
 function seedCachedRows() {
   const cached = peekLeadListCache(
-    buildListParams(isCompact.value ? 1 : page.value, isCompact.value ? 10 : pageSize.value),
+    buildListParams(isApp.value ? 1 : page.value, isApp.value ? 10 : pageSize.value),
   )
   if (!cached) return false
   rows.value = cached.items
@@ -271,13 +297,9 @@ function resetFilters() {
 }
 
 function runQuery() {
-  if (isCompact.value) filterExpanded.value = false
+  if (isApp.value) filterExpanded.value = false
   collapseAll()
   void load({ resetPage: true })
-}
-
-function toggleFilterExpand() {
-  filterExpanded.value = !filterExpanded.value
 }
 
 function onPcPageChange() {
@@ -305,11 +327,89 @@ function openCreate() {
   createVisible.value = true
 }
 
-function toIso(value: Date | string | null | undefined): string | null {
-  if (!value) return null
-  const d = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(d.getTime())) return null
-  return d.toISOString()
+function openImport() {
+  importFile.value = null
+  importFileList.value = []
+  importResult.value = null
+  importProgress.value = 0
+  importVisible.value = true
+}
+
+function onImportFileChange(file: UploadFile) {
+  const raw = file.raw
+  if (!raw) return
+  const extension = raw.name.slice(raw.name.lastIndexOf('.')).toLowerCase()
+  if (!['.xls', '.xlsx'].includes(extension)) {
+    ElMessage.warning('请选择 .xls 戍.xlsx 文件')
+    importFile.value = null
+    importFileList.value = []
+    return
+  }
+  if (raw.size > 5 * 1024 * 1024) {
+    ElMessage.warning('文件大小不能超过 5 MB')
+    importFile.value = null
+    importFileList.value = []
+    return
+  }
+  importFile.value = raw
+  importResult.value = null
+  importProgress.value = 0
+}
+
+function onImportFileRemove() {
+  importFile.value = null
+  importResult.value = null
+  importProgress.value = 0
+}
+
+async function downloadImportTemplate() {
+  try {
+    await downloadLeadImportTemplate()
+    ElMessage.success('导入模板已开始下载')
+  } catch {
+    /* interceptor */
+  }
+}
+
+async function submitImport() {
+  if (!importFile.value) {
+    ElMessage.warning('请先选择 Excel 文件')
+    return
+  }
+  importing.value = true
+  importProgress.value = 0
+  try {
+    importResult.value = await importLeadWorkbook(importFile.value, (percent) => {
+      importProgress.value = percent
+    })
+    const result = importResult.value
+    if (result.imported_count > 0) {
+      ElMessage.success(`成功导入 ${result.imported_count} 条线索`)
+      await load({ resetPage: true })
+    } else {
+      ElMessage.info('文件处理完成，没有新增线索')
+    }
+  } catch {
+    importProgress.value = 0
+  } finally {
+    importing.value = false
+  }
+}
+
+function importStatusLabel(status: string) {
+  return {
+    imported: '成功',
+    duplicate: '重复',
+    failed: '失败',
+    warning: '警告',
+  }[status] || status
+}
+
+function importStatusType(status: string): 'success' | 'warning' | 'danger' | 'info' {
+  if (status === 'imported') return 'success'
+  if (status === 'failed') return 'danger'
+  if (status === 'warning') return 'warning'
+  return 'info'
 }
 
 async function submitCreate() {
@@ -324,11 +424,11 @@ async function submitCreate() {
       referrer_name: form.referrer_name || null,
       need: form.need,
       notes: form.notes,
-      next_follow_at: toIso(form.next_follow_at),
+      next_follow_at: toBusinessDateTimeIso(form.next_follow_at),
     })
     ElMessage.success('线索已创建')
     createVisible.value = false
-    // 新建后进入详情，便于立刻写跟进 / 指定主责
+    // 新建后进入详情，便于立刻写跟进/ 指定主责
     void router.push(`/leads/${created.id}`)
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '创建失败')
@@ -337,21 +437,65 @@ async function submitCreate() {
   }
 }
 
+function isLeadStatusLocked(row: Lead) {
+  return row.status === 'enrolled' && !auth.isAdmin
+}
+
+function canGoEnrollAfterConvert() {
+  return auth.hasPermission('enrollments.manage') || auth.isAdmin
+}
+
 async function changeStatus(row: Lead, status: LeadStatus) {
-  await patchLead(row.id, { status })
-  ElMessage.success('状态已更新')
-  await load()
+  if (row.status === 'enrolled' && !auth.isAdmin) {
+    ElMessage.warning('已报名线索不可再改状态，如需调整请联系负责人')
+    return
+  }
+  const wasEnrolled = row.status === 'enrolled'
+  try {
+    const updated = await patchLead(row.id, { status })
+    const studentId = updated.converted_student_id
+    const conversion = updated.conversion_status
+
+    if (status === 'enrolled' && !wasEnrolled) {
+      if (conversion === 'incomplete') {
+        ElMessage.warning(updated.conversion_message || '已标记已报名，但信息不全未能建档')
+      } else if (studentId && canGoEnrollAfterConvert()) {
+        ElMessage.success('已建档，请完成报名')
+        await load()
+        await router.push({
+          path: '/enrollments',
+          query: {
+            student_id: String(studentId),
+            kind: 'enroll',
+            from_lead: String(row.id),
+          },
+        })
+        return
+      } else if (studentId) {
+        ElMessage.success(`已建档学员 #${studentId}，请联系有报名权限的同事办理报名`)
+      } else {
+        ElMessage.success('状态已更新为已报名')
+      }
+    } else {
+      ElMessage.success('状态已更新')
+    }
+    await load()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '状态更新失败')
+    await load()
+  }
 }
 
 function onPcStatusChange(row: Lead, event: Event) {
   const value = (event.target as HTMLSelectElement).value as LeadStatus
+  if (value === row.status) return
   void changeStatus(row, value)
 }
 
 onMounted(async () => {
   restoreListState()
   const hasCachedRows = seedCachedRows()
-  await load({ resetPage: isCompact.value, preserveRows: hasCachedRows })
+  await load({ resetPage: isApp.value, preserveRows: hasCachedRows })
   await nextTick()
   if (sentinelRef.value) setupScrollObserver()
 })
@@ -375,22 +519,28 @@ onActivated(() => {
     rows.value = []
     total.value = 0
   }
-  void load({ resetPage: isCompact.value, preserveRows: hasCachedRows })
+  void load({ resetPage: isApp.value, preserveRows: hasCachedRows })
 })
 </script>
 
 <template>
   <div class="lead-page">
-    <div class="page-toolbar lead-toolbar" :class="{ 'is-compact': isCompact }">
+    <div class="page-toolbar lead-toolbar" :class="{ 'is-compact': isApp }">
       <el-page-header class="is-title-only" content="线索管理" />
-      <el-button class="create-btn tb-btn tb-btn--primary" type="primary" @click="openCreate">
-        <el-icon><Plus /></el-icon>
-        新建线索
-      </el-button>
+      <div class="lead-toolbar-actions">
+        <el-button v-if="canImport" class="import-btn" plain @click="openImport">
+          <el-icon><Upload /></el-icon>
+          导入
+        </el-button>
+        <el-button class="create-btn tb-btn tb-btn--primary" type="primary" @click="openCreate">
+          <el-icon><Plus /></el-icon>
+          新建线索
+        </el-button>
+      </div>
     </div>
 
     <!-- PC 筛选：与学生信息列表同一套米金筛选卡 -->
-    <div v-if="!isCompact" class="lead-pc">
+    <div v-if="!isApp" class="lead-pc">
       <el-card class="filters pc-filters" shadow="never">
         <div class="pc-filters-head">
           <div class="pc-filters-head-main">
@@ -399,8 +549,7 @@ onActivated(() => {
           </div>
           <div class="pc-list-summary">
             <span class="pc-list-summary__label">获客线索</span>
-            <span class="pc-list-summary__count">
-              共 <strong>{{ total }}</strong> 条
+            <span class="pc-list-summary__count">共 <strong>{{ total }}</strong> 条
 
             </span>
           </div>
@@ -430,70 +579,32 @@ onActivated(() => {
       </el-card>
     </div>
 
-    <!-- wap/pad 筛选 -->
-    <div v-if="isCompact" class="lead-m m-filter">
-      <div class="m-filter-search">
-        <el-icon class="m-filter-search__icon"><Search /></el-icon>
-        <input
-          v-model="filters.name"
-          class="m-filter-search__input"
-          type="search"
-          enterkeyhint="search"
-          placeholder="搜索姓名"
-          @keyup.enter="runQuery"
-        />
-        <button type="button" class="m-filter-search__btn" @click="runQuery">查询</button>
-      </div>
-      <div class="m-filter-row">
-        <el-select
-          v-model="filters.status"
-          class="m-filter-select"
-          clearable
-          placeholder="状态"
-          teleported
-          placement="bottom-start"
-          :fit-input-width="true"
-          :popper-options="{ strategy: 'fixed' }"
-          popper-class="lead-m-select-popper"
-        >
-          <el-option v-for="(label, key) in statusLabels" :key="key" :label="label" :value="key" />
-        </el-select>
-        <el-select
-          v-model="filters.source"
-          class="m-filter-select"
-          clearable
-          placeholder="来源"
-          teleported
-          placement="bottom-start"
-          :fit-input-width="true"
-          :popper-options="{ strategy: 'fixed' }"
-          popper-class="lead-m-select-popper"
-        >
-          <el-option v-for="(label, key) in sourceLabels" :key="key" :label="label" :value="key" />
-        </el-select>
-        <button
-          type="button"
-          class="m-filter-more"
-          :class="{ 'is-active': filterExpanded || activeFilterCount > 0 }"
-          @click="toggleFilterExpand"
-        >
-          更多{{ activeFilterCount ? ` · ${activeFilterCount}` : '' }}
-          <el-icon :class="{ 'is-open': filterExpanded }"><ArrowDown /></el-icon>
-        </button>
-      </div>
+    <div v-if="isApp" class="lead-m">
+      <CompactFilterBar :active-count="activeFilterCount" :total="total" label="条线索" @open="filterExpanded = true" />
       <MobileFilterSheet
         v-model="filterExpanded"
         :active-count="activeFilterCount"
         @reset="resetFilters"
         @apply="runQuery"
       >
-        <el-input v-model="filters.phone" clearable placeholder="电话" />
+        <el-form label-position="top" @submit.prevent="runQuery">
+          <el-form-item label="姓名"><el-input v-model="filters.name" clearable placeholder="搜索姓名" /></el-form-item>
+          <el-form-item label="电话"><el-input v-model="filters.phone" clearable placeholder="搜索电话" /></el-form-item>
+          <el-form-item label="状态"><el-select v-model="filters.status" clearable placeholder="全部状态"><el-option v-for="(label, key) in statusLabels" :key="key" :label="label" :value="key" /></el-select></el-form-item>
+          <el-form-item label="来源"><el-select v-model="filters.source" clearable placeholder="全部来源"><el-option v-for="(label, key) in sourceLabels" :key="key" :label="label" :value="key" /></el-select></el-form-item>
+        </el-form>
       </MobileFilterSheet>
     </div>
 
-    <!-- 移动卡片（CSS 控制显隐，不依赖 isCompact 首帧） -->
-    <div v-if="isCompact" v-loading="loading && !rows.length" class="lead-m lead-card-list">
-      <div v-if="!total && !loading" class="lead-card lead-card--empty">暂无线索</div>
+    <!-- 移动卡片（手机 / Pad App 模式）-->
+    <div v-if="isApp" v-loading="loading && !rows.length" class="lead-m lead-card-list">
+      <div v-if="!total && !loading" class="oc-app-empty lead-card--empty">
+        <strong>暂无线索</strong>
+        <em>新建或导入线索后，可在这里跟进与写动态</em>
+        <el-button type="primary" class="tb-btn tb-btn--primary" @click="openCreate">
+          新建线索
+        </el-button>
+      </div>
       <div
         v-for="row in infiniteRows"
         :key="row.id"
@@ -510,7 +621,6 @@ onActivated(() => {
             <div class="lead-card__sub">
               <span>{{ sourceLabels[row.source] || row.source }}</span>
               <span v-if="row.phone"> · {{ row.phone }}</span>
-              <span v-if="row.owner_name"> · {{ row.owner_name }}</span>
             </div>
           </div>
           <div class="lead-card__badges">
@@ -543,6 +653,21 @@ onActivated(() => {
           </button>
         </div>
 
+        <div class="oc-meta-chips lead-card__chips">
+          <span v-if="row.owner_name" class="oc-meta-chip">{{ row.owner_name }}</span>
+          <span
+            v-if="row.next_follow_at"
+            class="oc-meta-chip"
+            :class="{ 'is-warn': isToday(row.next_follow_at) }"
+          >
+            下次 {{ formatTime(row.next_follow_at) }}
+          </span>
+          <span v-else class="oc-meta-chip">下次跟进 暂无</span>
+          <span v-if="row.school || row.grade" class="oc-meta-chip">
+            {{ [row.school, row.grade].filter(Boolean).join(' · ') }}
+          </span>
+        </div>
+
         <div v-if="isExpanded(row.id)" class="m-card-acc-body">
           <div v-if="row.need || row.notes" class="lead-card__body">
             <p v-if="row.need" class="lead-card__need">
@@ -554,15 +679,15 @@ onActivated(() => {
           </div>
 
           <div class="lead-card__meta">
+            <div v-if="row.campus || row.external_code" class="lead-meta-item">
+              <span class="lead-meta-k">校区编号</span>
+              <span class="lead-meta-v">
+                {{ [row.campus, row.external_code].filter(Boolean).join(' · ') || '—' }}
+              </span>
+            </div>
             <div class="lead-meta-item">
               <span class="lead-meta-k">主责</span>
               <span class="lead-meta-v">{{ teamLabel(row) }}</span>
-            </div>
-            <div class="lead-meta-item">
-              <span class="lead-meta-k">下次跟进</span>
-              <span class="lead-meta-v">
-                {{ row.next_follow_at ? formatTime(row.next_follow_at) : '暂无' }}
-              </span>
             </div>
             <div class="lead-meta-item lead-meta-item--full">
               <span class="lead-meta-k">最近联系</span>
@@ -579,7 +704,17 @@ onActivated(() => {
           <div class="lead-card__controls">
             <div class="ctrl">
               <span class="ctrl-label">状态</span>
+              <el-tag
+                v-if="isLeadStatusLocked(row)"
+                :type="statusTagType(row.status)"
+                size="small"
+                effect="plain"
+                round
+              >
+                {{ statusLabels[row.status] || row.status }} · 已锁定
+              </el-tag>
               <el-select
+                v-else
                 :model-value="row.status"
                 class="ctrl-select"
                 teleported
@@ -595,22 +730,41 @@ onActivated(() => {
           </div>
 
           <div class="lead-card__actions">
-            <el-button type="primary" size="small" @click="goDetail(row)">详情 / 写跟进</el-button>
+            <el-button type="primary" size="small" @click="goDetail(row)">
+              {{ row.status === 'enrolled' ? '查看详情' : '详情 / 写跟进' }}
+            </el-button>
+            <el-button
+              v-if="row.status === 'enrolled' && row.converted_student_id && canGoEnrollAfterConvert()"
+              size="small"
+              type="success"
+              plain
+              @click="
+                router.push({
+                  path: '/enrollments',
+                  query: {
+                    student_id: String(row.converted_student_id),
+                    kind: 'enroll',
+                    from_lead: String(row.id),
+                  },
+                })
+              "
+            >
+              去报名
+            </el-button>
           </div>
         </div>
       </div>
-      <div v-if="total" ref="sentinelRef" class="scroll-sentinel">
-        <span v-if="hasMoreInfinite || loadingMore" class="scroll-hint">
-          {{ loadingMore ? '加载中…' : '上拉加载更多' }}
-        </span>
-        <span v-else class="scroll-hint">
-          已加载 {{ rows.length }} / {{ total }} 条
-        </span>
-      </div>
+      <div ref="sentinelRef" class="list-load-sentinel"><ListLoadStatus :has-more="hasMoreInfinite"
+        :loading="loadingMore"
+        :loaded="rows.length"
+        :total="total"
+        @more="loadMore"
+        @retry="loadMore"
+      /></div>
     </div>
 
-    <!-- PC 表格：与学生信息列表同一套表格气质 -->
-    <div v-if="!isCompact" class="lead-pc">
+    <!-- PC 表格：与学生信息列表同一套表格气质-->
+    <div v-if="!isApp" class="lead-pc">
       <el-card class="pc-table-card" v-loading="loading && !rows.length" shadow="never">
         <div class="table-scroll">
           <el-table
@@ -640,6 +794,18 @@ onActivated(() => {
                 </el-tag>
               </template>
             </el-table-column>
+            <el-table-column prop="school" label="学校" min-width="130" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.school || '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="grade" label="年级" width="90">
+              <template #default="{ row }">{{ row.grade || '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="campus" label="校区" min-width="110" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.campus || '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="external_code" label="编号" min-width="110" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.external_code || '—' }}</template>
+            </el-table-column>
             <el-table-column prop="need" label="需求" min-width="120" show-overflow-tooltip />
             <el-table-column label="主责" min-width="110" show-overflow-tooltip>
               <template #default="{ row }">
@@ -649,10 +815,20 @@ onActivated(() => {
                 </span>
               </template>
             </el-table-column>
-            <!-- 加宽状态列，避免 select 被挤出「..」省略 -->
+            <!-- 加宽状态列，避免 select 被挤出「.」省略 -->
             <el-table-column label="状态" width="148" class-name="col-status">
               <template #default="{ row }">
+                <el-tag
+                  v-if="isLeadStatusLocked(row)"
+                  :type="statusTagType(row.status)"
+                  size="small"
+                  effect="plain"
+                  round
+                >
+                  {{ statusLabels[row.status] || row.status }}
+                </el-tag>
                 <select
+                  v-else
                   class="status-native"
                   :value="row.status"
                   aria-label="修改线索状态"
@@ -704,9 +880,9 @@ onActivated(() => {
         </div>
       </el-card>
 
-      <!-- 仅 PC 显示底部分页；wap/pad 用服务端上拉追加 -->
+      <!-- 仍PC 显示底部分页；wap/pad 用服务端上拉追加 -->
       <PcPagerBar
-        v-if="!isCompact"
+        v-if="!isApp"
         v-model:page="page"
         v-model:page-size="pageSize"
         :total="total"
@@ -715,13 +891,78 @@ onActivated(() => {
       />
     </div>
 
-    <el-dialog
+    <component
+      :is="importSurface"
+      v-model="importVisible"
+      title="导入线索"
+      v-bind="importSurfaceProps"
+      :close-on-click-modal="!importing"
+      :close-on-press-escape="!importing"
+      :show-close="!importing"
+      :class="isApp ? undefined : 'lead-import-dialog'"
+    >
+      <div class="import-heading-row">
+        <span class="import-limit">支持 .xls/.xlsx，最多 5 MB，最多 1000 条</span>
+        <el-button link type="primary" :disabled="importing" @click="downloadImportTemplate">
+          <el-icon><Download /></el-icon>
+          下载导入模板
+        </el-button>
+      </div>
+      <el-upload
+        v-model:file-list="importFileList"
+        drag
+        :auto-upload="false"
+        :limit="1"
+        accept=".xls,.xlsx"
+        :disabled="importing"
+        :on-change="onImportFileChange"
+        :on-remove="onImportFileRemove"
+      >
+        <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+        <div class="el-upload__text">拖放 Excel 文件到此处，或 <em>点击选择</em></div>
+      </el-upload>
+      <el-progress
+        v-if="importing || importProgress > 0"
+        class="import-progress"
+        :percentage="importProgress"
+        :status="importProgress === 100 ? 'success' : undefined"
+      />
+      <template v-if="importResult">
+        <div class="import-summary">
+          <div class="import-summary-item is-success"><strong>{{ importResult.imported_count }}</strong><span>成功</span></div>
+          <div class="import-summary-item is-duplicate"><strong>{{ importResult.duplicate_count }}</strong><span>重复</span></div>
+          <div class="import-summary-item is-failed"><strong>{{ importResult.failed_count }}</strong><span>失败</span></div>
+          <div class="import-summary-item is-warning"><strong>{{ importResult.warning_count }}</strong><span>警告</span></div>
+        </div>
+        <el-table :data="importResult.details" size="small" max-height="260" class="import-details">
+          <el-table-column prop="row" label="行号" width="70" />
+          <el-table-column label="结果" width="82">
+            <template #default="{ row }">
+              <el-tag :type="importStatusType(row.status)" size="small" effect="plain">
+                {{ importStatusLabel(row.status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="message" label="说明" min-width="260" show-overflow-tooltip />
+        </el-table>
+      </template>
+      <template #footer>
+        <el-button :disabled="importing" @click="importVisible = false">
+          {{ importResult ? '完成' : '取消' }}
+        </el-button>
+        <el-button type="primary" :loading="importing" :disabled="!importFile" @click="submitImport">
+          开始导入
+        </el-button>
+      </template>
+    </component>
+
+    <component
+      :is="createSurface"
       v-model="createVisible"
       title="新建线索"
-      width="90%"
-      style="max-width: 520px"
+      v-bind="createSurfaceProps"
       destroy-on-close
-      class="lead-create-dialog"
+      :class="isApp ? undefined : 'lead-create-dialog'"
     >
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
         <el-form-item label="学生/家长姓名" prop="student_or_parent_name">
@@ -733,7 +974,7 @@ onActivated(() => {
             inputmode="numeric"
             autocomplete="tel"
             maxlength="11"
-            placeholder="请输入11位手机号"
+            placeholder="请输入1位手机号"
             @input="form.phone = sanitizePhoneInput(form.phone)"
           />
         </el-form-item>
@@ -764,7 +1005,7 @@ onActivated(() => {
         <el-button @click="createVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="submitCreate">保存</el-button>
       </template>
-    </el-dialog>
+    </component>
   </div>
 </template>
 
@@ -773,7 +1014,84 @@ onActivated(() => {
   min-width: 0;
 }
 
-/* ≤991：只显示移动布局；≥992：只显示 PC */
+.lead-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.import-btn {
+  height: 36px;
+}
+
+.import-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.import-limit {
+  color: var(--oc-muted, #78716c);
+  font-size: 13px;
+}
+
+.import-progress {
+  margin-top: 14px;
+}
+
+.import-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.import-summary-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+  min-height: 54px;
+  padding: 10px 8px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.import-summary-item strong {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.import-summary-item span {
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+}
+
+.import-summary-item.is-success strong { color: #2f855a; }
+.import-summary-item.is-duplicate strong { color: #64748b; }
+.import-summary-item.is-failed strong { color: #c2413b; }
+.import-summary-item.is-warning strong { color: #b7791f; }
+
+.import-details {
+  margin-top: 12px;
+}
+
+/* Element Plus 的全局移动端规则将 body 设为 flex-basis: 0；导入区需要按内容撑开，结果表再独立滚动。*/
+:global(.lead-import-dialog.el-dialog) {
+  overflow: hidden;
+}
+
+:global(.lead-import-dialog .el-dialog__body) {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* App 模式覆盖手机不Pad；桌面宽度才切换为PC 表格 */
 .lead-pc {
   display: none;
 }
@@ -782,7 +1100,7 @@ onActivated(() => {
   display: block;
 }
 
-@media (min-width: 992px) {
+@media (min-width: 1200px) {
   .lead-pc {
     display: block;
   }
@@ -809,7 +1127,7 @@ onActivated(() => {
   border-radius: 12px;
 }
 
-/* 与学生信息 PC 筛选卡一致 */
+/* 与学生信息PC 筛选卡一致*/
 .pc-filters {
   margin-top: 12px;
   border-radius: 12px;
@@ -892,7 +1210,7 @@ onActivated(() => {
   box-shadow: 0 2px 8px rgba(161, 98, 7, 0.22);
 }
 
-/* ── wap 筛选 ── */
+/* ── wap 筛选── */
 .m-filter {
   position: relative;
   z-index: 20;
@@ -1054,7 +1372,7 @@ onActivated(() => {
   padding-bottom: 8px;
 }
 
-@media (min-width: 768px) and (max-width: 991px) {
+@media (min-width: 768px) and (max-width: 1199px) {
   .lead-card-list {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1081,10 +1399,15 @@ onActivated(() => {
 }
 
 .lead-card--empty {
-  text-align: center;
-  color: var(--oc-muted, #78716c);
-  padding: 40px 16px;
-  border-style: dashed;
+  margin-top: 4px;
+}
+
+.lead-card--empty .el-button {
+  margin-top: 10px;
+}
+
+.lead-card__chips {
+  margin-top: 10px;
 }
 
 .lead-card__top {
@@ -1318,7 +1641,7 @@ onActivated(() => {
   color: #a8a29e;
 }
 
-/* 状态列：给足宽度，去掉被挤出的「..」 */
+/* 状态列：给足宽度，去掉被挤出的「.」。*/
 .status-native {
   width: 120px;
   max-width: 100%;
@@ -1361,27 +1684,32 @@ onActivated(() => {
 
 /* 分页样式见全局 style.css · .pager-bar.pc-pager */
 
-@media (max-width: 991px) {
+@media (max-width: 1199px) {
   .lead-toolbar {
     flex-wrap: wrap;
     gap: 10px;
   }
 
-  .create-btn {
-    width: 100%;
+  .lead-toolbar-actions {
+    width: auto;
+  }
+
+  .create-btn,
+  .import-btn {
+    flex: 1 1 0;
     height: 40px;
     border-radius: 10px;
     font-weight: 600;
   }
+
+  .import-heading-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .import-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
-.scroll-sentinel {
-  padding: 16px 8px 28px;
-  text-align: center;
-}
-
-.scroll-hint {
-  font-size: 12px;
-  color: var(--oc-muted, #78716c);
-}
 </style>

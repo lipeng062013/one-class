@@ -14,7 +14,10 @@ from app.modules.students.schemas import (
     LearningRecordCreate,
     LearningRecordUpdate,
     StudentBulkDelete,
+    StudentCourseClose,
     StudentCreate,
+    StudentPackageClearHours,
+    StudentPackageUpdate,
     StudentReassign,
     StudentUpdate,
 )
@@ -171,16 +174,112 @@ def student_course_packages(
     return ok(result)
 
 
+@router.patch("/students/{student_id}/course-packages/{package_id}")
+def patch_student_package(
+    student_id: int,
+    package_id: int,
+    body: StudentPackageUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(_student_manage_roles),
+):
+    """更新课包有效期 / 优先消耗。"""
+    result = svc.update_student_package(
+        db,
+        student_id,
+        package_id,
+        valid_until=body.valid_until,
+        clear_valid_until=body.clear_valid_until,
+        priority_consume=body.priority_consume,
+    )
+    if isinstance(result, str):
+        return fail("PACKAGE_UPDATE_FAILED", result, status_code=400)
+    return ok(result)
+
+
+@router.post("/students/{student_id}/course-packages/{package_id}/clear-hours")
+def clear_student_package_hours(
+    student_id: int,
+    package_id: int,
+    body: StudentPackageClearHours | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(_student_manage_roles),
+):
+    """课时清零。"""
+    result = svc.clear_package_hours(
+        db,
+        student_id,
+        package_id,
+        remark=(body.remark if body else "") or "",
+    )
+    if isinstance(result, str):
+        return fail("PACKAGE_CLEAR_FAILED", result, status_code=400)
+    return ok(result)
+
+
+@router.post("/students/{student_id}/courses/close")
+def close_student_course(
+    student_id: int,
+    body: StudentCourseClose,
+    db: Session = Depends(get_db),
+    _: User = Depends(_student_manage_roles),
+):
+    """结课。"""
+    result = svc.close_student_course(
+        db,
+        student_id,
+        body.course_id,
+        clear_remain=body.clear_remain,
+    )
+    if isinstance(result, str):
+        return fail("COURSE_CLOSE_FAILED", result, status_code=400)
+    return ok(result)
+
+
 @router.get("/students/{student_id}/orders")
 def student_orders(
     student_id: int,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    status: str | None = Query(None, description="订单状态，逗号分隔 paid,partial,unpaid,void"),
+    order_type: str | None = Query(None, description="订单类型，逗号分隔"),
+    item_q: str | None = Query(None, description="购买项目关键词"),
     db: Session = Depends(get_db),
     _: User = Depends(_student_roles),
 ):
-    """消费记录（财务订单，分页）。"""
-    result = svc.list_student_orders(db, student_id, page=page, page_size=page_size)
+    """消费记录（财务订单，分页 + 筛选）。"""
+    result = svc.list_student_orders(
+        db,
+        student_id,
+        page=page,
+        page_size=page_size,
+        status=status,
+        order_type=order_type,
+        item_q=item_q,
+    )
+    if result.get("error"):
+        return fail("NOT_FOUND", result["error"], status_code=404)
+    return ok(result)
+
+
+@router.get("/students/{student_id}/order-lines")
+def student_order_lines(
+    student_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    order_type: str | None = Query(None),
+    item_q: str | None = Query(None),
+    db: Session = Depends(get_db),
+    _: User = Depends(_student_roles),
+):
+    """消费记录 · 订单明细行。"""
+    result = svc.list_student_order_lines(
+        db,
+        student_id,
+        page=page,
+        page_size=page_size,
+        order_type=order_type,
+        item_q=item_q,
+    )
     if result.get("error"):
         return fail("NOT_FOUND", result["error"], status_code=404)
     return ok(result)

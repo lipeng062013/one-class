@@ -30,6 +30,9 @@ export interface Student {
   created_at?: string | null
   updated_at?: string | null
   latest_learning_at?: string | null
+  has_enroll?: boolean
+  allocation_phase?: 'pending_enroll' | 'pending_alloc' | 'allocated' | 'normal' | string
+  needs_allocation?: boolean
 }
 
 export interface StudentInput {
@@ -41,8 +44,8 @@ export interface StudentInput {
   academic_manager_id?: number | null
   status?: StudentStatus | string
   notes?: string
-  /** 新建时必选至少一门关联课程 */
-  courses: StudentCourseLink[]
+  /** 可选；建档可不关联，报名/续费时再选课程 */
+  courses?: StudentCourseLink[]
 }
 
 export interface ManagerOption {
@@ -156,8 +159,10 @@ export interface StudentPackageOrderRow {
   valid_until?: string | null
   priority_consume: boolean
   status: string
+  status_label?: string
   unit_price: number
   created_at?: string
+  can_clear_hours?: boolean
 }
 
 export interface StudentCoursePackageGroup {
@@ -172,6 +177,10 @@ export interface StudentCoursePackageGroup {
   class_name: string
   packages: StudentPackageOrderRow[]
   from_link_only?: boolean
+  is_closed?: boolean
+  has_available?: boolean
+  can_close?: boolean
+  can_operate?: boolean
 }
 
 export interface StudentCoursePackagesResult {
@@ -191,39 +200,130 @@ export async function getStudentCoursePackagesApi(
   return res.data.data
 }
 
+export async function patchStudentPackageApi(
+  studentId: number,
+  packageId: number,
+  payload: {
+    valid_until?: string | null
+    clear_valid_until?: boolean
+    priority_consume?: boolean
+  },
+): Promise<StudentPackageOrderRow> {
+  const res = await client.patch(`/students/${studentId}/course-packages/${packageId}`, payload)
+  return res.data.data
+}
+
+export async function clearStudentPackageHoursApi(
+  studentId: number,
+  packageId: number,
+  remark = '',
+): Promise<StudentPackageOrderRow & { cleared_hours?: number }> {
+  const res = await client.post(`/students/${studentId}/course-packages/${packageId}/clear-hours`, {
+    remark,
+  })
+  return res.data.data
+}
+
+export async function closeStudentCourseApi(
+  studentId: number,
+  courseId: number,
+  clearRemain = false,
+): Promise<{ course_id: number; course_name: string; closed_count: number }> {
+  const res = await client.post(`/students/${studentId}/courses/close`, {
+    course_id: courseId,
+    clear_remain: clearRemain,
+  })
+  return res.data.data
+}
+
+export interface StudentOrderItem {
+  id: number
+  order_no: string
+  order_type: string
+  order_type_label: string
+  item: string
+  receivable: number
+  received: number
+  arrears: number
+  status: string
+  status_label: string
+  source: string
+  performance_owner: string
+  handler: string
+  created_at?: string
+}
+
 export interface StudentOrdersResult {
   summary: {
     order_amount: number
     received_amount: number
     arrears_amount: number
   }
-  items: {
-    id: number
-    order_no: string
-    order_type: string
-    order_type_label: string
-    item: string
-    receivable: number
-    received: number
-    arrears: number
-    status: string
-    status_label: string
-    source: string
-    performance_owner: string
-    handler: string
-    created_at?: string
-  }[]
+  items: StudentOrderItem[]
   total: number
+  page?: number
+  page_size?: number
+}
+
+export interface StudentOrdersParams {
+  page?: number
+  page_size?: number
+  status?: string
+  order_type?: string
+  item_q?: string
 }
 
 export async function getStudentOrdersApi(
   studentId: number,
-  params: { page?: number; page_size?: number } = {},
-): Promise<StudentOrdersResult & { page?: number; page_size?: number }> {
+  params: StudentOrdersParams = {},
+): Promise<StudentOrdersResult> {
   const res = await client.get(`/students/${studentId}/orders`, {
     params: {
       page: params.page ?? 1,
       page_size: params.page_size ?? 20,
+      status: params.status || undefined,
+      order_type: params.order_type || undefined,
+      item_q: params.item_q || undefined,
+    },
+  })
+  return res.data.data
+}
+
+export interface StudentOrderLineItem {
+  order_id: number
+  order_no: string
+  order_type: string
+  order_type_label: string
+  item_name: string
+  quantity_label: string
+  unit_price: number
+  price_label?: string
+  receivable: number
+  received: number
+  gift_qty?: string
+  class_name?: string
+  valid_until?: string
+  status: string
+  created_at?: string
+}
+
+export interface StudentOrderLinesResult {
+  items: StudentOrderLineItem[]
+  total: number
+  page?: number
+  page_size?: number
+}
+
+export async function getStudentOrderLinesApi(
+  studentId: number,
+  params: { page?: number; page_size?: number; order_type?: string; item_q?: string } = {},
+): Promise<StudentOrderLinesResult> {
+  const res = await client.get(`/students/${studentId}/order-lines`, {
+    params: {
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 20,
+      order_type: params.order_type || undefined,
+      item_q: params.item_q || undefined,
     },
   })
   return res.data.data

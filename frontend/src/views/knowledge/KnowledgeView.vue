@@ -12,8 +12,12 @@ import {
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useCardAccordion } from '../../composables/useCardAccordion'
+import ListLoadStatus from '../../components/ListLoadStatus.vue'
 import { useInfiniteScroll } from '../../composables/useInfiniteScroll'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
+import CompactFilterBar from '../../components/CompactFilterBar.vue'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
+import { useResponsiveSurface } from '../../composables/useResponsiveSurface'
 
 const LIST_STATE_KEY = 'oc-knowledge-list-state'
 const PAGE_SIZES = [10, 20, 50, 100]
@@ -22,8 +26,14 @@ const SCROLL_CHUNK = 10
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
-const { isCompact } = useBreakpoint()
+const { isApp } = useBreakpoint()
 const { isExpanded, toggle: toggleCard, toggleForce, collapseAll } = useCardAccordion()
+const { surface: knowSurface, surfaceProps: knowSurfaceProps } = useResponsiveSurface({
+  compactSize: 'min(88%, 640px)',
+  dialogMaxWidth: '560px',
+  modalClass: 'know-app-sheet',
+  sheetProps: { forceBottom: true },
+})
 
 const pcHeaderStyle = {
   background: '#f5f0e6',
@@ -162,16 +172,17 @@ const {
   loadingMore,
   visibleCount,
   resetVisible: resetInfinite,
+  loadMore,
 } = useInfiniteScroll(filtered, {
   chunk: SCROLL_CHUNK,
-  enabled: isCompact,
+  enabled: isApp,
   sentinelRef,
 })
 
 // 知识库无独立详情页，不恢复滚动；仅用 finishListEnter 回顶
 const { finishListEnter, clearSnapshot } = useListScrollRestore('knowledge', {
   visibleCount,
-  enabled: isCompact,
+  enabled: isApp,
   stateStorageKey: LIST_STATE_KEY,
 })
 
@@ -293,10 +304,6 @@ function resetFilters() {
   resetInfinite()
 }
 
-function toggleFilterExpand() {
-  filterExpanded.value = !filterExpanded.value
-}
-
 function openCreate() {
   editingId.value = null
   form.category = section.value.category
@@ -382,7 +389,7 @@ onMounted(() => {
 
 <template>
   <div class="know-page">
-    <div class="page-toolbar know-toolbar" :class="{ 'is-compact': isCompact }">
+    <div class="page-toolbar know-toolbar" :class="{ 'is-compact': isApp }">
       <el-page-header class="is-title-only" :content="section.title" />
       <el-button
         v-if="auth.hasPermission('knowledge.write')"
@@ -446,57 +453,13 @@ onMounted(() => {
       </el-card>
     </div>
 
-    <!-- wap/pad 筛选：默认矮，更多可展开 -->
-    <div class="know-m m-filter">
-      <div class="m-filter-search">
-        <el-icon class="m-filter-search__icon"><Search /></el-icon>
-        <input
-          v-model="filters.q"
-          class="m-filter-search__input"
-          type="search"
-          enterkeyhint="search"
-          placeholder="搜索标题 / 内容 / 标签"
-          @keyup.enter="runQuery"
-        />
-        <button type="button" class="m-filter-search__btn" @click="runQuery">查询</button>
-      </div>
-      <div class="m-filter-row">
-        <el-select
-          v-model="filters.status"
-          class="m-filter-select"
-          clearable
-          placeholder="状态"
-          teleported
-          placement="bottom-start"
-          :fit-input-width="true"
-          :popper-options="{ strategy: 'fixed' }"
-          popper-class="know-m-select-popper"
-        >
-          <el-option
-            v-for="(label, key) in statusLabels"
-            :key="key"
-            :label="label"
-            :value="key"
-          />
-        </el-select>
-        <button
-          type="button"
-          class="m-filter-more"
-          :class="{ 'is-active': filterExpanded || activeFilterCount > 0 }"
-          @click="toggleFilterExpand"
-        >
-          更多{{ activeFilterCount ? ` · ${activeFilterCount}` : '' }}
-          <el-icon :class="{ 'is-open': filterExpanded }"><ArrowDown /></el-icon>
-        </button>
-      </div>
-      <div v-show="filterExpanded" class="m-filter-panel">
-        <p class="m-filter-hint">当前分区：{{ section.title }} · 共 {{ filtered.length }} 条</p>
-        <div class="m-filter-panel__actions">
-          <button type="button" class="m-filter-link" @click="resetFilters">重置</button>
-          <button type="button" class="m-filter-apply" @click="runQuery">完成</button>
-        </div>
-      </div>
-    </div>
+    <CompactFilterBar class="know-m" :active-count="activeFilterCount" :total="filtered.length" :label="`条${section.title}`" @open="filterExpanded = true" />
+    <MobileFilterSheet v-model="filterExpanded" :active-count="activeFilterCount" @apply="runQuery" @reset="resetFilters">
+      <el-form label-position="top" @submit.prevent="runQuery">
+        <el-form-item label="关键词"><el-input v-model="filters.q" clearable placeholder="标题 / 内容 / 标签" /></el-form-item>
+        <el-form-item label="状态"><el-select v-model="filters.status" clearable placeholder="全部状态"><el-option v-for="(label, key) in statusLabels" :key="key" :label="label" :value="key" /></el-select></el-form-item>
+      </el-form>
+    </MobileFilterSheet>
 
     <!-- 移动卡片（互斥折叠；CSS 控制显隐） -->
     <div v-loading="loading" class="know-m know-card-list">
@@ -525,6 +488,7 @@ onMounted(() => {
             type="button"
             class="m-card-acc-toggle"
             :aria-expanded="isExpanded(row.id)"
+            :aria-label="isExpanded(row.id) ? '收起条目详情' : '展开条目详情'"
             @click.stop="toggleForce(row.id)"
           >
             <el-icon class="m-card-acc-chevron" :class="{ 'is-open': isExpanded(row.id) }">
@@ -558,11 +522,15 @@ onMounted(() => {
           </div>
         </div>
       </div>
-      <div v-if="filtered.length" ref="sentinelRef" class="scroll-sentinel">
-        <span v-if="hasMoreInfinite || loadingMore" class="scroll-hint">
-          {{ loadingMore ? '加载中…' : '上拉加载更多' }}
-        </span>
-        <span v-else class="scroll-hint">已加载全部 {{ filtered.length }} 条</span>
+      <div ref="sentinelRef" class="list-load-sentinel">
+        <ListLoadStatus
+          :has-more="hasMoreInfinite"
+          :loading="loadingMore"
+          :loaded="infiniteRows.length"
+          :total="filtered.length"
+          @more="loadMore"
+          @retry="loadMore"
+        />
       </div>
     </div>
 
@@ -654,11 +622,11 @@ onMounted(() => {
       </div>
     </div>
 
-    <el-dialog
+    <component
+      :is="knowSurface"
       v-model="dialogVisible"
+      v-bind="knowSurfaceProps"
       :title="editingId ? `编辑${section.title}` : section.createLabel"
-      width="90%"
-      style="max-width: 560px"
       destroy-on-close
       class="know-dialog"
     >
@@ -705,7 +673,7 @@ onMounted(() => {
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="submit">保存</el-button>
       </template>
-    </el-dialog>
+    </component>
   </div>
 </template>
 
@@ -723,7 +691,7 @@ onMounted(() => {
   display: block;
 }
 
-@media (min-width: 992px) {
+@media (min-width: 1200px) {
   .know-pc {
     display: block;
   }
@@ -1064,16 +1032,6 @@ onMounted(() => {
 .know-card__actions .el-button {
   margin: 0;
   width: 100%;
-}
-
-.scroll-sentinel {
-  padding: 12px 0 4px;
-  text-align: center;
-}
-
-.scroll-hint {
-  font-size: 12px;
-  color: var(--oc-muted, #78716c);
 }
 
 /* ── PC 表格卡 ── */

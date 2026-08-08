@@ -33,14 +33,42 @@ import {
   type TeacherManage,
 } from '../../api/academic'
 import AppSheet from '../../components/AppSheet.vue'
+import MobileActionBar from '../../components/MobileActionBar.vue'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useResponsiveSurface } from '../../composables/useResponsiveSurface'
 import ScheduleLessonDetailDrawer from './ScheduleLessonDetailDrawer.vue'
 
 const auth = useAuthStore()
-const { isCompact } = useBreakpoint()
+const { isApp } = useBreakpoint()
 const route = useRoute()
 const router = useRouter()
+
+const { surface: editSurface, surfaceProps: editSurfaceProps } = useResponsiveSurface({
+  dialogMaxWidth: '560px',
+  size: '460px',
+})
+const { surface: addStudentSurface, surfaceProps: addStudentSurfaceProps } = useResponsiveSurface({
+  dialogMaxWidth: '440px',
+  size: '420px',
+  compactSize: '72%',
+})
+const { surface: rollSurface, surfaceProps: rollSurfaceProps } = useResponsiveSurface({
+  dialogWidth: '94%',
+  dialogMaxWidth: '640px',
+  size: '520px',
+  compactSize: '92%',
+  dialogProps: { top: '6vh', class: 'roll-dialog' },
+  modalClass: 'class-roll-sheet',
+})
+const { surface: attendanceSurface, surfaceProps: attendanceSurfaceProps } = useResponsiveSurface({
+  dialogWidth: '94%',
+  dialogMaxWidth: '760px',
+  size: '520px',
+  compactSize: '88%',
+  dialogProps: { class: 'attendance-detail-dialog' },
+  modalClass: 'class-attendance-sheet',
+})
 
 const classId = computed(() => Number(route.params.id))
 const loading = ref(false)
@@ -982,8 +1010,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="class-detail-page oc-page-shell" v-loading="loading">
-    <div class="page-toolbar">
+  <div class="class-detail-page oc-page-shell" :class="{ 'is-app': isApp }" v-loading="loading">
+    <div v-if="!isApp" class="page-toolbar">
       <el-page-header content="班级详情" @back="goBack" />
       <el-button
         v-if="canManageClass && detail"
@@ -1179,6 +1207,7 @@ onMounted(async () => {
             <span v-if="canManage" class="sub-hint">勾选后可批量换老师 / 改教室</span>
           </div>
           <el-table
+            v-if="!isApp"
             ref="scheduleTableRef"
             :data="schedules"
             row-key="id"
@@ -1233,6 +1262,24 @@ onMounted(async () => {
               </template>
             </el-table-column>
           </el-table>
+          <div v-else class="compact-record-grid">
+            <article v-for="row in schedules" :key="row.id" class="compact-record-card">
+              <div class="compact-record-head">
+                <strong>{{ formatDateWeek(row.start_at) }}</strong>
+                <span>{{ timeRangeOf(row.start_at, row.end_at) }}</span>
+              </div>
+              <div class="compact-record-meta">
+                <span>{{ row.course_name }}</span>
+                <span>{{ row.teachers || '未填老师' }}</span>
+                <span>{{ row.room || '未填教室' }}</span>
+              </div>
+              <div v-if="canManage" class="compact-record-actions">
+                <el-button text type="primary" :disabled="row.status === 'completed'" @click="openScheduleEdit(row)">编辑</el-button>
+                <el-button v-if="canManageClass" text type="danger" :disabled="row.status === 'completed'" @click="deleteSchedule(row)">删除</el-button>
+              </div>
+            </article>
+            <p v-if="!schedules.length" class="compact-record-empty">暂无排课</p>
+          </div>
           <div class="table-foot">共 {{ schedules.length }} 条数据</div>
         </div>
 
@@ -1252,6 +1299,7 @@ onMounted(async () => {
             <span class="member-summary">在班 <b>{{ (detail.members || []).length }}</b> 人</span>
           </div>
           <el-table
+            v-if="!isApp"
             :data="detail.members || []"
             row-key="id"
             border
@@ -1283,6 +1331,22 @@ onMounted(async () => {
               </template>
             </el-table-column>
           </el-table>
+          <div v-else class="compact-record-grid">
+            <article v-for="row in detail.members || []" :key="row.id" class="compact-record-card">
+              <div class="compact-record-head">
+                <strong>{{ row.name }}</strong>
+                <b>{{ row.remain_hours != null ? `${row.remain_hours}课时` : '-' }}</b>
+              </div>
+              <div class="compact-record-meta">
+                <span>{{ row.phone || '未填手机' }}</span>
+                <span>{{ row.consume_label || '未设置消耗' }}</span>
+              </div>
+              <div v-if="canManageClass" class="compact-record-actions">
+                <el-button text type="danger" @click="removeStudent(row.id, row.name)">移出本班</el-button>
+              </div>
+            </article>
+            <p v-if="!detail.members?.length" class="compact-record-empty">暂无学员</p>
+          </div>
           <div class="table-foot">共 {{ (detail.members || []).length }} 名学员</div>
         </div>
 
@@ -1323,6 +1387,7 @@ onMounted(async () => {
             本周课次
           </div>
           <el-table
+            v-if="!isApp"
             :data="weekRecords"
             row-key="key"
             border
@@ -1424,6 +1489,25 @@ onMounted(async () => {
               </template>
             </el-table-column>
           </el-table>
+          <div v-else class="compact-record-grid">
+            <article v-for="row in weekRecords" :key="row.key" class="compact-record-card">
+              <div class="compact-record-head">
+                <strong>{{ row.course_name || '课次' }}</strong>
+                <span>{{ row.attendance || '--' }} 人</span>
+              </div>
+              <div class="compact-record-meta">
+                <span>{{ formatDateWeek(row.start_at) }}</span>
+                <span>{{ row.start_at && row.end_at ? timeRangeOf(row.start_at, row.end_at) : '' }}</span>
+                <span>{{ row.teachers || '未填老师' }}</span>
+              </div>
+              <div class="compact-record-actions">
+                <el-button v-if="!row.record && row.schedule && isScheduleRollable(row.schedule) && canManage" text type="primary" @click="openRoll(row.schedule.id)">点名</el-button>
+                <el-button v-if="row.schedule" text type="primary" @click="openLessonDetail(row.schedule.id)">详情</el-button>
+                <el-button v-if="row.record?.status === 'normal' && canManageClass" text type="danger" @click="voidRecord(row.record)">撤销</el-button>
+              </div>
+            </article>
+            <p v-if="!weekRecords.length" class="compact-record-empty">本周暂无课次</p>
+          </div>
           <div class="table-foot">共 {{ weekRecords.length }} 条数据</div>
 
           <div class="sub-title sub-title--gap">
@@ -1431,6 +1515,7 @@ onMounted(async () => {
             历史点名情况
           </div>
           <el-table
+            v-if="!isApp"
             :data="historyRecords"
             row-key="id"
             border
@@ -1506,13 +1591,65 @@ onMounted(async () => {
               </template>
             </el-table-column>
           </el-table>
+          <div v-else class="compact-record-grid">
+            <article v-for="row in historyRecords" :key="row.id" class="compact-record-card">
+              <div class="compact-record-head">
+                <strong>{{ row.course_name || '点名记录' }}</strong>
+                <el-tag :type="row.status === 'void' ? 'info' : 'success'" size="small">{{ row.status_label }}</el-tag>
+              </div>
+              <div class="compact-record-meta">
+                <span>{{ formatDateWeek(row.class_start || row.roll_at) }}</span>
+                <span>{{ row.teachers || '未填老师' }}</span>
+                <span>实到 {{ row.present_count }}/{{ row.total_count }}</span>
+              </div>
+              <div class="compact-record-actions">
+                <el-button text type="primary" @click="openAttendanceDetail(row)">点名详情</el-button>
+                <el-button v-if="row.schedule_id" text type="primary" @click="openLessonDetail(row.schedule_id)">课次</el-button>
+                <el-button v-if="canManageClass && row.status === 'normal'" text type="danger" @click="voidRecord(row)">撤销</el-button>
+              </div>
+            </article>
+            <p v-if="!historyRecords.length" class="compact-record-empty">暂无历史点名</p>
+          </div>
           <div class="table-foot">共 {{ historyRecords.length }} 条数据</div>
         </div>
       </el-card>
+
+      <MobileActionBar
+        :visible="isApp && Boolean(detail) && (canManageClass || canManage)"
+      >
+        <el-button
+          v-if="canManage"
+          plain
+          @click="openScheduleCreate(true)"
+        >
+          排课
+        </el-button>
+        <el-button
+          v-if="canManage"
+          type="primary"
+          plain
+          @click="openRoll()"
+        >
+          点名
+        </el-button>
+        <el-button
+          v-if="canManageClass"
+          type="primary"
+          @click="openEdit"
+        >
+          编辑班级
+        </el-button>
+      </MobileActionBar>
     </template>
 
-    <!-- 编辑班级 -->
-    <AppSheet v-model="editVisible" title="编辑班级信息" size="460px">
+    <!-- 编辑班级：App → AppSheet / PC → Dialog -->
+    <component
+      :is="editSurface"
+      v-model="editVisible"
+      v-bind="editSurfaceProps"
+      title="编辑班级信息"
+      destroy-on-close
+    >
       <el-form label-position="top">
         <div class="form-section">基本信息</div>
         <el-form-item label="班级名称" required>
@@ -1573,16 +1710,15 @@ onMounted(async () => {
         <el-button @click="editVisible = false">取消</el-button>
         <el-button type="primary" :loading="editSaving" @click="saveEdit">保存</el-button>
       </template>
-    </AppSheet>
+    </component>
 
     <!-- 添加学员 -->
-    <el-dialog
+    <component
+      :is="addStudentSurface"
       v-model="addStudentVisible"
+      v-bind="addStudentSurfaceProps"
       title="添加学员"
-      width="440px"
       destroy-on-close
-      align-center
-      :modal-class="isCompact ? 'mobile-dialog' : ''"
     >
       <el-select
         v-model="addStudentIds"
@@ -1605,21 +1741,18 @@ onMounted(async () => {
         <el-button @click="addStudentVisible = false">取消</el-button>
         <el-button type="primary" :loading="addStudentSaving" @click="saveAddStudents">确定</el-button>
       </template>
-    </el-dialog>
+    </component>
 
     <!-- 课堂点名 -->
-    <el-dialog
+    <component
+      :is="rollSurface"
       v-model="rollVisible"
+      v-bind="rollSurfaceProps"
       title="课堂点名"
-      :width="isCompact ? '94%' : '640px'"
       destroy-on-close
-      top="6vh"
-      align-center
-      :modal-class="isCompact ? 'mobile-dialog' : ''"
-      class="roll-dialog"
     >
       <div v-loading="rollLoading">
-        <el-form :label-position="isCompact ? 'top' : 'right'" :label-width="isCompact ? undefined : '90px'">
+        <el-form :label-position="isApp ? 'top' : 'right'" :label-width="isApp ? undefined : '90px'">
           <el-form-item label="班级">
             <el-input :model-value="detail?.name || ''" disabled />
           </el-form-item>
@@ -1696,15 +1829,15 @@ onMounted(async () => {
           确认点名
         </el-button>
       </template>
-    </el-dialog>
+    </component>
 
     <!-- 点名详情 -->
-    <el-dialog
+    <component
+      :is="attendanceSurface"
       v-model="attendanceDetailVisible"
+      v-bind="attendanceSurfaceProps"
       title="点名详情"
-      :width="isCompact ? '94%' : '760px'"
       destroy-on-close
-      class="attendance-detail-dialog"
     >
       <div v-loading="attendanceDetailLoading">
         <div v-if="attendanceDetail" class="record-summary">
@@ -1725,7 +1858,7 @@ onMounted(async () => {
           </div>
         </div>
         <el-table
-          v-if="attendanceDetail"
+          v-if="attendanceDetail && !isApp"
           :data="attendanceDetail.attendances"
           border
           stripe
@@ -1763,11 +1896,24 @@ onMounted(async () => {
             </template>
           </el-table-column>
         </el-table>
+        <div v-else-if="attendanceDetail" class="attendance-detail-cards">
+          <article v-for="row in attendanceDetail.attendances" :key="row.student_id || row.student_name" class="attendance-detail-card">
+            <div class="attendance-detail-card__head">
+              <strong>{{ row.student_name }}</strong>
+              <el-tag size="small" effect="plain" :type="row.status === 'absent' ? 'danger' : row.status === 'present' ? 'success' : 'warning'">{{ row.status_label }}</el-tag>
+            </div>
+            <div class="attendance-detail-card__meta">
+              <span>扣除 {{ row.hours_consumed }} 课时</span>
+              <span>欠课 {{ row.uncovered_hours }}</span>
+              <span>课消 {{ formatMoney(row.amount) }}</span>
+            </div>
+          </article>
+        </div>
       </div>
       <template #footer>
         <el-button @click="attendanceDetailVisible = false">关闭</el-button>
       </template>
-    </el-dialog>
+    </component>
 
     <!-- 排课表单 -->
     <AppSheet
@@ -2463,6 +2609,33 @@ onMounted(async () => {
   font-variant-numeric: tabular-nums;
 }
 
+.attendance-detail-cards {
+  display: grid;
+  gap: 8px;
+}
+
+.attendance-detail-card {
+  padding: 10px 12px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 8px;
+  background: var(--oc-card, #fffdf8);
+}
+
+.attendance-detail-card__head,
+.attendance-detail-card__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.attendance-detail-card__meta {
+  flex-wrap: wrap;
+  margin-top: 8px;
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+}
+
 .pc-mono {
   font-variant-numeric: tabular-nums;
   font-weight: 650;
@@ -2718,6 +2891,233 @@ onMounted(async () => {
 
   .class-title {
     font-size: 17px;
+  }
+}
+
+.compact-record-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.compact-record-card {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.compact-record-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.compact-record-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--oc-ink, #44403c);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-record-head > span,
+.compact-record-head b {
+  flex-shrink: 0;
+  color: var(--oc-primary, #a16207);
+  font-size: 12px;
+}
+
+.compact-record-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 6px;
+  color: var(--oc-muted, #78716c);
+  font-size: 11px;
+}
+
+.compact-record-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--oc-border, #e8e0d0);
+}
+
+.compact-record-actions :deep(.el-button) {
+  margin: 0;
+}
+
+.compact-record-empty {
+  grid-column: 1 / -1;
+  margin: 18px 0;
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (min-width: 768px) and (max-width: 1199px) {
+  .compact-record-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ── WAP / Pad 班级详情 App 化 ── */
+@media (max-width: 1199px) {
+  .class-detail-page.is-app {
+    display: grid;
+    gap: 12px;
+    padding-bottom: 8px;
+  }
+
+  .hero-card {
+    margin: 0;
+    border-radius: 18px;
+    border-color: rgba(181, 145, 83, 0.3);
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.92), transparent 42%),
+      linear-gradient(180deg, #fffefb, #faf3e6);
+    box-shadow:
+      0 12px 28px rgba(88, 60, 24, 0.08),
+      0 1px 0 rgba(255, 255, 255, 0.9) inset;
+  }
+
+  .hero-card :deep(.el-card__body) {
+    padding: 16px 14px 14px;
+  }
+
+  .hero-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    font-size: 18px;
+  }
+
+  .class-title {
+    font-size: 18px;
+  }
+
+  .hero-meta {
+    gap: 6px;
+  }
+
+  .meta-item {
+    min-height: 26px;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.8);
+    border: 1px solid rgba(181, 145, 83, 0.18);
+    font-size: 12px;
+  }
+
+  .stat-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .stat-card {
+    min-height: 68px;
+    padding: 12px;
+    border-radius: 14px;
+  }
+
+  .info-panel {
+    border-radius: 14px;
+    background: rgba(255, 253, 248, 0.88);
+    border-color: rgba(181, 145, 83, 0.18);
+  }
+
+  .module-card {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .module-card :deep(.el-card__body) {
+    padding: 0;
+  }
+
+  .detail-tabs {
+    margin: 0 0 12px;
+    padding: 4px;
+    border-radius: 14px;
+    border: 1px solid rgba(181, 145, 83, 0.2);
+    background: #f3ebe0;
+  }
+
+  .detail-tabs :deep(.el-tabs__header) {
+    margin: 0;
+  }
+
+  .detail-tabs :deep(.el-tabs__nav-wrap::after),
+  .detail-tabs :deep(.el-tabs__active-bar) {
+    display: none;
+  }
+
+  .detail-tabs :deep(.el-tabs__nav) {
+    width: 100%;
+    display: flex;
+  }
+
+  .detail-tabs :deep(.el-tabs__item) {
+    flex: 1;
+    height: 40px;
+    line-height: 40px;
+    padding: 0 8px !important;
+    border-radius: 11px;
+    justify-content: center;
+    color: #78716c;
+    font-weight: 650;
+  }
+
+  .detail-tabs :deep(.el-tabs__item.is-active) {
+    color: #fffdf8 !important;
+    background: linear-gradient(145deg, #c07a12, #a16207);
+    box-shadow: 0 4px 12px rgba(161, 98, 7, 0.25);
+  }
+
+  .detail-tabs :deep(.tab-label) {
+    justify-content: center;
+    gap: 4px;
+  }
+
+  .tab-actions {
+    gap: 8px;
+    margin: 0 0 10px;
+    padding: 12px;
+    border-radius: 16px;
+    border: 1px solid rgba(181, 145, 83, 0.22);
+    background:
+      linear-gradient(135deg, rgba(255, 255, 255, 0.9), transparent 50%),
+      linear-gradient(180deg, #fffefb, #faf3e6);
+    box-shadow: 0 6px 16px rgba(88, 60, 24, 0.05);
+  }
+
+  .tab-actions .tb-btn {
+    min-height: 40px;
+    border-radius: 12px;
+    font-weight: 650;
+  }
+
+  .sub-hint {
+    display: none;
+  }
+
+  .compact-record-card {
+    border-radius: 16px;
+    border-color: rgba(181, 145, 83, 0.28);
+    box-shadow: 0 8px 18px rgba(88, 60, 24, 0.06);
+  }
+
+  .week-nav .el-button {
+    min-height: 36px;
   }
 }
 </style>

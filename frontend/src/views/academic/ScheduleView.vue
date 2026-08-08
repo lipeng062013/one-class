@@ -25,6 +25,8 @@ import {
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import AppSheet from '../../components/AppSheet.vue'
+import CompactFilterBar from '../../components/CompactFilterBar.vue'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
 import ScheduleLessonPop from './ScheduleLessonPop.vue'
 import ScheduleLessonDetailDrawer from './ScheduleLessonDetailDrawer.vue'
 
@@ -44,14 +46,14 @@ interface DayCol {
 
 const auth = useAuthStore()
 const router = useRouter()
-const { isCompact } = useBreakpoint()
+const { isApp } = useBreakpoint()
 /** 排课写操作需 academic.write；老师默认仅查看自己的课表 */
 const canManage = computed(() => auth.hasPermission('academic.write'))
 /** 老师账号：强制只看本人所带课次 */
 const selfTeacherOnly = computed(() => auth.isTeacher)
 const selfTeacherId = computed(() => (auth.isTeacher ? auth.user?.id : undefined))
 /** PC 悬停气泡；wap/pad 无悬停，点击课次直接打开详情侧栏 */
-const useLessonPopover = computed(() => !isCompact.value)
+const useLessonPopover = computed(() => !isApp.value)
 const viewTab = ref<ViewTab>('time')
 const periodMode = ref<PeriodMode>('week')
 const loading = ref(false)
@@ -64,6 +66,13 @@ const rooms = ref<{ name: string }[]>([])
 const courseFilter = ref<number | undefined>()
 const classFilter = ref<number | undefined>()
 const teacherFilter = ref<number | undefined>()
+const filterVisible = ref(false)
+const activeScheduleFilterCount = computed(
+  () =>
+    Number(Boolean(courseFilter.value)) +
+    Number(Boolean(classFilter.value)) +
+    Number(Boolean(!selfTeacherOnly.value && teacherFilter.value)),
+)
 
 /** 当前定位日（日/周/月导航基准） */
 const anchorDate = ref(startOfDay(new Date()))
@@ -345,6 +354,20 @@ const filterClassOptions = computed(() => {
   return classes.value.filter((c) => c.course_id === courseFilter.value)
 })
 
+function applyScheduleFilters() {
+  if (classFilter.value && !filterClassOptions.value.some((c) => c.id === classFilter.value)) {
+    classFilter.value = undefined
+  }
+  void load()
+}
+
+function resetScheduleFilters() {
+  courseFilter.value = undefined
+  classFilter.value = undefined
+  teacherFilter.value = selfTeacherOnly.value ? selfTeacherId.value : undefined
+  void load()
+}
+
 const formHint = computed(() => {
   if (formMode.value === 'edit') return ''
   if (form.schedule_mode === 'calendar') {
@@ -518,6 +541,18 @@ function lessonsForDay(day: number) {
   return lessonsOnDate(col.dateKey)
 }
 
+/**
+ * WAP / Pad 竖屏使用按日期分组的 agenda，避免把 7 列桌面时间网格压缩成
+ * 需要反复横向拖动的“表格”。每张课次卡仍保留详情、点名和编辑入口。
+ */
+const mobileScheduleDays = computed(() => {
+  const source =
+    periodMode.value === 'month'
+      ? monthCalendarCells.value.filter((d) => !d.isOtherMonth)
+      : dayLabels.value
+  return source.map((day) => ({ day, lessons: lessonsOnDate(day.dateKey) }))
+})
+
 /** 该小时格是否已被课次占用（用于隐藏「新建排课」悬浮） */
 function hourOccupied(day: number, hourLabel: string): boolean {
   const hour = Number(String(hourLabel).split(':')[0])
@@ -535,7 +570,7 @@ function hourOccupied(day: number, hourLabel: string): boolean {
 
 function emptyHourHint(day: number, hourLabel: string): string {
   // wap/pad 无悬停，不展示「新建排课」蒙层（点空白格仍可新建）
-  if (isCompact.value || !canManage.value) return ''
+  if (isApp.value || !canManage.value) return ''
   if (hourOccupied(day, hourLabel)) return ''
   return '新建排课'
 }
@@ -549,7 +584,7 @@ function matrixCellEmpty(rowKey: string, day: number): boolean {
 }
 
 function matrixEmptyHint(row: { label: string }, rowKey: string, day: number): string {
-  if (isCompact.value || !canManage.value) return ''
+  if (isApp.value || !canManage.value) return ''
   if (!matrixCellEmpty(rowKey, day)) return ''
   return newHintForRow(row)
 }
@@ -1224,9 +1259,9 @@ onMounted(async () => {
         </p>
       </div>
       <div class="toolbar-right">
-        <el-button class="tb-btn" plain @click="load">
+        <el-button class="tb-btn" plain aria-label="刷新课表" @click="load">
           <el-icon><Refresh /></el-icon>
-          刷新
+          <span class="toolbar-action-label refresh-label">刷新</span>
         </el-button>
         <el-button
           v-if="canManage"
@@ -1235,18 +1270,55 @@ onMounted(async () => {
           @click="openCreate()"
         >
           <el-icon><Plus /></el-icon>
-          新建排课
+          <span class="toolbar-action-label">新建排课</span>
         </el-button>
       </div>
     </div>
 
     <el-card class="module-card" shadow="never" v-loading="loading">
-      <el-select v-if="isCompact" v-model="viewTab" class="mobile-view-switch" aria-label="课表视图">
-        <el-option label="时间课表" value="time" />
-        <el-option v-if="!selfTeacherOnly" label="老师课表" value="teacher" />
-        <el-option label="教室课表" value="room" />
-        <el-option label="班级课表" value="class" />
-      </el-select>
+      <div v-if="isApp" class="mobile-view-segment" role="tablist" aria-label="课表视图">
+        <button
+          type="button"
+          class="mvs-btn"
+          role="tab"
+          :aria-selected="viewTab === 'time'"
+          :class="{ 'is-active': viewTab === 'time' }"
+          @click="viewTab = 'time'"
+        >
+          时间
+        </button>
+        <button
+          v-if="!selfTeacherOnly"
+          type="button"
+          class="mvs-btn"
+          role="tab"
+          :aria-selected="viewTab === 'teacher'"
+          :class="{ 'is-active': viewTab === 'teacher' }"
+          @click="viewTab = 'teacher'"
+        >
+          老师
+        </button>
+        <button
+          type="button"
+          class="mvs-btn"
+          role="tab"
+          :aria-selected="viewTab === 'room'"
+          :class="{ 'is-active': viewTab === 'room' }"
+          @click="viewTab = 'room'"
+        >
+          教室
+        </button>
+        <button
+          type="button"
+          class="mvs-btn"
+          role="tab"
+          :aria-selected="viewTab === 'class'"
+          :class="{ 'is-active': viewTab === 'class' }"
+          @click="viewTab = 'class'"
+        >
+          班级
+        </button>
+      </div>
       <el-tabs v-else v-model="viewTab" class="mode-tabs">
         <el-tab-pane name="time">
           <template #label>
@@ -1282,8 +1354,16 @@ onMounted(async () => {
         </el-tab-pane>
       </el-tabs>
 
+      <CompactFilterBar
+        v-if="isApp"
+        :active-count="activeScheduleFilterCount"
+        :total="lessons.length"
+        label="节课"
+        @open="filterVisible = true"
+      />
+
       <div class="filter-bar">
-        <div class="filter-bar-head">
+        <div v-if="!isApp" class="filter-bar-head">
           <div class="filter-bar-title">
             <span class="sec-dot" />
             筛选与导航
@@ -1301,7 +1381,7 @@ onMounted(async () => {
           </span>
         </div>
 
-        <div class="filter-row">
+        <div v-if="!isApp" class="filter-row">
           <div class="filter-item">
             <span class="filter-label">所属课程</span>
             <el-select
@@ -1352,7 +1432,7 @@ onMounted(async () => {
 
         <div class="action-row">
           <el-button
-            v-if="canManage"
+            v-if="canManage && !isApp"
             type="primary"
             class="tb-btn tb-btn--primary action-create"
             @click="openCreate()"
@@ -1373,7 +1453,7 @@ onMounted(async () => {
               <el-radio-button value="month">月</el-radio-button>
             </el-radio-group>
             <el-button text size="small" class="jump-btn" @click="goCurrent">{{ jumpLabel }}</el-button>
-            <el-button text class="nav-arrow" @click="shiftPeriod(-1)">
+            <el-button text class="nav-arrow" aria-label="上一时段" @click="shiftPeriod(-1)">
               <el-icon><ArrowLeft /></el-icon>
             </el-button>
             <el-popover
@@ -1397,16 +1477,41 @@ onMounted(async () => {
                 style="width: 100%"
               />
             </el-popover>
-            <el-button text class="nav-arrow" @click="shiftPeriod(1)">
+            <el-button text class="nav-arrow" aria-label="下一时段" @click="shiftPeriod(1)">
               <el-icon><ArrowRight /></el-icon>
             </el-button>
           </div>
         </div>
       </div>
 
+      <MobileFilterSheet
+        v-model="filterVisible"
+        :active-count="activeScheduleFilterCount"
+        @apply="applyScheduleFilters"
+        @reset="resetScheduleFilters"
+      >
+        <el-form label-position="top">
+          <el-form-item label="所属课程">
+            <el-select v-model="courseFilter" clearable filterable placeholder="全部课程">
+              <el-option v-for="c in courses" :key="c.id" :label="c.name" :value="c.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="上课班级">
+            <el-select v-model="classFilter" clearable filterable placeholder="全部班级">
+              <el-option v-for="c in filterClassOptions" :key="c.id" :label="c.name" :value="c.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="!selfTeacherOnly" label="上课老师">
+            <el-select v-model="teacherFilter" clearable filterable placeholder="全部老师">
+              <el-option v-for="t in teachers" :key="t.id" :label="t.name" :value="t.id" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+      </MobileFilterSheet>
+
       <div class="summary-bar">
         <div class="summary-main">
-          <span class="summary-chip">
+          <span v-if="!isApp" class="summary-chip">
             共 <b>{{ lessons.length }}</b> 节课
           </span>
           <span v-if="periodMode !== 'month' && dayCounts.some((n) => n)" class="summary-days">
@@ -1415,17 +1520,99 @@ onMounted(async () => {
             </template>
           </span>
         </div>
-        <span class="summary-tip">
-          {{
-            isCompact
-              ? '点击课次打开详情侧栏'
-              : '悬停课次可查看气泡 · 点「查看详情」打开课次侧栏'
-          }}
+        <span v-if="!isApp" class="summary-tip">
+          悬停课次可查看气泡 · 点「查看详情」打开课次侧栏
         </span>
       </div>
 
+      <!-- WAP / Pad 竖屏：按日期阅读课表，避免完整周网格造成横向拖动。 -->
+      <div v-if="isApp" class="mobile-schedule-agenda">
+        <div
+          v-if="!mobileScheduleDays.some((entry) => entry.lessons.length)"
+          class="mobile-schedule-empty"
+        >
+          <el-empty description="当前时段暂无课次" :image-size="56" />
+          <el-button
+            v-if="canManage"
+            type="primary"
+            class="tb-btn tb-btn--primary"
+            @click="openCreate({ date: dateKey(anchorDate), startTime: '09:00', endTime: '10:30' })"
+          >
+            <el-icon><Plus /></el-icon>
+            新建排课
+          </el-button>
+        </div>
+        <section
+          v-for="entry in mobileScheduleDays"
+          :key="entry.day.dateKey"
+          class="mobile-day-section"
+          :class="{ 'is-today': entry.day.isToday }"
+        >
+          <header class="mobile-day-head">
+            <div>
+              <strong>{{ entry.day.label }}</strong>
+              <span>{{ entry.lessons.length }} 节课</span>
+            </div>
+            <el-button
+              v-if="canManage"
+              text
+              class="mobile-day-add"
+              :aria-label="`在${entry.day.label}新建排课`"
+              @click="openCreate({ date: entry.day.dateKey, startTime: '09:00', endTime: '10:30' })"
+            >
+              <el-icon><Plus /></el-icon>
+              新建
+            </el-button>
+          </header>
+          <div v-if="!entry.lessons.length" class="mobile-day-empty">暂无课次</div>
+          <article
+            v-for="lesson in entry.lessons"
+            :key="lesson.id"
+            class="mobile-lesson-card"
+            :class="lessonTone(lesson)"
+            :style="{
+              borderLeftColor: lesson.course_color || '#a16207',
+              background: softColor(lesson.course_color || '#a16207'),
+            }"
+          >
+            <button
+              type="button"
+              class="mobile-lesson-main"
+              :aria-label="`${timeRange(lesson)} ${lesson.class_name || '课次'}，查看详情`"
+              @click="openLessonDetail(lesson)"
+            >
+              <span class="mobile-lesson-time">{{ timeRange(lesson) }}</span>
+              <span class="mobile-lesson-title">{{ lesson.class_name || '未命名课次' }}</span>
+              <span class="mobile-lesson-meta">{{ cardMeta(lesson) }}</span>
+              <span class="mobile-lesson-meta">{{ lesson.course_name || '课程待定' }}</span>
+            </button>
+            <div class="mobile-lesson-actions">
+              <el-button text size="small" @click="openLessonDetail(lesson)">详情</el-button>
+              <el-button
+                v-if="isScheduleRollable(lesson)"
+                text
+                size="small"
+                @click="goRoll(lesson)"
+              >
+                点名
+              </el-button>
+              <el-button v-if="canManage" text size="small" @click="openEdit(lesson)">编辑</el-button>
+              <el-button
+                v-if="canManage"
+                text
+                size="small"
+                class="is-danger"
+                @click="onDeleteLesson(lesson)"
+              >
+                删除
+              </el-button>
+            </div>
+          </article>
+        </section>
+      </div>
+
       <!-- 时间课表 · 日/周：小时轴 -->
-      <div v-if="viewTab === 'time' && periodMode !== 'month'" class="calendar-wrap">
+      <div v-else-if="viewTab === 'time' && periodMode !== 'month'" class="calendar-wrap">
         <div class="cal-grid" :style="calGridStyle">
           <div class="cal-corner" />
           <div
@@ -1457,7 +1644,7 @@ onMounted(async () => {
                   'hour-clickable': canManage && !hourOccupied(d.index, h),
                   'is-occupied': hourOccupied(d.index, h),
                   // compact 仍可点空白新建，但不做 hover 蒙层
-                  'no-hover-hint': isCompact,
+                  'no-hover-hint': isApp,
                 }"
                 :style="{ height: HOUR_PX + 'px' }"
                 :data-hint="emptyHourHint(d.index, h)"
@@ -1537,13 +1724,13 @@ onMounted(async () => {
               'is-other': cell.isOtherMonth,
               'is-today': cell.isToday,
               'is-empty-hover':
-                !isCompact &&
+                !isApp &&
                 canManage &&
                 lessonsOnDate(cell.dateKey).length === 0 &&
                 !cell.isOtherMonth,
             }"
             :data-hint="
-              !isCompact &&
+                !isApp &&
               canManage &&
               lessonsOnDate(cell.dateKey).length === 0 &&
               !cell.isOtherMonth
@@ -1645,7 +1832,7 @@ onMounted(async () => {
               :key="row.key + '-' + d.index"
               class="mx-cell"
               :class="{
-                'is-empty-hover': !isCompact && canManage && matrixCellEmpty(row.key, d.index),
+                'is-empty-hover': !isApp && canManage && matrixCellEmpty(row.key, d.index),
                 'has-lessons': !matrixCellEmpty(row.key, d.index),
               }"
               :data-hint="matrixEmptyHint(row, row.key, d.index)"
@@ -2108,6 +2295,45 @@ onMounted(async () => {
   margin: 8px 0 12px;
 }
 
+.mobile-view-segment {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin: 4px 0 12px;
+  padding: 4px;
+  border-radius: 14px;
+  border: 1px solid rgba(181, 145, 83, 0.22);
+  background: #f3ebe0;
+  box-shadow: 0 2px 8px rgba(88, 60, 24, 0.04);
+}
+
+.mobile-view-segment:has(.mvs-btn:nth-child(3):last-child) {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.mvs-btn {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  min-height: 40px;
+  padding: 0 8px;
+  border-radius: 11px;
+  background: transparent;
+  color: #78716c;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mvs-btn.is-active {
+  color: #fffdf8;
+  background: linear-gradient(145deg, #c98718, #a16207 55%, #7a4c08);
+  box-shadow: 0 4px 12px rgba(161, 98, 7, 0.28);
+}
+
 .mode-tabs :deep(.el-tabs__header) {
   margin-bottom: 12px;
 }
@@ -2351,6 +2577,168 @@ onMounted(async () => {
 .summary-tip {
   font-size: 12px;
   color: #a8a29e;
+}
+
+.mobile-schedule-agenda {
+  display: grid;
+  gap: 12px;
+}
+
+.mobile-schedule-empty {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 18px 12px 22px;
+  border: 1px dashed var(--oc-border, #e8e0d0);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fffdf8, #faf5eb);
+}
+
+.mobile-schedule-empty :deep(.el-empty) {
+  padding: 8px 0 0;
+}
+
+.mobile-day-section {
+  overflow: hidden;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 14px;
+  background: var(--oc-card, #fffdf8);
+  box-shadow: 0 3px 10px rgba(41, 37, 36, 0.04);
+}
+
+.mobile-day-section.is-today {
+  border-color: #d4b483;
+  box-shadow: 0 4px 14px rgba(161, 98, 7, 0.1);
+}
+
+.mobile-day-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--oc-border, #e8e0d0);
+  background: linear-gradient(180deg, #faf6ee, #f5f0e6);
+}
+
+.mobile-day-head > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mobile-day-head strong {
+  color: var(--oc-ink, #44403c);
+  font-size: 14px;
+}
+
+.mobile-day-head span {
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+}
+
+.mobile-day-section.is-today .mobile-day-head strong {
+  color: var(--oc-primary, #a16207);
+}
+
+.mobile-day-add {
+  min-height: 36px !important;
+  padding-inline: 8px !important;
+  color: var(--oc-primary, #a16207) !important;
+}
+
+.mobile-day-empty {
+  padding: 16px 12px;
+  color: var(--oc-muted, #78716c);
+  font-size: 13px;
+  text-align: center;
+}
+
+.mobile-lesson-card {
+  display: grid;
+  gap: 8px;
+  margin: 10px;
+  padding: 10px 10px 8px 12px;
+  border: 1px solid #dbbf94;
+  border-left: 4px solid var(--oc-primary, #a16207);
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(41, 37, 36, 0.05);
+}
+
+.mobile-lesson-card + .mobile-lesson-card {
+  margin-top: 0;
+}
+
+.mobile-lesson-card.is-blue {
+  border-color: #93c5fd;
+  border-left-color: #3b82f6;
+}
+
+.mobile-lesson-card.is-green {
+  border-color: #86efac;
+  border-left-color: #16a34a;
+}
+
+.mobile-lesson-card.is-done {
+  opacity: 0.78;
+}
+
+.mobile-lesson-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mobile-lesson-time {
+  color: var(--oc-primary, #a16207);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.mobile-lesson-title {
+  overflow: hidden;
+  color: var(--oc-ink, #44403c);
+  font-size: 15px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-lesson-meta {
+  overflow: hidden;
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-lesson-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(232, 224, 208, 0.8);
+}
+
+.mobile-lesson-actions .el-button {
+  min-height: 36px;
+  padding-inline: 8px;
+  color: var(--oc-primary, #a16207);
+}
+
+.mobile-lesson-actions .el-button.is-danger {
+  margin-left: auto;
+  color: #dc2626;
 }
 
 .day-count-badge {
@@ -3070,18 +3458,33 @@ onMounted(async () => {
   gap: 8px;
 }
 
-@media (max-width: 991px) {
+@media (max-width: 1199px) {
+  .module-card {
+    margin-top: 10px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .module-card :deep(.el-card__body) {
+    padding: 0;
+  }
+
   .page-toolbar {
-    flex-direction: column;
-    align-items: stretch;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
   }
 
   .toolbar-right {
-    width: 100%;
+    width: auto;
+    margin-left: auto;
+    flex-wrap: nowrap;
   }
 
   .toolbar-right .el-button {
-    flex: 1;
+    flex: 0 0 auto;
   }
 
   .filter-item,
@@ -3095,9 +3498,23 @@ onMounted(async () => {
     gap: 4px;
   }
 
+  .filter-bar {
+    margin: 0 0 8px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .mobile-view-switch :deep(.el-select__wrapper) {
+    min-height: 44px;
+    border-radius: 12px;
+    background: #fffdf8;
+    box-shadow: 0 0 0 1px rgba(181, 145, 83, 0.28) inset;
+  }
+
   .action-row {
-    flex-direction: column;
-    align-items: stretch;
+    margin: 0;
+    padding: 0;
   }
 
   .action-create {
@@ -3107,6 +3524,120 @@ onMounted(async () => {
   .period-nav {
     width: 100%;
     justify-content: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border-color: rgba(181, 145, 83, 0.22);
+    border-radius: 14px;
+    background:
+      linear-gradient(180deg, #fffefb, #faf3e6);
+    box-shadow: 0 4px 14px rgba(88, 60, 24, 0.06);
+  }
+
+  .period-switch {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .period-switch :deep(.el-radio-group) {
+    display: flex;
+    width: 100%;
+  }
+
+  .period-switch :deep(.el-radio-button) {
+    flex: 1 1 0;
+  }
+
+  .period-switch :deep(.el-radio-button__inner) {
+    width: 100%;
+    min-height: 36px;
+    padding: 6px 10px;
+    border-radius: 10px !important;
+    font-weight: 700;
+  }
+
+  .period-switch :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+    background: linear-gradient(145deg, #c98718, #a16207) !important;
+    box-shadow: 0 3px 10px rgba(161, 98, 7, 0.28) !important;
+  }
+
+  .period-picker-trigger {
+    min-width: 0;
+    flex: 1 1 auto;
+    min-height: 36px;
+    border-radius: 10px;
+    background: rgba(255, 253, 248, 0.95);
+    border: 1px solid rgba(181, 145, 83, 0.2);
+  }
+
+  .summary-bar {
+    border-color: rgba(181, 145, 83, 0.22);
+    border-radius: 12px;
+    background: linear-gradient(90deg, #fffdf8, #faf3e6);
+  }
+
+  .summary-chip,
+  .day-count-pill {
+    border-radius: 999px;
+  }
+
+  .summary-chip {
+    border-color: #dde2e8;
+    background: #f7f8fa;
+  }
+
+  .mobile-schedule-agenda {
+    gap: 10px;
+  }
+
+  .mobile-schedule-empty {
+    border-color: #cfd5dc;
+    border-radius: 8px;
+    background: #fff;
+  }
+
+  .mobile-day-section {
+    border-color: #dde2e8;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(31, 35, 40, 0.05);
+  }
+
+  .mobile-day-section.is-today {
+    border-color: #d8bb83;
+    box-shadow: inset 3px 0 0 #a16207, 0 2px 8px rgba(31, 35, 40, 0.05);
+  }
+
+  .mobile-day-head {
+    border-bottom-color: #e1e5ea;
+    background: #f1f3f5;
+  }
+
+  .mobile-day-section.is-today .mobile-day-head {
+    background: #fff8e8;
+  }
+
+  .mobile-lesson-card {
+    border-color: #d7dde4;
+    border-left-color: #a16207;
+    border-radius: 6px;
+    background: #fff !important;
+    box-shadow: none;
+  }
+
+  .mobile-lesson-card.is-blue {
+    border-color: #bed5e9;
+    border-left-color: #3b82a0;
+    background: #f5f9fc !important;
+  }
+
+  .mobile-lesson-card.is-green {
+    border-color: #b9dcc7;
+    border-left-color: #2f855a;
+    background: #f4faf6 !important;
+  }
+
+  .mobile-lesson-actions {
+    border-top-color: #e2e6eb;
   }
 
   .summary-bar {
@@ -3116,6 +3647,18 @@ onMounted(async () => {
 
   .weekday-options {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .toolbar-right .tb-btn:first-child {
+    width: 44px;
+    min-width: 44px;
+    padding: 0;
+  }
+
+  .refresh-label {
+    display: none;
   }
 }
 </style>

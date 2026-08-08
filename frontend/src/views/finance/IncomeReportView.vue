@@ -7,16 +7,19 @@ import {
   type PendingHoursReport,
 } from '../../api/finance'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import CompactFilterBar from '../../components/CompactFilterBar.vue'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
 
 type QuickRange = 'month' | 'week' | 'lastWeek' | 'custom'
 
 const loading = ref(false)
-const { isCompact } = useBreakpoint()
+const { isApp } = useBreakpoint()
 const activeReport = ref('income')
 const quickRange = ref<QuickRange>('month')
 const customRange = ref<[string, string] | null>(null)
 const report = ref<IncomeReport | null>(null)
 const pendingReport = ref<PendingHoursReport | null>(null)
+const filterVisible = ref(false)
 
 const filters = reactive({
   start_date: '',
@@ -180,7 +183,7 @@ onMounted(() => {
     </div>
 
     <div class="report-shell">
-      <div v-if="activeReport !== 'pending'" class="report-filter">
+      <div v-if="activeReport !== 'pending' && !isApp" class="report-filter">
         <el-segmented
           v-model="quickRange"
           :options="[
@@ -203,11 +206,55 @@ onMounted(() => {
         <span class="range-text">{{ filters.start_date }} 至 {{ filters.end_date }}</span>
       </div>
 
-      <el-tabs v-model="activeReport" class="report-tabs">
-        <el-tab-pane label="确认收入报表" name="income" />
-        <el-tab-pane label="课时课消报表" name="consumption" />
-        <el-tab-pane label="课时待消报表" name="pending" />
+      <CompactFilterBar
+        v-if="isApp && activeReport !== 'pending'"
+        :summary="`${filters.start_date} 至 ${filters.end_date}`"
+        :active-count="quickRange === 'custom' ? 1 : 0"
+        @open="filterVisible = true"
+      />
+
+      <el-tabs
+        v-model="activeReport"
+        class="report-tabs"
+        :class="{ 'oc-segment-tabs': isApp }"
+      >
+        <el-tab-pane :label="isApp ? '确认收入' : '确认收入报表'" name="income" />
+        <el-tab-pane :label="isApp ? '课时课消' : '课时课消报表'" name="consumption" />
+        <el-tab-pane :label="isApp ? '课时待消' : '课时待消报表'" name="pending" />
       </el-tabs>
+
+      <MobileFilterSheet
+        v-model="filterVisible"
+        title="报表日期"
+        :active-count="quickRange === 'custom' ? 1 : 0"
+        @apply="runQuery"
+        @reset="quickRange = 'month'; customRange = null; runQuery()"
+      >
+        <el-form label-position="top">
+          <el-form-item label="快捷日期">
+            <el-segmented
+              v-model="quickRange"
+              :options="[
+                { label: '本月', value: 'month' },
+                { label: '本周', value: 'week' },
+                { label: '上周', value: 'lastWeek' },
+              ]"
+            />
+          </el-form-item>
+          <el-form-item label="自定义日期">
+            <el-date-picker
+              v-model="customRange"
+              type="daterange"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              value-format="YYYY-MM-DD"
+              class="date-range"
+              @change="quickRange = 'custom'"
+            />
+          </el-form-item>
+        </el-form>
+      </MobileFilterSheet>
 
       <template v-if="activeReport === 'income'">
         <section class="income-overview">
@@ -280,7 +327,7 @@ onMounted(() => {
           <div class="card-head compact">
             <div class="card-title">按支付方式汇总</div>
           </div>
-          <el-table v-if="!isCompact" :data="report?.by_pay_method || []" row-key="method" stripe border :header-cell-style="pcHeaderStyle">
+          <el-table v-if="!isApp" :data="report?.by_pay_method || []" row-key="method" stripe border :header-cell-style="pcHeaderStyle">
             <el-table-column prop="method" label="支付方式" min-width="140" />
             <el-table-column prop="count" label="笔数" width="100" align="center" />
             <el-table-column label="金额（元）" min-width="140" align="right">
@@ -296,11 +343,18 @@ onMounted(() => {
           </el-table>
           <div v-else class="report-card-list">
             <article v-for="row in report?.by_pay_method || []" :key="row.method" class="report-row-card">
-              <div class="report-row-head"><strong>{{ row.method }}</strong><span>{{ row.count }} 笔</span></div>
+              <div class="report-row-head"><strong>{{ row.method || '未填' }}</strong><span>{{ row.count }} 笔</span></div>
               <div class="report-row-value">{{ formatMoney(row.amount) }}</div>
-              <div class="report-row-meta">收入占比 {{ report?.total_income ? ((row.amount / report.total_income) * 100).toFixed(1) : 0 }}%</div>
+              <div class="oc-meta-chips">
+                <span class="oc-meta-chip is-gold">
+                  占比 {{ report?.total_income ? ((row.amount / report.total_income) * 100).toFixed(1) : 0 }}%
+                </span>
+              </div>
             </article>
-            <el-empty v-if="!report?.by_pay_method?.length" description="暂无支付数据" :image-size="52" />
+            <div v-if="!report?.by_pay_method?.length" class="oc-app-empty">
+              <strong>暂无支付数据</strong>
+              <em>选定日期范围内没有收款记录</em>
+            </div>
           </div>
         </el-card>
       </template>
@@ -359,7 +413,7 @@ onMounted(() => {
             <div class="card-title">按课程汇总课消</div>
           </div>
           <el-table
-            v-if="!isCompact"
+            v-if="!isApp"
             :data="report?.course_consumption?.by_course || []"
             row-key="course_name"
             stripe
@@ -389,12 +443,18 @@ onMounted(() => {
             <article v-for="row in report?.course_consumption?.by_course || []" :key="row.course_name" class="report-row-card">
               <div class="report-row-head">
                 <strong>{{ row.course_name }}</strong>
-                <el-tag v-if="row.course_type_label" size="small" effect="plain">{{ row.course_type_label }}</el-tag>
+                <el-tag v-if="row.course_type_label" size="small" effect="plain" round>{{ row.course_type_label }}</el-tag>
               </div>
               <div class="report-row-value">{{ formatMoney(row.amount) }}</div>
-              <div class="report-row-meta"><span>{{ row.count }} 次课消</span><span>{{ formatHours(row.hours) }} 课时</span></div>
+              <div class="oc-meta-chips">
+                <span class="oc-meta-chip">{{ row.count }} 次</span>
+                <span class="oc-meta-chip is-gold">{{ formatHours(row.hours) }} 课时</span>
+              </div>
             </article>
-            <el-empty v-if="!report?.course_consumption?.by_course?.length" description="暂无课程课消" :image-size="52" />
+            <div v-if="!report?.course_consumption?.by_course?.length" class="oc-app-empty">
+              <strong>暂无课程课消</strong>
+              <em>选定日期范围内没有课消汇总</em>
+            </div>
           </div>
         </el-card>
       </template>
@@ -448,7 +508,7 @@ onMounted(() => {
             </div>
           </div>
           <el-table
-            v-if="!isCompact"
+            v-if="!isApp"
             :data="pendingReport?.by_course || []"
             row-key="course_id"
             stripe
@@ -484,21 +544,25 @@ onMounted(() => {
             <article v-for="row in pendingReport?.by_course || []" :key="row.course_id" class="report-row-card">
               <div class="report-row-head">
                 <strong>{{ row.course_name }}</strong>
-                <el-tag size="small" effect="plain" :type="riskTagType(row.risk_status)">{{ riskLabel(row.risk_status) }}</el-tag>
+                <el-tag size="small" effect="plain" round :type="riskTagType(row.risk_status)">{{ riskLabel(row.risk_status) }}</el-tag>
               </div>
               <div class="report-row-value">待消 {{ formatHours(row.pending_hours) }} 课时</div>
-              <div class="report-row-meta">
-                <span>{{ row.student_count }} 名学员</span>
-                <span>已消 {{ formatHours(row.consumed_hours) }} / 总计 {{ formatHours(row.total_hours) }}</span>
-                <span>比例 {{ formatRate(row.consumption_rate) }}</span>
-                <span>估值 {{ formatMoney(row.pending_value) }}</span>
+              <div class="oc-meta-chips">
+                <span class="oc-meta-chip">{{ row.student_count }} 人</span>
+                <span class="oc-meta-chip">已消 {{ formatHours(row.consumed_hours) }}</span>
+                <span class="oc-meta-chip">总 {{ formatHours(row.total_hours) }}</span>
+                <span class="oc-meta-chip is-gold">{{ formatRate(row.consumption_rate) }}</span>
+                <span class="oc-meta-chip is-ok">{{ formatMoney(row.pending_value) }}</span>
               </div>
             </article>
-            <el-empty v-if="!pendingReport?.by_course?.length" description="暂无课程待消" :image-size="52" />
+            <div v-if="!pendingReport?.by_course?.length" class="oc-app-empty">
+              <strong>暂无课程待消</strong>
+              <em>当前没有待消课时汇总</em>
+            </div>
           </div>
         </el-card>
 
-        <div class="pending-detail-filter">
+        <div v-if="!isApp" class="pending-detail-filter">
           <el-input
             v-model="pendingFilters.keyword"
             clearable
@@ -523,12 +587,39 @@ onMounted(() => {
           <span class="range-text">共 {{ pendingDetailRows.length }} 条</span>
         </div>
 
+        <div v-else class="pending-app-filter">
+          <el-input
+            v-model="pendingFilters.keyword"
+            clearable
+            prefix-icon="Search"
+            placeholder="搜索学员 / 课程"
+            class="pending-search"
+          />
+          <div class="pending-app-filter-row">
+            <el-select v-model="pendingFilters.course_id" clearable filterable placeholder="课程">
+              <el-option
+                v-for="course in pendingReport?.by_course || []"
+                :key="course.course_id"
+                :label="course.course_name"
+                :value="course.course_id"
+              />
+            </el-select>
+            <el-select v-model="pendingFilters.risk_status" clearable placeholder="风险">
+              <el-option label="存在已过期" value="expired" />
+              <el-option label="30天内到期" value="expiring" />
+              <el-option label="正常" value="normal" />
+              <el-option label="已消完" value="consumed" />
+            </el-select>
+          </div>
+          <span class="range-text">共 {{ pendingDetailRows.length }} 条</span>
+        </div>
+
         <el-card class="module-card pc-table-card" shadow="never">
           <div class="card-head compact">
             <div class="card-title">学员待消明细</div>
           </div>
           <el-table
-            v-if="!isCompact"
+            v-if="!isApp"
             :data="pendingDetailRows"
             :row-key="pendingRowKey"
             stripe
@@ -566,18 +657,25 @@ onMounted(() => {
           <div v-else class="report-card-list">
             <article v-for="row in pendingDetailRows" :key="pendingRowKey(row)" class="report-row-card">
               <div class="report-row-head">
-                <div><strong>{{ row.student_name }}</strong><div class="report-row-sub">{{ row.student_phone || '-' }} · {{ row.student_grade || '未填年级' }}</div></div>
-                <el-tag size="small" effect="plain" :type="riskTagType(row.risk_status)">{{ riskLabel(row.risk_status) }}</el-tag>
+                <div>
+                  <strong>{{ row.student_name }}</strong>
+                  <div class="report-row-sub">{{ row.student_phone || '-' }} · {{ row.student_grade || '未填年级' }}</div>
+                </div>
+                <el-tag size="small" effect="plain" round :type="riskTagType(row.risk_status)">{{ riskLabel(row.risk_status) }}</el-tag>
               </div>
               <div class="report-row-course">{{ row.course_name }}</div>
               <div class="report-row-value">待消 {{ formatHours(row.pending_hours) }} 课时</div>
-              <div class="report-row-meta">
-                <span>已消 {{ formatHours(row.consumed_hours) }} / 总计 {{ formatHours(row.total_hours) }}</span>
-                <span>比例 {{ formatRate(row.consumption_rate) }}</span>
-                <span>到期 {{ row.valid_until || '-' }}</span>
+              <div class="oc-meta-chips">
+                <span class="oc-meta-chip">已消 {{ formatHours(row.consumed_hours) }}</span>
+                <span class="oc-meta-chip">总 {{ formatHours(row.total_hours) }}</span>
+                <span class="oc-meta-chip is-gold">{{ formatRate(row.consumption_rate) }}</span>
+                <span class="oc-meta-chip">到期 {{ row.valid_until || '-' }}</span>
               </div>
             </article>
-            <el-empty v-if="!pendingDetailRows.length" description="暂无学员待消明细" :image-size="52" />
+            <div v-if="!pendingDetailRows.length" class="oc-app-empty">
+              <strong>暂无学员待消明细</strong>
+              <em>调整搜索或风险筛选后再试</em>
+            </div>
           </div>
         </el-card>
       </template>
@@ -898,8 +996,25 @@ onMounted(() => {
   gap: 8px;
   padding: 13px 14px;
   border: 1px solid var(--oc-border, #e8e0d0);
-  border-radius: 8px;
-  background: #fff;
+  border-radius: 14px;
+  background: #fffdf8;
+  box-shadow: 0 4px 12px rgba(88, 60, 24, 0.04);
+}
+
+.pending-app-filter {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.pending-app-filter-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.pending-app-filter-row :deep(.el-select) {
+  width: 100%;
 }
 
 .report-row-head,
@@ -972,10 +1087,38 @@ onMounted(() => {
   width: 180px;
 }
 
+@media (max-width: 1199px) {
+  .report-shell {
+    margin-top: 8px;
+  }
+
+  .income-overview,
+  .module-card,
+  .stat-card {
+    border-radius: 16px;
+  }
+
+  .card-head {
+    padding: 14px 14px 0;
+  }
+
+  .report-card-list {
+    padding: 0 0 12px;
+  }
+
+  .pc-table-card :deep(.el-card__body) {
+    padding: 0 12px 12px;
+  }
+
+  .chart-card :deep(.el-card__body) {
+    padding-bottom: 4px;
+  }
+}
+
 @media (max-width: 720px) {
-  .report-filter,
   .income-overview {
     grid-template-columns: 1fr;
+    padding: 16px;
   }
 
   .date-range {
@@ -983,7 +1126,30 @@ onMounted(() => {
   }
 
   .pending-stat-cards {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stat-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 10px 0;
+  }
+
+  .stat-card {
+    min-width: 0;
+    padding: 12px 12px 12px 14px;
+  }
+
+  .stat-label {
+    min-height: auto;
+    margin-bottom: 6px;
+    font-size: 12px;
+  }
+
+  .stat-value {
+    overflow-wrap: anywhere;
+    font-size: 16px;
+    line-height: 1.25;
   }
 
   .pending-search,
@@ -997,6 +1163,7 @@ onMounted(() => {
 
   .chart-frame {
     grid-template-columns: 1fr;
+    margin: 8px 12px 14px;
   }
 
   .chart-scale {
@@ -1006,6 +1173,11 @@ onMounted(() => {
   .bar-chart {
     padding-left: 4px;
     padding-right: 4px;
+    height: 200px;
+  }
+
+  .bar-item {
+    min-width: 44px;
   }
 }
 </style>

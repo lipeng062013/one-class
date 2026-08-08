@@ -1,18 +1,35 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { createRechargeApi, listRechargesApi, type RechargeRecord } from '../../api/finance'
 import { listStudentsApi, type Student } from '../../api/students'
+import ListLoadStatus from '../../components/ListLoadStatus.vue'
 import PcPagerBar from '../../components/PcPagerBar.vue'
+import CompactFilterBar from '../../components/CompactFilterBar.vue'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useResponsiveSurface } from '../../composables/useResponsiveSurface'
+import { SCROLL_CHUNK } from '../../composables/useServerPagedList'
 
-const { isCompact } = useBreakpoint()
+const { isApp } = useBreakpoint()
+const { surface: formSurface, surfaceProps: formSurfaceProps } = useResponsiveSurface({
+  dialogWidth: '420px',
+  dialogMaxWidth: '420px',
+  compactSize: '78%',
+  modalClass: 'recharge-form-sheet',
+})
 const loading = ref(false)
+const loadingMore = ref(false)
 const keyword = ref('')
 const rows = ref<RechargeRecord[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
+const filterVisible = ref(false)
+const sentinelRef = ref<HTMLElement | null>(null)
+let scrollObserver: IntersectionObserver | null = null
+const activeFilterCount = computed(() => Number(Boolean(keyword.value.trim())))
+const hasMore = computed(() => rows.value.length < total.value)
 
 const formVisible = ref(false)
 const saving = ref(false)
@@ -44,22 +61,54 @@ function formatTime(v?: string | null) {
   }
 }
 
-async function load() {
-  loading.value = true
+async function load(options?: { append?: boolean }) {
+  const append = Boolean(options?.append && isApp.value)
+  if (isApp.value && !append) page.value = 1
+  if (append) loadingMore.value = true
+  else loading.value = true
   try {
     const res = await listRechargesApi({
       student_q: keyword.value.trim() || undefined,
       page: page.value,
-      page_size: pageSize.value,
+      page_size: isApp.value ? SCROLL_CHUNK : pageSize.value,
     })
-    rows.value = res.items
+    rows.value = append ? [...rows.value, ...res.items] : res.items
     total.value = res.total
   } catch {
-    rows.value = []
-    total.value = 0
+    if (append) page.value = Math.max(1, page.value - 1)
+    else {
+      rows.value = []
+      total.value = 0
+    }
   } finally {
     loading.value = false
+    loadingMore.value = false
   }
+}
+
+function loadMore() {
+  if (!isApp.value || loading.value || loadingMore.value || !hasMore.value) return
+  page.value += 1
+  void load({ append: true })
+}
+
+function setupScrollObserver() {
+  teardownScrollObserver()
+  if (!isApp.value) return
+  const el = sentinelRef.value
+  if (!el) return
+  scrollObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((e) => e.isIntersecting)) loadMore()
+    },
+    { root: null, rootMargin: '160px 0px', threshold: 0 },
+  )
+  scrollObserver.observe(el)
+}
+
+function teardownScrollObserver() {
+  scrollObserver?.disconnect()
+  scrollObserver = null
 }
 
 async function searchStudents(q: string) {
@@ -114,29 +163,62 @@ function runQuery() {
   void load()
 }
 
-onMounted(() => {
-  void load()
+function resetFilters() {
+  keyword.value = ''
+  runQuery()
+}
+
+watch(isApp, async () => {
+  page.value = 1
+  await load()
+  await nextTick()
+  if (isApp.value) setupScrollObserver()
+  else teardownScrollObserver()
 })
+
+watch(sentinelRef, async () => {
+  await nextTick()
+  if (isApp.value) setupScrollObserver()
+})
+
+onMounted(async () => {
+  await load()
+  await nextTick()
+  if (isApp.value) setupScrollObserver()
+})
+
+onUnmounted(() => teardownScrollObserver())
 </script>
 
 <template>
   <div class="recharge-page">
     <div class="page-toolbar">
       <el-page-header class="is-title-only" content="充值管理" />
-      <el-button type="primary" class="tb-btn tb-btn--primary" @click="openCreate">
+      <el-button v-if="!isApp" type="primary" class="tb-btn tb-btn--primary" @click="openCreate">
         <el-icon><Plus /></el-icon>
         账户充值
       </el-button>
     </div>
 
-    <el-card class="pc-filters" shadow="never">
+    <button v-if="isApp" type="button" class="oc-app-cta recharge-cta" @click="openCreate">
+      <span class="oc-app-cta__ico" aria-hidden="true">
+        <el-icon><Plus /></el-icon>
+      </span>
+      <span class="oc-app-cta__copy">
+        <strong>账户充值</strong>
+        <em>为学员账户增加余额</em>
+      </span>
+      <span class="oc-app-cta__go">去充值</span>
+    </button>
+
+    <el-card v-if="!isApp" class="pc-filters" shadow="never">
       <el-form :inline="true" class="pc-filter-form" @submit.prevent="runQuery">
         <el-form-item label="学员">
           <el-input
             v-model="keyword"
             clearable
             placeholder="姓名/手机号"
-            :style="isCompact ? 'width: 100%' : 'width: 200px'"
+            style="width: 200px"
           />
         </el-form-item>
         <el-form-item class="filter-actions">
@@ -145,9 +227,19 @@ onMounted(() => {
       </el-form>
     </el-card>
 
-    <div v-if="isCompact" v-loading="loading" class="m-card-list recharge-m">
-      <div v-if="!rows.length && !loading" class="m-card m-card-empty">暂无充值记录</div>
-      <div v-for="row in rows" :key="row.id" class="m-card">
+    <CompactFilterBar v-if="isApp" :active-count="activeFilterCount" :total="total" label="笔充值" @open="filterVisible = true" />
+    <MobileFilterSheet v-model="filterVisible" :active-count="activeFilterCount" @apply="runQuery" @reset="resetFilters">
+      <el-form label-position="top" @submit.prevent="runQuery"><el-form-item label="学员"><el-input v-model="keyword" clearable placeholder="姓名 / 手机号" /></el-form-item></el-form>
+    </MobileFilterSheet>
+
+    <div v-if="isApp" v-loading="loading" class="m-card-list recharge-m">
+      <div v-if="!rows.length && !loading" class="m-card m-card-empty oc-app-empty">
+        <span class="recharge-empty-ico" aria-hidden="true">💳</span>
+        <strong>暂无充值记录</strong>
+        <em>{{ activeFilterCount ? '当前筛选没有匹配记录，可清空条件后重试' : '点击上方「账户充值」为学员加余额' }}</em>
+        <el-button type="primary" class="tb-btn tb-btn--primary" @click="openCreate">账户充值</el-button>
+      </div>
+      <article v-for="row in rows" :key="row.id" class="m-card">
         <div class="m-card-head">
           <div class="pc-name-cell">
             <span class="pc-avatar">{{ (row.student || '?').slice(0, 1) }}</span>
@@ -158,13 +250,21 @@ onMounted(() => {
           </div>
           <span class="amt">{{ formatMoney(row.amount) }}</span>
         </div>
-        <div class="m-card-meta">
-          <span><span class="k">余额</span>{{ formatMoney(row.balance) }}</span>
-          <span><span class="k">支付</span>{{ row.pay_method || '—' }}</span>
-          <span><span class="k">经办</span>{{ row.handler || '—' }}</span>
-          <span><span class="k">时间</span>{{ formatTime(row.created_at) }}</span>
+        <div class="oc-meta-chips recharge-chips">
+          <span class="oc-meta-chip is-ok">余额 {{ formatMoney(row.balance) }}</span>
+          <span v-if="row.pay_method" class="oc-meta-chip">{{ row.pay_method }}</span>
+          <span v-if="row.handler" class="oc-meta-chip">经办 {{ row.handler }}</span>
+          <span class="oc-meta-chip">{{ formatTime(row.created_at) }}</span>
+          <span v-if="row.status" class="oc-meta-chip is-gold">{{ row.status }}</span>
         </div>
-      </div>
+      </article>
+      <div ref="sentinelRef" class="list-load-sentinel"><ListLoadStatus :has-more="hasMore"
+        :loading="loadingMore"
+        :loaded="rows.length"
+        :total="total"
+        @more="loadMore"
+        @retry="loadMore"
+      /></div>
     </div>
 
     <el-card v-else class="pc-table-card" shadow="never" v-loading="loading">
@@ -210,8 +310,13 @@ onMounted(() => {
       @change="load"
     />
 
-    <el-dialog v-model="formVisible" title="账户充值" width="420px" destroy-on-close align-center>
-      <el-form :label-position="isCompact ? 'top' : 'right'" :label-width="isCompact ? undefined : '90px'">
+    <component
+      :is="formSurface"
+      v-model="formVisible"
+      v-bind="formSurfaceProps"
+      title="账户充值"
+    >
+      <el-form :label-position="isApp ? 'top' : 'right'" :label-width="isApp ? undefined : '90px'">
         <el-form-item label="学员" required>
           <el-select
             v-model="form.student_id"
@@ -248,7 +353,7 @@ onMounted(() => {
         <el-button @click="formVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="save">确认充值</el-button>
       </template>
-    </el-dialog>
+    </component>
   </div>
 </template>
 
@@ -259,6 +364,20 @@ onMounted(() => {
 
 .recharge-m {
   margin-top: 12px;
+}
+
+.recharge-cta {
+  width: 100%;
+  margin: 4px 0 12px;
+}
+
+.recharge-chips {
+  margin-top: 10px;
+}
+
+.recharge-empty-ico {
+  font-size: 28px;
+  line-height: 1;
 }
 
 .pc-name-cell {
@@ -292,23 +411,6 @@ onMounted(() => {
   color: var(--oc-muted, #78716c);
 }
 
-.amt {
-  font-weight: 700;
-  color: var(--oc-primary, #a16207);
-}
-
-@media (max-width: 991px) {
-  .page-toolbar {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-  }
-
-  .page-toolbar .el-button {
-    width: 100%;
-  }
-}
-
 .page-toolbar {
   display: flex;
   align-items: center;
@@ -317,7 +419,17 @@ onMounted(() => {
 
 .amt {
   color: #67c23a;
-  font-weight: 650;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1199px) {
+  .page-toolbar {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
 }
 
 /* 分页样式见全局 style.css · .pager-bar.pc-pager */

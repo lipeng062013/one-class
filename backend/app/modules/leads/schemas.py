@@ -9,6 +9,12 @@ from app.core.phone import PhoneInputModel
 class LeadCreate(PhoneInputModel):
     student_or_parent_name: str
     phone: str = Field(min_length=11, max_length=11)
+    external_code: Optional[str] = None
+    school: str = ""
+    grade: str = ""
+    age: Optional[int] = Field(default=None, ge=1, le=99)
+    campus: str = ""
+    imported_creator_name: str = ""
     source: str = "other"
     referrer_name: Optional[str] = None
     channel_note: str = ""
@@ -22,6 +28,12 @@ class LeadCreate(PhoneInputModel):
 class LeadUpdate(PhoneInputModel):
     student_or_parent_name: Optional[str] = None
     phone: Optional[str] = None
+    external_code: Optional[str] = None
+    school: Optional[str] = None
+    grade: Optional[str] = None
+    age: Optional[int] = Field(default=None, ge=1, le=99)
+    campus: Optional[str] = None
+    imported_creator_name: Optional[str] = None
     source: Optional[str] = None
     referrer_name: Optional[str] = None
     channel_note: Optional[str] = None
@@ -47,6 +59,12 @@ class LeadOut(BaseModel):
     id: int
     student_or_parent_name: str
     phone: Optional[str] = None
+    external_code: Optional[str] = None
+    school: str = ""
+    grade: str = ""
+    age: Optional[int] = None
+    campus: str = ""
+    imported_creator_name: str = ""
     source: str
     referrer_name: Optional[str] = None
     channel_note: str

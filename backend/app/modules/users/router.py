@@ -32,9 +32,15 @@ _manage = require_permissions("users.manage")
 
 
 def _public(user: User) -> dict:
+    from app.core.permissions import role_default_permissions
+
     extra = parse_extra_permissions(getattr(user, "extra_permissions", None))
     if user.role == "admin":
         extra = []
+    else:
+        # 与授权弹窗一致：已并入角色自带的码不再计为「额外」
+        defaults = role_default_permissions(user.role)
+        extra = [c for c in extra if c not in defaults]
     return {
         "id": user.id,
         "username": user.username,

@@ -504,10 +504,58 @@ def test_student_detail_tabs_apis(client):
     assert "summary" in body
     assert body["summary"]["remain_hours"] >= 0
     assert len(body["courses"]) >= 1
+    course_row = body["courses"][0]
+    assert course_row["packages"]
+    package_id = course_row["packages"][0]["package_id"]
+
+    # 优先消耗
+    pri = client.patch(
+        f"/api/v1/students/{student['id']}/course-packages/{package_id}",
+        headers=admin,
+        json={"priority_consume": True},
+    )
+    assert pri.status_code == 200, pri.text
+    assert pri.json()["data"]["priority_consume"] is True
+
+    # 设置有效期
+    vu = client.patch(
+        f"/api/v1/students/{student['id']}/course-packages/{package_id}",
+        headers=admin,
+        json={"valid_until": "2099-12-31"},
+    )
+    assert vu.status_code == 200, vu.text
+    assert str(vu.json()["data"]["valid_until"]).startswith("2099-12-31")
 
     orders = client.get(f"/api/v1/students/{student['id']}/orders", headers=admin)
     assert orders.status_code == 200
     assert orders.json()["data"]["total"] >= 1
+
+    # 筛选 + 订单明细
+    filtered = client.get(
+        f"/api/v1/students/{student['id']}/orders",
+        headers=admin,
+        params={"order_type": "enroll", "item_q": course["name"]},
+    )
+    assert filtered.status_code == 200
+    assert filtered.json()["data"]["total"] >= 1
+
+    lines = client.get(f"/api/v1/students/{student['id']}/order-lines", headers=admin)
+    assert lines.status_code == 200
+    assert lines.json()["data"]["total"] >= 1
+
+    # 结课
+    closed = client.post(
+        f"/api/v1/students/{student['id']}/courses/close",
+        headers=admin,
+        json={"course_id": course["id"], "clear_remain": False},
+    )
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["data"]["closed_count"] >= 1
+
+    pkgs_after = client.get(f"/api/v1/students/{student['id']}/course-packages", headers=admin)
+    assert pkgs_after.status_code == 200
+    after_courses = pkgs_after.json()["data"]["courses"]
+    assert any(c.get("is_closed") for c in after_courses)
 
     act = client.get(f"/api/v1/students/{student['id']}/activity", headers=admin)
     assert act.status_code == 200
@@ -516,6 +564,34 @@ def test_student_detail_tabs_apis(client):
     # 老师也可读
     teacher = _teacher(client)
     assert client.get(f"/api/v1/students/{student['id']}/course-packages", headers=teacher).status_code == 200
+
+
+def test_student_package_clear_hours(client):
+    admin = _admin(client)
+    course = _create_course(client, admin, name="清零课", course_type="group", price=100)
+    student = _create_student(client, admin, name="清零学员", course=course)
+    en = client.post(
+        "/api/v1/enrollments",
+        headers=admin,
+        json={
+            "student_id": student["id"],
+            "kind": "enroll",
+            "amount": 1000,
+            "courses": [{"id": course["id"], "name": course["name"], "hours": 10, "unit_price": 100}],
+            "pay_methods": ["微信"],
+        },
+    )
+    assert en.status_code == 201, en.text
+    pkgs = client.get(f"/api/v1/students/{student['id']}/course-packages", headers=admin).json()["data"]
+    package_id = pkgs["courses"][0]["packages"][0]["package_id"]
+    cleared = client.post(
+        f"/api/v1/students/{student['id']}/course-packages/{package_id}/clear-hours",
+        headers=admin,
+        json={"remark": "测试清零"},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert float(cleared.json()["data"]["remain_hours"]) == 0
+    assert cleared.json()["data"]["status"] == "exhausted"
 
 
 def test_void_class_record_restores_package(client):

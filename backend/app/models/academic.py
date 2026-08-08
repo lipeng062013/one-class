@@ -178,7 +178,9 @@ class StudentCoursePackage(Base):
     remain_hours: Mapped[float] = mapped_column(Float, default=0.0)
     unit_price: Mapped[float] = mapped_column(Float, default=0.0)
     valid_until: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
-    # active | exhausted | refunded
+    # 优先消耗该课包（点名扣课时时排前）
+    priority_consume: Mapped[bool] = mapped_column(Boolean, default=False)
+    # active | exhausted | refunded | closed
     status: Mapped[str] = mapped_column(String(32), default="active", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)

@@ -15,21 +15,25 @@ import {
 import {
   createStudentApi,
   getStudentApi,
+  getStudentCoursePackagesApi,
   listManagersApi,
   listStudentsApi,
   type ManagerOption,
   type Student,
+  type StudentCoursePackageGroup,
+  type StudentPackageOrderRow,
 } from '../../api/students'
 import { listUsersApi, type UserRow } from '../../api/users'
 import { listAcademicTeachersApi, listCoursesApi, type Course } from '../../api/academic'
 import AppSheet from '../../components/AppSheet.vue'
 import MobileActionBar from '../../components/MobileActionBar.vue'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useAuthStore } from '../../stores/auth'
 import { sanitizePhoneInput, validateRequiredPhone } from '../../utils/phone'
 
 const auth = useAuthStore()
-const { isCompact } = useBreakpoint()
+const { isApp } = useBreakpoint()
 const route = useRoute()
 const router = useRouter()
 
@@ -37,6 +41,7 @@ const searchQ = ref('')
 const searching = ref(false)
 const searchResults = ref<Student[]>([])
 const selected = ref<Student | null>(null)
+const searchVisible = ref(false)
 let studentSuggestionRequest = 0
 const recent = ref<EnrollmentRecord[]>([])
 const recentTotal = ref(0)
@@ -61,8 +66,6 @@ const createForm = reactive({
   parent_name: '',
   academic_manager_id: undefined as number | undefined,
   notes: '',
-  /** 新建学生须关联课程 */
-  course_ids: [] as number[],
 })
 
 const gradeOptions = [
@@ -87,15 +90,6 @@ const createRules: FormRules = {
   school: [{ required: true, message: '请填写学校', trigger: 'blur' }],
   academic_manager_id: [{ required: true, message: '请选择学管师', trigger: 'change' }],
   phone: [{ required: true, validator: validateRequiredPhone, trigger: 'blur' }],
-  course_ids: [
-    {
-      type: 'array',
-      required: true,
-      min: 1,
-      message: '请至少选择一门关联课程',
-      trigger: 'change',
-    },
-  ],
 }
 
 type AttrRow = { key: string; user_id?: number; amount: number }
@@ -105,12 +99,28 @@ type PurchaseMeta = {
   price_standard: string
   discount_type: 'reduce' | 'rate'
   discount_value: number
+  /** 手动覆盖小计；null 表示按 总价-优惠 自动计算 */
+  subtotal_override: number | null
+}
+
+type TransferOutRow = {
+  package_id: number
+  order_no: string
+  unit_price: number
+  remain_hours: number
+  purchase_hours: number
+  gift_hours: number
+  transfer_hours: number
+  transfer_gift_hours: number
+  fee: number
+  /** 手动覆盖转出金额；null 表示按单价×转出购买课时 */
+  transfer_amount_override: number | null
 }
 
 const enrollForm = reactive({
   kind: 'enroll' as EnrollmentKind,
   handled_at: '' as string,
-  /** 选中的课程 id 列表（多选） */
+  /** 选中的课程 id 列表（多选）— 报名/续费/转入 */
   course_ids: [] as number[],
   course_details: {} as Record<number, PurchaseMeta>,
   /** 支付方式多选 */
@@ -120,7 +130,31 @@ const enrollForm = reactive({
   attributions: [] as AttrRow[],
   internal_notes: '',
   external_notes: '',
+  /** 转课：course=转给其他课程；student=转课给其他学员 */
+  transfer_mode: 'course' as 'course' | 'student',
+  transfer_out_course_id: undefined as number | undefined,
 })
+const expandedPurchaseId = ref<number | null>(null)
+const studentPackages = ref<StudentCoursePackageGroup[]>([])
+const packagesLoading = ref(false)
+const transferOutRows = ref<TransferOutRow[]>([])
+/** 转课给其他学员时的目标学员 */
+const transferToStudent = ref<Student | null>(null)
+const transferToSearchQ = ref('')
+const transferToSearching = ref(false)
+const transferToResults = ref<Student[]>([])
+let transferToSuggestionRequest = 0
+
+const isTransfer = computed(() => enrollForm.kind === 'transfer')
+const isTransferToStudent = computed(
+  () => isTransfer.value && enrollForm.transfer_mode === 'student',
+)
+
+const transferOutCourseOptions = computed(() =>
+  studentPackages.value.filter(
+    (c) => c.course_id && !c.is_closed && Number(c.remain_hours || 0) > 0,
+  ),
+)
 
 const selectedCourses = computed(() =>
   courseOptions.value.filter((c) => enrollForm.course_ids.includes(c.id)),
@@ -133,22 +167,48 @@ const purchaseRows = computed(() =>
       detail.discount_type === 'rate'
         ? total * (1 - Math.min(10, Math.max(0, Number(detail.discount_value || 0))) / 10)
         : Math.min(total, Math.max(0, Number(detail.discount_value || 0)))
+    const autoSubtotal = Math.max(0, total - discount)
+    const subtotal =
+      detail.subtotal_override != null && Number.isFinite(detail.subtotal_override)
+        ? Math.max(0, Number(detail.subtotal_override))
+        : autoSubtotal
     return {
       course,
       detail,
       total,
       discount,
-      subtotal: Math.max(0, total - discount),
+      autoSubtotal,
+      subtotal,
+      subtotalEdited:
+        detail.subtotal_override != null &&
+        Number.isFinite(detail.subtotal_override) &&
+        Math.abs(Number(detail.subtotal_override) - autoSubtotal) >= 0.01,
     }
   }),
 )
-const createSelectedCourses = computed(() =>
-  courseOptions.value.filter((c) => createForm.course_ids.includes(c.id)),
-)
 const showPayOther = computed(() => enrollForm.pay_methods.includes('其他'))
-const receivableTotal = computed(() =>
+
+const transferOutTotal = computed(() =>
+  transferOutRows.value.reduce((sum, row) => {
+    if (row.transfer_amount_override != null && Number.isFinite(row.transfer_amount_override)) {
+      return sum + Math.max(0, Number(row.transfer_amount_override))
+    }
+    return sum + Math.max(0, Number(row.unit_price || 0) * Number(row.transfer_hours || 0))
+  }, 0),
+)
+const transferFeeTotal = computed(() =>
+  transferOutRows.value.reduce((sum, row) => sum + Math.max(0, Number(row.fee || 0)), 0),
+)
+const transferInTotal = computed(() =>
   purchaseRows.value.reduce((sum, row) => sum + row.subtotal, 0),
 )
+/** 报名/续费=购买合计；转课=max(0, 转入-转出+手续费) */
+const receivableTotal = computed(() => {
+  if (!isTransfer.value) {
+    return purchaseRows.value.reduce((sum, row) => sum + row.subtotal, 0)
+  }
+  return Math.max(0, transferInTotal.value - transferOutTotal.value + transferFeeTotal.value)
+})
 const receivedTotal = computed(() =>
   enrollForm.pay_methods.reduce(
     (sum, method) => sum + Number(enrollForm.pay_amounts[method] || 0),
@@ -165,6 +225,7 @@ const submitting = ref(false)
 const kindLabels: Record<string, string> = {
   enroll: '报名',
   renew: '续费',
+  transfer: '转课',
 }
 
 const statusLabels: Record<string, string> = {
@@ -184,15 +245,67 @@ const attributionComplete = computed(
     Math.abs(attrTotal.value - receivableTotal.value) < 0.01,
 )
 
-const canSubmit = computed(
-  () =>
-    !!selected.value &&
-    enrollForm.course_ids.length > 0 &&
-    enrollForm.pay_methods.length > 0 &&
-    receivedTotal.value <= receivableTotal.value &&
-    attributionComplete.value &&
-    (!showPayOther.value || !!enrollForm.pay_other.trim()),
+const transferOutValid = computed(() => {
+  if (!isTransfer.value) return true
+  if (!enrollForm.transfer_out_course_id) return false
+  const active = transferOutRows.value.filter(
+    (r) => Number(r.transfer_hours) > 0 || Number(r.transfer_gift_hours) > 0,
+  )
+  if (!active.length) return false
+  return active.every((r) => {
+    const take = Number(r.transfer_hours || 0) + Number(r.transfer_gift_hours || 0)
+    return take > 0 && take <= Number(r.remain_hours || 0) + 1e-9
+  })
+})
+
+const transferOutHoursTotal = computed(() =>
+  transferOutRows.value.reduce(
+    (sum, r) => sum + Number(r.transfer_hours || 0) + Number(r.transfer_gift_hours || 0),
+    0,
+  ),
 )
+
+/** 报名/续费：有应收时必须实收 > 0，禁止零支付提交 */
+const enrollRenewRequiresPayment = computed(
+  () => !isTransfer.value && receivableTotal.value > 0,
+)
+
+const canSubmit = computed(() => {
+  if (!selected.value) return false
+  if (enrollForm.course_ids.length <= 0) return false
+  if (isTransfer.value && !transferOutValid.value) return false
+  if (isTransferToStudent.value) {
+    if (!transferToStudent.value) return false
+    if (transferToStudent.value.id === selected.value.id) return false
+  }
+  if (receivableTotal.value > 0 && enrollForm.pay_methods.length <= 0) return false
+  if (enrollRenewRequiresPayment.value && receivedTotal.value <= 0) return false
+  if (receivedTotal.value > receivableTotal.value) return false
+  if (!attributionComplete.value) return false
+  if (showPayOther.value && !enrollForm.pay_other.trim()) return false
+  return true
+})
+
+/** App 步骤：选学员 → 填内容 → 可提交 */
+const enrollStep = computed(() => {
+  if (!selected.value) return 1
+  if (!canSubmit.value) return 2
+  return 3
+})
+
+const confirmCourseLabel = computed(() => {
+  const names = purchaseRows.value.map((r) => r.course.name).filter(Boolean)
+  if (!names.length) return isTransfer.value ? '未选转入课程' : '未选课程'
+  if (names.length <= 2) return names.join('、')
+  return `${names.slice(0, 2).join('、')} 等${names.length}门`
+})
+
+const confirmPayLabel = computed(() => {
+  if (!enrollForm.pay_methods.length) {
+    return receivableTotal.value > 0 ? '未选支付方式' : '无需收款'
+  }
+  return enrollForm.pay_methods.join('、') + (showPayOther.value && enrollForm.pay_other ? `（${enrollForm.pay_other}）` : '')
+})
 
 function todayStr() {
   const d = new Date()
@@ -208,7 +321,31 @@ function defaultPurchaseMeta(course?: Course): PurchaseMeta {
     price_standard: course?.price_label || '单价',
     discount_type: 'reduce',
     discount_value: 0,
+    subtotal_override: null,
   }
+}
+
+/** 清除手动小计，恢复按课时/优惠自动计算 */
+function clearSubtotalOverride(detail: PurchaseMeta) {
+  detail.subtotal_override = null
+}
+
+/**
+ * 学管/负责人直接改行小计。
+ * 不联动直减/折扣；改优惠时会 clearSubtotalOverride 再按总价-优惠重算小计。
+ */
+function setPurchaseSubtotal(courseId: number, _catalogTotal: number, value: number | string | undefined) {
+  const detail = enrollForm.course_details[courseId]
+  if (!detail) return
+  const raw = typeof value === 'string' ? value.trim() : value
+  const num = raw === '' || raw == null ? 0 : Number(raw)
+  const v = Number.isFinite(num) ? Math.max(0, Math.round(num * 100) / 100) : 0
+  detail.subtotal_override = v
+}
+
+function onSubtotalBlur(courseId: number, catalogTotal: number, event: Event) {
+  const target = event.target as HTMLInputElement | null
+  setPurchaseSubtotal(courseId, catalogTotal, target?.value)
 }
 
 function syncCourseDetails() {
@@ -225,8 +362,18 @@ function removePurchase(courseId: number) {
   enrollForm.course_ids = enrollForm.course_ids.filter((id) => id !== courseId)
 }
 
+function togglePurchaseCard(courseId: number) {
+  expandedPurchaseId.value = expandedPurchaseId.value === courseId ? null : courseId
+}
+
 function onDiscountTypeChange(detail: PurchaseMeta) {
+  clearSubtotalOverride(detail)
   detail.discount_value = detail.discount_type === 'rate' ? 10 : 0
+}
+
+function onDiscountValueChange(detail: PurchaseMeta) {
+  // 改优惠后以优惠为准，取消手动小计
+  clearSubtotalOverride(detail)
 }
 
 function normalizePurchaseNumber(detail: PurchaseMeta, key: 'hours' | 'gift_hours') {
@@ -235,12 +382,14 @@ function normalizePurchaseNumber(detail: PurchaseMeta, key: 'hours' | 'gift_hour
   detail[key] = Number.isFinite(value)
     ? Math.max(min, Math.round(value * 100) / 100)
     : min
+  clearSubtotalOverride(detail)
 }
 
 function changePurchaseHours(detail: PurchaseMeta, key: 'hours' | 'gift_hours', delta: -0.25 | 0.25) {
   normalizePurchaseNumber(detail, key)
   const min = key === 'hours' ? 0.01 : 0
   detail[key] = Math.max(min, Math.round((detail[key] + delta) * 100) / 100)
+  clearSubtotalOverride(detail)
 }
 
 function resetEnrollForm() {
@@ -254,23 +403,154 @@ function resetEnrollForm() {
   enrollForm.attributions = []
   enrollForm.internal_notes = ''
   enrollForm.external_notes = ''
+  enrollForm.transfer_mode = 'course'
+  enrollForm.transfer_out_course_id = undefined
+  transferOutRows.value = []
+  transferToStudent.value = null
+  transferToSearchQ.value = ''
+  transferToResults.value = []
+  expandedPurchaseId.value = null
   revokePreviews()
   imagePaths.value = []
   imagePreviews.value = []
 }
 
-function mapLinkedCourseIds(student: Student): number[] {
-  const links = student.linked_courses || []
-  const ids: number[] = []
-  for (const c of links) {
-    if (c.id != null && courseOptions.value.some((o) => o.id === c.id)) {
-      ids.push(c.id)
-    } else {
-      const hit = courseOptions.value.find((o) => o.name === c.name)
-      if (hit) ids.push(hit.id)
-    }
+/** 转课给其他学员时：按转出课时自动带入同课程作为转入（可改） */
+function suggestTransferInFromOut() {
+  if (!isTransferToStudent.value) return
+  const outId = enrollForm.transfer_out_course_id
+  if (!outId) return
+  const course = courseOptions.value.find((c) => c.id === outId)
+  if (!course) return
+  const hours = Math.max(0.01, Math.round(transferOutHoursTotal.value * 100) / 100)
+  if (!enrollForm.course_ids.includes(outId)) {
+    enrollForm.course_ids = [outId]
   }
-  return [...new Set(ids)]
+  syncCourseDetails()
+  const detail = enrollForm.course_details[outId] || defaultPurchaseMeta(course)
+  detail.hours = hours
+  detail.gift_hours = 0
+  detail.discount_type = 'reduce'
+  // 按转出金额对齐小计，避免同课转学员时出现虚假补差
+  const outAmt = Math.round(transferOutTotal.value * 100) / 100
+  const catalogTotal = hours * Number(course.unit_price || 0)
+  detail.subtotal_override = outAmt
+  detail.discount_value = Math.max(0, Math.round((catalogTotal - outAmt) * 100) / 100)
+  enrollForm.course_details[outId] = detail
+}
+
+function packageToTransferRow(pkg: StudentPackageOrderRow): TransferOutRow {
+  const remain = Number(pkg.remain_hours || 0)
+  return {
+    package_id: pkg.package_id,
+    order_no: pkg.order_no,
+    unit_price: Number(pkg.unit_price || 0),
+    remain_hours: remain,
+    purchase_hours: Number(pkg.purchase_hours || 0),
+    gift_hours: Number(pkg.gift_hours || 0),
+    transfer_hours: remain > 0 ? remain : 0,
+    transfer_gift_hours: 0,
+    fee: 0,
+    transfer_amount_override: null,
+  }
+}
+
+function transferLineAmount(row: TransferOutRow) {
+  if (row.transfer_amount_override != null && Number.isFinite(row.transfer_amount_override)) {
+    return Math.max(0, Number(row.transfer_amount_override))
+  }
+  return Math.max(0, Number(row.unit_price || 0) * Number(row.transfer_hours || 0))
+}
+
+function rebuildTransferOutRows(courseId?: number) {
+  const cid = courseId ?? enrollForm.transfer_out_course_id
+  if (!cid) {
+    transferOutRows.value = []
+    return
+  }
+  const group = studentPackages.value.find((c) => c.course_id === cid)
+  const pkgs = (group?.packages || []).filter(
+    (p) => p.status === 'active' && Number(p.remain_hours || 0) > 0,
+  )
+  transferOutRows.value = pkgs.map(packageToTransferRow)
+}
+
+async function loadStudentPackages(studentId: number) {
+  packagesLoading.value = true
+  try {
+    const res = await getStudentCoursePackagesApi(studentId)
+    studentPackages.value = res.courses || []
+  } catch {
+    studentPackages.value = []
+  } finally {
+    packagesLoading.value = false
+  }
+}
+
+async function queryTransferToSuggestions(
+  query: string,
+  callback: (items: Array<Student & { value: string; label: string }>) => void,
+) {
+  const keyword = query.trim()
+  if (!keyword) {
+    transferToSuggestionRequest += 1
+    callback([])
+    return
+  }
+  const request = ++transferToSuggestionRequest
+  const page = await listStudentsApi({ q: keyword, page: 1, page_size: 20 }).catch(() => ({
+    items: [] as Student[],
+  }))
+  if (request !== transferToSuggestionRequest) return
+  const sourceId = selected.value?.id
+  callback(
+    page.items
+      .filter((s) => s.id !== sourceId && studentMatchesSearch(s, keyword))
+      .map((s) => ({
+        ...s,
+        value: `${s.name}${s.phone ? ` · ${s.phone}` : ''}`,
+        label: `${s.name}${s.phone ? ` · ${s.phone}` : ''}`,
+      })),
+  )
+}
+
+function pickTransferToStudent(s: Student) {
+  if (selected.value && s.id === selected.value.id) {
+    ElMessage.warning('转入学员不能与转出学员相同')
+    return
+  }
+  transferToStudent.value = s
+  transferToSearchQ.value = ''
+  transferToResults.value = []
+  suggestTransferInFromOut()
+}
+
+function clearTransferToStudent() {
+  transferToStudent.value = null
+  transferToSearchQ.value = ''
+  transferToResults.value = []
+}
+
+async function runTransferToSearch() {
+  const q = transferToSearchQ.value.trim()
+  if (!q) {
+    transferToResults.value = []
+    ElMessage.warning('请输入转入学员姓名或手机号')
+    return
+  }
+  transferToSearching.value = true
+  try {
+    const page = await listStudentsApi({ q, page: 1, page_size: 20 })
+    const sourceId = selected.value?.id
+    transferToResults.value = page.items.filter(
+      (s) => s.id !== sourceId && studentMatchesSearch(s, q),
+    )
+    if (!transferToResults.value.length) {
+      ElMessage.info('未找到可转入的学员')
+    }
+  } finally {
+    transferToSearching.value = false
+  }
 }
 
 function revokePreviews() {
@@ -408,12 +688,18 @@ async function queryStudentSuggestions(
 }
 
 function pickStudentSuggestion(item: Student & { value: string; label: string }) {
-  pickStudent(item)
+  void pickStudent(item)
 }
 
-function pickStudent(
+async function pickStudent(
   s: Student,
-  opts?: { preferEnroll?: boolean; kind?: EnrollmentKind; courseIds?: number[] },
+  opts?: {
+    preferEnroll?: boolean
+    kind?: EnrollmentKind
+    courseIds?: number[]
+    /** 转课：预填转出课程 */
+    transferOutCourseId?: number
+  },
 ) {
   selected.value = s
   searchResults.value = []
@@ -427,11 +713,24 @@ function pickStudent(
   } else {
     enrollForm.kind = 'renew'
   }
-  const fromOpt = opts?.courseIds !== undefined ? opts.courseIds : mapLinkedCourseIds(s)
-  if (fromOpt.length) {
-    enrollForm.course_ids = [...fromOpt]
+
+  if (enrollForm.kind === 'transfer') {
+    await loadStudentPackages(s.id)
+    const outId =
+      opts?.transferOutCourseId &&
+      transferOutCourseOptions.value.some((c) => c.course_id === opts.transferOutCourseId)
+        ? opts.transferOutCourseId
+        : transferOutCourseOptions.value[0]?.course_id || undefined
+    enrollForm.transfer_out_course_id = outId
+    rebuildTransferOutRows(outId)
+    // 转入课程由经办人选择，不预填转出课
+    enrollForm.course_ids = []
+  } else if (opts?.courseIds?.length) {
+    // 仅路由显式传入 course_id 时预填（如从学员详情跳转续某门课）
+    enrollForm.course_ids = [...opts.courseIds]
     syncCourseDetails()
   }
+
   enrollForm.attributions = [
     {
       key: `${Date.now()}-default`,
@@ -444,6 +743,11 @@ function pickStudent(
 function routeQueryValues(value: unknown): string[] {
   const values = Array.isArray(value) ? value : [value]
   return values.flatMap((item) => (typeof item === 'string' && item.trim() ? [item.trim()] : []))
+}
+
+function parseKind(value?: string): EnrollmentKind {
+  if (value === 'enroll' || value === 'renew' || value === 'transfer') return value
+  return 'renew'
 }
 
 async function applyRoutePrefill() {
@@ -462,9 +766,21 @@ async function applyRoutePrefill() {
     courseOptions.value.some((course) => course.id === id),
   )
   const [kindValue] = routeQueryValues(route.query.kind)
+  const kind = parseKind(kindValue)
 
-  pickStudent(student, {
-    kind: kindValue === 'enroll' ? 'enroll' : 'renew',
+  if (kind === 'transfer') {
+    await pickStudent(student, {
+      kind: 'transfer',
+      transferOutCourseId: requestedCourseIds[0],
+    })
+    if (requestedCourseIds.length && !enrollForm.transfer_out_course_id) {
+      ElMessage.warning('该课程无可转出课时，请另选转出课程')
+    }
+    return
+  }
+
+  await pickStudent(student, {
+    kind: kind === 'enroll' ? 'enroll' : 'renew',
     courseIds: courseQueryPresent ? availableCourseIds : undefined,
   })
 
@@ -484,7 +800,6 @@ async function openCreateDrawer() {
   createForm.academic_manager_id =
     auth.isCR && auth.user?.id ? auth.user.id : undefined
   createForm.notes = ''
-  createForm.course_ids = []
   await loadManagers()
   createDrawer.value = true
 }
@@ -492,20 +807,8 @@ async function openCreateDrawer() {
 async function submitCreateStudent() {
   const ok = await createFormRef.value?.validate().catch(() => false)
   if (!ok) return
-  if (!createForm.course_ids.length) {
-    ElMessage.warning('请至少选择一门关联课程')
-    return
-  }
   createSaving.value = true
   try {
-    const courses = createSelectedCourses.value.map((c) => ({
-      id: c.id,
-      name: c.name,
-      type: c.type_label,
-      price_label: c.price_label,
-      unit_price: c.unit_price,
-      hours: 10,
-    }))
     const student = await createStudentApi({
       name: createForm.name.trim(),
       grade: createForm.grade,
@@ -515,15 +818,11 @@ async function submitCreateStudent() {
       academic_manager_id: createForm.academic_manager_id ?? null,
       status: 'active',
       notes: createForm.notes.trim(),
-      courses,
     })
-    ElMessage.success('学生已创建')
+    ElMessage.success('学生已创建，请选择课程完成报名')
     createDrawer.value = false
-    // 新建后进入报名，并带上刚选的课程
-    pickStudent(student, {
-      preferEnroll: true,
-      courseIds: [...createForm.course_ids],
-    })
+    // 新建后进入报名表单，课程由经办人当场选择（不预填）
+    await pickStudent(student, { preferEnroll: true })
   } catch {
     /* interceptor */
   } finally {
@@ -618,11 +917,35 @@ async function submitEnrollment() {
     return
   }
   if (!enrollForm.course_ids.length) {
-    ElMessage.warning('请选择关联课程')
+    ElMessage.warning(isTransfer.value ? '请选择转入课程' : '请选择关联课程')
     return
   }
-  if (!enrollForm.pay_methods.length) {
+  if (isTransfer.value) {
+    if (!enrollForm.transfer_out_course_id) {
+      ElMessage.warning('请选择转出课程')
+      return
+    }
+    if (!transferOutValid.value) {
+      ElMessage.warning('请填写有效的转出课时')
+      return
+    }
+    if (isTransferToStudent.value) {
+      if (!transferToStudent.value) {
+        ElMessage.warning('请选择转入学员')
+        return
+      }
+      if (transferToStudent.value.id === selected.value.id) {
+        ElMessage.warning('转入学员不能与转出学员相同')
+        return
+      }
+    }
+  }
+  if (receivableTotal.value > 0 && !enrollForm.pay_methods.length) {
     ElMessage.warning('请选择支付方式')
+    return
+  }
+  if (!isTransfer.value && receivableTotal.value > 0 && receivedTotal.value <= 0) {
+    ElMessage.warning('报名/续费须填写实收金额，不能零支付提交')
     return
   }
   if (receivedTotal.value > receivableTotal.value) {
@@ -648,20 +971,68 @@ async function submitEnrollment() {
   }
   submitting.value = true
   try {
-    const courses = purchaseRows.value.map(({ course, detail, discount, subtotal }) => ({
-      id: course.id,
-      name: course.name,
-      type: course.type_label,
-      price_label: course.price_label,
-      unit_price: course.unit_price,
-      hours: detail.hours,
-      gift_hours: detail.gift_hours,
-      price_standard: detail.price_standard,
-      discount_type: detail.discount_type,
-      discount_value: detail.discount_value,
-      discount,
-      subtotal,
-    }))
+    const outAvgUnit = (() => {
+      const rows = transferOutRows.value.filter(
+        (r) => Number(r.transfer_hours) > 0 || Number(r.transfer_gift_hours) > 0,
+      )
+      if (!rows.length) return 0
+      return rows.reduce((s, r) => s + Number(r.unit_price || 0), 0) / rows.length
+    })()
+    const courses = purchaseRows.value.map(({ course, detail, discount, subtotal, total }) => {
+      let unitPrice = Number(course.unit_price || 0)
+      let lineSubtotal = subtotal
+      let lineDiscount = discount
+      let catalogTotal = total
+      // 转给其他学员且同课程：优先用转出课包单价，保证等量转移无虚假差额
+      if (
+        isTransferToStudent.value &&
+        course.id === enrollForm.transfer_out_course_id &&
+        outAvgUnit > 0 &&
+        detail.subtotal_override == null
+      ) {
+        unitPrice = outAvgUnit
+        catalogTotal = Number(detail.hours || 0) * unitPrice
+        lineDiscount =
+          detail.discount_type === 'rate'
+            ? catalogTotal * (1 - Math.min(10, Math.max(0, Number(detail.discount_value || 0))) / 10)
+            : Math.min(catalogTotal, Math.max(0, Number(detail.discount_value || 0)))
+        lineSubtotal = Math.max(0, catalogTotal - lineDiscount)
+      }
+      // 手动小计优先，不改写直减/折扣；高于目录价时仅反推课包单价
+      if (detail.subtotal_override != null && Number.isFinite(detail.subtotal_override)) {
+        lineSubtotal = Math.max(0, Number(detail.subtotal_override))
+        if (lineSubtotal > catalogTotal + 0.009 && Number(detail.hours || 0) > 0) {
+          unitPrice = lineSubtotal / Number(detail.hours)
+        }
+      }
+      return {
+        id: course.id,
+        name: course.name,
+        type: course.type_label,
+        price_label: course.price_label,
+        unit_price: unitPrice,
+        hours: detail.hours,
+        gift_hours: detail.gift_hours,
+        price_standard: detail.price_standard,
+        discount_type: detail.discount_type,
+        discount_value: detail.discount_value,
+        discount: lineDiscount,
+        subtotal: lineSubtotal,
+      }
+    })
+    const transferOutItems = isTransfer.value
+      ? transferOutRows.value
+          .filter(
+            (r) => Number(r.transfer_hours) > 0 || Number(r.transfer_gift_hours) > 0,
+          )
+          .map((r) => ({
+            package_id: r.package_id,
+            transfer_hours: Number(r.transfer_hours || 0),
+            transfer_gift_hours: Number(r.transfer_gift_hours || 0),
+            fee: Number(r.fee || 0),
+            transfer_amount: transferLineAmount(r),
+          }))
+      : undefined
     const record = await createEnrollmentApi({
       student_id: selected.value.id,
       kind: enrollForm.kind,
@@ -682,18 +1053,32 @@ async function submitEnrollment() {
       internal_notes: enrollForm.internal_notes.trim(),
       external_notes: enrollForm.external_notes.trim(),
       internal_images: [...imagePaths.value],
+      transfer_mode: isTransfer.value ? enrollForm.transfer_mode : undefined,
+      transfer_out_course_id: isTransfer.value ? enrollForm.transfer_out_course_id : undefined,
+      transfer_out_items: transferOutItems,
+      transfer_to_student_id:
+        isTransferToStudent.value && transferToStudent.value
+          ? transferToStudent.value.id
+          : undefined,
     })
     const orderNo = record.order_no || ''
     lastOrderNo.value = orderNo
     lastOrderId.value = record.order_id || null
+    const kindLabel = kindLabels[enrollForm.kind] || '登记'
+    const toHint =
+      isTransferToStudent.value && transferToStudent.value
+        ? `，已转入「${transferToStudent.value.name}」`
+        : ''
+    const allocHint =
+      enrollForm.kind === 'enroll' ? '；线索转入学员将通知负责人分配学管' : ''
     ElMessage.success(
       orderNo
-        ? `${enrollForm.kind === 'enroll' ? '报名' : '续费'}已登记，订单号 ${orderNo}`
-        : enrollForm.kind === 'enroll'
-          ? '报名已登记'
-          : '续费已登记',
+        ? `${kindLabel}已登记，订单号 ${orderNo}${toHint}${allocHint}`
+        : `${kindLabel}已登记${toHint}${allocHint}`,
     )
     clearSelected()
+    studentPackages.value = []
+    transferToStudent.value = null
     await loadRecent()
   } catch {
     /* interceptor */
@@ -731,8 +1116,69 @@ function staffLabel(u: UserRow) {
   return `${u.display_name || u.username}（${role}）`
 }
 
-watch(() => [...enrollForm.course_ids], syncCourseDetails)
+watch(
+  () => [...enrollForm.course_ids],
+  (ids, previousIds = []) => {
+    syncCourseDetails()
+    const addedId = ids.find((id) => !previousIds.includes(id))
+    if (addedId != null) {
+      expandedPurchaseId.value = addedId
+    } else if (expandedPurchaseId.value != null && !ids.includes(expandedPurchaseId.value)) {
+      expandedPurchaseId.value = ids.at(-1) ?? null
+    }
+  },
+)
 watch(receivableTotal, () => distributeAttributions())
+
+watch(
+  () => enrollForm.kind,
+  async (kind, prev) => {
+    if (kind === prev) return
+    if (kind === 'transfer' && selected.value) {
+      enrollForm.course_ids = []
+      await loadStudentPackages(selected.value.id)
+      if (
+        !enrollForm.transfer_out_course_id ||
+        !transferOutCourseOptions.value.some((c) => c.course_id === enrollForm.transfer_out_course_id)
+      ) {
+        enrollForm.transfer_out_course_id = transferOutCourseOptions.value[0]?.course_id ?? undefined
+      }
+      rebuildTransferOutRows()
+    } else if (prev === 'transfer') {
+      enrollForm.transfer_out_course_id = undefined
+      transferOutRows.value = []
+    }
+  },
+)
+
+watch(
+  () => enrollForm.transfer_out_course_id,
+  (cid) => {
+    if (isTransfer.value) {
+      rebuildTransferOutRows(cid)
+      if (isTransferToStudent.value) suggestTransferInFromOut()
+    }
+  },
+)
+
+watch(
+  () => enrollForm.transfer_mode,
+  (mode) => {
+    if (mode !== 'student') {
+      transferToStudent.value = null
+      transferToSearchQ.value = ''
+      transferToResults.value = []
+    } else {
+      suggestTransferInFromOut()
+    }
+  },
+)
+
+watch(transferOutHoursTotal, () => {
+  if (isTransferToStudent.value && enrollForm.course_ids.length <= 1) {
+    suggestTransferInFromOut()
+  }
+})
 
 onMounted(async () => {
   resetEnrollForm()
@@ -747,13 +1193,37 @@ onUnmounted(() => {
 
 <template>
   <div class="enroll-page oc-page-shell">
-    <div class="page-toolbar">
-      <el-page-header class="is-title-only" content="报名 / 续费" />
-      <p class="page-desc">搜索在读学员办理报名或续费；新学员可先「新建学生」建档并关联课程。</p>
+    <div v-if="!isApp" class="page-toolbar">
+      <el-page-header class="is-title-only" :content="isTransfer ? '转课' : '报名 / 续费'" />
+      <p class="page-desc">
+        {{
+          isTransfer
+            ? '选择学员后，指定转出课包课时并选择转入课程，确认差额收款完成转课。'
+            : '搜索在读学员办理报名或续费；新学员可先「新建学生」建档，再选择课程完成登记。'
+        }}
+      </p>
     </div>
 
+    <!-- App 步骤指示 -->
+    <nav v-if="isApp" class="enroll-steps" aria-label="办理步骤">
+      <div class="enroll-step" :class="{ 'is-active': enrollStep === 1, 'is-done': enrollStep > 1 }">
+        <span class="enroll-step__n">1</span>
+        <span class="enroll-step__t">选学员</span>
+      </div>
+      <span class="enroll-step__line" :class="{ 'is-on': enrollStep > 1 }" />
+      <div class="enroll-step" :class="{ 'is-active': enrollStep === 2, 'is-done': enrollStep > 2 }">
+        <span class="enroll-step__n">2</span>
+        <span class="enroll-step__t">填内容</span>
+      </div>
+      <span class="enroll-step__line" :class="{ 'is-on': enrollStep > 2 }" />
+      <div class="enroll-step" :class="{ 'is-active': enrollStep === 3, 'is-done': enrollStep >= 3 }">
+        <span class="enroll-step__n">3</span>
+        <span class="enroll-step__t">确认提交</span>
+      </div>
+    </nav>
+
     <!-- 搜索条 -->
-    <section class="search-bar panel">
+    <section v-if="!isApp" class="search-bar panel">
       <div class="search-row">
         <el-autocomplete
           v-model="searchQ"
@@ -815,6 +1285,71 @@ onUnmounted(() => {
       </div>
     </section>
 
+    <section v-if="isApp" class="student-picker" :class="{ 'has-student': selected }">
+      <button type="button" class="student-picker-main" @click="searchVisible = true">
+        <span class="student-picker-icon" aria-hidden="true">
+          <span v-if="selected">{{ (selected.name || '?').slice(0, 1) }}</span>
+          <el-icon v-else><Search /></el-icon>
+        </span>
+        <span class="student-picker-copy">
+          <span class="student-picker-label">办理学员</span>
+          <strong>{{ selected ? selected.name : '选择学员' }}</strong>
+          <span class="student-picker-meta">
+            <template v-if="selected">
+              {{ selected.grade || '未填年级' }}<template v-if="selected.phone"> · {{ selected.phone }}</template>
+            </template>
+            <template v-else>按姓名或手机号查找在册学员</template>
+          </span>
+        </span>
+        <span class="student-picker-action">
+          {{ selected ? '更换' : '选择' }}
+          <el-icon><ArrowRight /></el-icon>
+        </span>
+      </button>
+      <button v-if="!selected" type="button" class="student-create-action" @click="openCreateDrawer">
+        <el-icon><Plus /></el-icon>
+        新建学员
+      </button>
+    </section>
+    <MobileFilterSheet
+      v-model="searchVisible"
+      title="选择办理学员"
+      apply-text="显示匹配学员"
+      reset-text="清空"
+      compact-size="420px"
+      :active-count="Number(Boolean(searchQ.trim()))"
+      @apply="runSearch"
+      @reset="searchQ = ''; searchResults = []"
+    >
+      <el-form label-position="top" @submit.prevent="runSearch">
+        <el-form-item label="姓名或手机号">
+          <el-autocomplete
+            v-model="searchQ"
+            clearable
+            placeholder="输入学员姓名 / 手机号"
+            value-key="label"
+            :fetch-suggestions="queryStudentSuggestions"
+            :trigger-on-focus="false"
+            popper-class="student-search-popper"
+            @select="pickStudentSuggestion"
+          />
+        </el-form-item>
+      </el-form>
+    </MobileFilterSheet>
+    <section v-if="isApp && searchResults.length" class="compact-search-results">
+      <div class="compact-search-title">搜索结果 · {{ searchResults.length }} 位</div>
+      <div class="search-hits compact-search-hits">
+        <button v-for="s in searchResults" :key="s.id" type="button" class="hit-card" @click="pickStudent(s)">
+          <span class="hit-avatar">{{ (s.name || '?').slice(0, 1) }}</span>
+          <span class="hit-main">
+            <span class="hit-name">{{ s.name }}</span>
+            <span class="hit-meta">{{ s.grade || '未填年级' }}<template v-if="s.phone"> · {{ s.phone }}</template></span>
+          </span>
+          <el-tag size="small" effect="plain" round>{{ statusLabels[s.status] || s.status }}</el-tag>
+        </button>
+      </div>
+    </section>
+
     <div class="work-area">
       <!-- 左侧：选中学员 + 表单 / 空态 -->
       <section class="panel main-panel">
@@ -823,9 +1358,9 @@ onUnmounted(() => {
             <div class="empty-icon" aria-hidden="true">
               <el-icon :size="42"><UserFilled /></el-icon>
             </div>
-            <h2 class="empty-title">请先查找学员</h2>
+            <h2 class="empty-title">请选择学员</h2>
             <p class="empty-desc">
-              在上方输入姓名或手机号搜索在册学员；若为新客，点击「新建学生」建档并关联课程后再办理报名。
+              选择在册学员后可办理报名、续费或转课；新学员需先建档，再在本页选择课程。
             </p>
             <p v-if="lastOrderNo" class="last-order-hint">
               上一笔订单号：
@@ -843,7 +1378,7 @@ onUnmounted(() => {
         </template>
 
         <template v-else>
-          <div class="student-banner">
+          <div v-if="!isApp" class="student-banner">
             <div class="student-banner-left">
               <span class="student-avatar">{{ (selected.name || '?').slice(0, 1) }}</span>
               <div>
@@ -864,14 +1399,254 @@ onUnmounted(() => {
           <el-form class="enroll-form" label-width="96px" @submit.prevent>
             <section class="form-section">
               <div class="form-section-head">
-                <h3>购买内容</h3>
+                <h3>{{ isTransfer ? '业务类型' : '购买内容' }}</h3>
                 <el-radio-group v-model="enrollForm.kind" size="small">
                   <el-radio-button value="enroll">报名</el-radio-button>
                   <el-radio-button value="renew">续费</el-radio-button>
+                  <el-radio-button value="transfer">转课</el-radio-button>
                 </el-radio-group>
               </div>
 
-              <el-form-item label="关联课程" required>
+              <!-- 转课：转出信息 -->
+              <template v-if="isTransfer">
+                <div class="form-section-head sub-head">
+                  <h3>转课方式</h3>
+                </div>
+                <el-form-item label="方式">
+                  <el-radio-group v-model="enrollForm.transfer_mode">
+                    <el-radio value="course">转给其他课程</el-radio>
+                    <el-radio value="student">转课给其他学员</el-radio>
+                  </el-radio-group>
+                </el-form-item>
+
+                <!-- 转课给其他学员：选择目标学员 -->
+                <template v-if="isTransferToStudent">
+                  <div class="form-section-head sub-head">
+                    <h3>转入学员</h3>
+                  </div>
+                  <el-form-item label="目标学员" required>
+                    <div v-if="transferToStudent" class="transfer-to-banner">
+                      <span class="transfer-to-avatar">
+                        {{ (transferToStudent.name || '?').slice(0, 1) }}
+                      </span>
+                      <div class="transfer-to-main">
+                        <strong>{{ transferToStudent.name }}</strong>
+                        <span>
+                          {{ transferToStudent.grade || '未填年级' }}
+                          <template v-if="transferToStudent.phone">
+                            · {{ transferToStudent.phone }}
+                          </template>
+                          <template v-if="transferToStudent.school">
+                            · {{ transferToStudent.school }}
+                          </template>
+                        </span>
+                      </div>
+                      <el-button text type="primary" @click="clearTransferToStudent">更换</el-button>
+                    </div>
+                    <div v-else class="transfer-to-search">
+                      <el-autocomplete
+                        v-model="transferToSearchQ"
+                        clearable
+                        class="transfer-to-input"
+                        placeholder="输入转入学员姓名 / 手机号"
+                        value-key="label"
+                        :fetch-suggestions="queryTransferToSuggestions"
+                        :trigger-on-focus="false"
+                        popper-class="student-search-popper"
+                        @select="(item: Student & { label: string }) => pickTransferToStudent(item)"
+                        @keyup.enter.stop="runTransferToSearch"
+                      >
+                        <template #prefix>
+                          <el-icon><Search /></el-icon>
+                        </template>
+                        <template #default="{ item }">
+                          <div class="student-suggestion">
+                            <span class="student-suggestion-name">{{ item.name }}</span>
+                            <span class="student-suggestion-meta">
+                              {{ item.grade || '未填年级' }}
+                              <template v-if="item.phone"> · {{ item.phone }}</template>
+                            </span>
+                          </div>
+                        </template>
+                      </el-autocomplete>
+                      <el-button
+                        type="primary"
+                        plain
+                        :loading="transferToSearching"
+                        @click="runTransferToSearch"
+                      >
+                        查找
+                      </el-button>
+                    </div>
+                    <div v-if="transferToResults.length" class="transfer-to-hits">
+                      <button
+                        v-for="s in transferToResults"
+                        :key="s.id"
+                        type="button"
+                        class="hit-card"
+                        @click="pickTransferToStudent(s)"
+                      >
+                        <span class="hit-avatar">{{ (s.name || '?').slice(0, 1) }}</span>
+                        <span class="hit-main">
+                          <span class="hit-name">{{ s.name }}</span>
+                          <span class="hit-meta">
+                            {{ s.grade || '未填年级' }}
+                            <template v-if="s.phone"> · {{ s.phone }}</template>
+                          </span>
+                        </span>
+                      </button>
+                    </div>
+                    <p class="form-hint">
+                      转出学员为上方已选学员；课时将从本学员扣减，并写入目标学员课包。
+                    </p>
+                  </el-form-item>
+                </template>
+
+                <div class="form-section-head sub-head">
+                  <h3>转出信息</h3>
+                </div>
+                <el-form-item label="转出课程" required>
+                  <el-select
+                    v-model="enrollForm.transfer_out_course_id"
+                    filterable
+                    clearable
+                    placeholder="选择该学员可转出的课程"
+                    style="width: 100%; max-width: 420px"
+                    :loading="packagesLoading"
+                  >
+                    <el-option
+                      v-for="c in transferOutCourseOptions"
+                      :key="c.course_id!"
+                      :label="`${c.course_name}（剩余 ${Number(c.remain_hours || 0)} 课时）`"
+                      :value="c.course_id!"
+                    />
+                  </el-select>
+                  <p v-if="!packagesLoading && !transferOutCourseOptions.length" class="form-hint form-error">
+                    该学员暂无可转出课时的课程
+                  </p>
+                </el-form-item>
+
+                <div v-if="transferOutRows.length" class="purchase-table-wrap transfer-out-wrap">
+                  <el-table
+                    v-if="!isApp"
+                    :data="transferOutRows"
+                    border
+                    size="small"
+                    class="purchase-table transfer-out-table"
+                  >
+                    <el-table-column label="订单号" min-width="140">
+                      <template #default="{ row }">{{ row.order_no }}</template>
+                    </el-table-column>
+                    <el-table-column label="单价" width="110" align="right">
+                      <template #default="{ row }">
+                        {{ Number(row.unit_price).toFixed(2) }}元/课时
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="剩余课时" width="100" align="center">
+                      <template #default="{ row }">{{ row.remain_hours }}课时</template>
+                    </el-table-column>
+                    <el-table-column label="转出购买" width="130" align="center">
+                      <template #default="{ row }">
+                        <el-input-number
+                          v-model="row.transfer_hours"
+                          :min="0"
+                          :max="row.remain_hours"
+                          :precision="2"
+                          :step="0.5"
+                          :controls="false"
+                          style="width: 100%"
+                        />
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="转出赠送" width="120" align="center">
+                      <template #default="{ row }">
+                        <el-input-number
+                          v-model="row.transfer_gift_hours"
+                          :min="0"
+                          :max="Math.max(0, row.remain_hours - Number(row.transfer_hours || 0))"
+                          :precision="2"
+                          :step="0.5"
+                          :controls="false"
+                          style="width: 100%"
+                        />
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="转出金额" width="120" align="right">
+                      <template #default="{ row }">
+                        <el-input-number
+                          :model-value="transferLineAmount(row)"
+                          :min="0"
+                          :precision="2"
+                          :controls="false"
+                          style="width: 100%"
+                          @update:model-value="(v: number | undefined) => (row.transfer_amount_override = Number(v || 0))"
+                        />
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="手续费" width="100" align="right">
+                      <template #default="{ row }">
+                        <el-input-number
+                          v-model="row.fee"
+                          :min="0"
+                          :precision="2"
+                          :controls="false"
+                          style="width: 100%"
+                        />
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                  <div v-else class="transfer-out-mobile">
+                    <section v-for="row in transferOutRows" :key="row.package_id" class="purchase-mobile-card">
+                      <header class="purchase-mobile-head">
+                        <strong>{{ row.order_no }}</strong>
+                        <span>剩余 {{ row.remain_hours }}课时</span>
+                      </header>
+                      <div class="purchase-mobile-body">
+                        <label>
+                          <span>转出购买课时</span>
+                          <el-input-number
+                            v-model="row.transfer_hours"
+                            :min="0"
+                            :max="row.remain_hours"
+                            :precision="2"
+                            :controls="false"
+                          />
+                        </label>
+                        <label>
+                          <span>转出金额</span>
+                          <el-input-number
+                            :model-value="transferLineAmount(row)"
+                            :min="0"
+                            :precision="2"
+                            :controls="false"
+                            @update:model-value="(v: number | undefined) => (row.transfer_amount_override = Number(v || 0))"
+                          />
+                        </label>
+                      </div>
+                    </section>
+                  </div>
+                  <div class="section-total transfer-out-sum">
+                    转出合计
+                    <strong>¥{{ transferOutTotal.toFixed(2) }}</strong>
+                    <span v-if="transferFeeTotal > 0" class="sum-fee">
+                      · 手续费 ¥{{ transferFeeTotal.toFixed(2) }}
+                    </span>
+                  </div>
+                </div>
+                <el-empty
+                  v-else-if="enrollForm.transfer_out_course_id"
+                  description="该课程下暂无可转出课包"
+                  :image-size="48"
+                />
+
+                <div class="form-section-head sub-head">
+                  <h3>
+                    {{ isTransferToStudent ? '转入信息（写入目标学员）' : '转入信息' }}
+                  </h3>
+                </div>
+              </template>
+
+              <el-form-item :label="isTransfer ? '转入课程' : '关联课程'" required>
                 <div class="course-block">
                   <el-select
                     v-model="enrollForm.course_ids"
@@ -879,7 +1654,7 @@ onUnmounted(() => {
                     filterable
                     collapse-tags
                     collapse-tags-tooltip
-                    placeholder="请选择课程（可多选）"
+                    :placeholder="isTransfer ? '请选择转入课程（可多选）' : '请选择课程（可多选）'"
                     style="width: 100%; max-width: 560px"
                   >
                     <el-option
@@ -889,12 +1664,24 @@ onUnmounted(() => {
                       :value="c.id"
                     />
                   </el-select>
-                  <p class="form-hint">课程目录与「教务中心 · 课程管理」一致。</p>
+                  <p class="form-hint">
+                    <template v-if="isTransferToStudent">
+                      转入课程与课时将写入
+                      <strong>{{ transferToStudent?.name || '目标学员' }}</strong>
+                      的课包；默认按转出课时带入同课程，可修改。
+                    </template>
+                    <template v-else-if="isTransfer">
+                      转入课程将写入本学员新课包；转出课时从原课包扣减。
+                    </template>
+                    <template v-else>
+                      课程目录与「教务中心 · 课程管理」一致。
+                    </template>
+                  </p>
                 </div>
               </el-form-item>
 
               <div v-if="purchaseRows.length" class="purchase-table-wrap">
-                <el-table v-if="!isCompact" :data="purchaseRows" border size="small" class="purchase-table">
+                <el-table v-if="!isApp" :data="purchaseRows" border size="small" class="purchase-table">
                   <el-table-column label="购买项目" min-width="168">
                     <template #default="{ row }">
                       <div class="purchase-name">{{ row.course.name }}</div>
@@ -982,13 +1769,32 @@ onUnmounted(() => {
                           :precision="row.detail.discount_type === 'rate' ? 1 : 2"
                           :step="row.detail.discount_type === 'rate' ? 0.1 : 50"
                           :controls="false"
+                          @change="onDiscountValueChange(row.detail)"
                         />
                         <span>{{ row.detail.discount_type === 'rate' ? '折' : '元' }}</span>
                       </div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="小计" width="110" align="right">
-                    <template #default="{ row }"><strong>¥{{ row.subtotal.toFixed(2) }}</strong></template>
+                  <el-table-column label="小计" width="128" align="right">
+                    <template #default="{ row }">
+                      <div class="subtotal-edit" :class="{ 'is-manual': row.subtotalEdited }">
+                        <span class="subtotal-edit__yen">¥</span>
+                        <el-input
+                          :model-value="
+                            row.detail.subtotal_override != null
+                              ? row.subtotal
+                              : row.subtotal.toFixed(2)
+                          "
+                          inputmode="decimal"
+                          class="subtotal-edit__input"
+                          aria-label="小计金额，可编辑"
+                          @update:model-value="
+                            (v: string) => setPurchaseSubtotal(row.course.id, row.total, v)
+                          "
+                          @blur="(e: FocusEvent) => onSubtotalBlur(row.course.id, row.total, e)"
+                        />
+                      </div>
+                    </template>
                   </el-table-column>
                   <el-table-column label="操作" width="72" align="center">
                     <template #default="{ row }">
@@ -1001,60 +1807,136 @@ onUnmounted(() => {
                   </el-table-column>
                 </el-table>
                 <div v-else class="purchase-mobile-list">
-                  <section v-for="row in purchaseRows" :key="row.course.id" class="purchase-mobile-card">
+                  <section
+                    v-for="row in purchaseRows"
+                    :key="row.course.id"
+                    class="purchase-mobile-card"
+                    :class="{ 'is-expanded': expandedPurchaseId === row.course.id }"
+                  >
                     <header class="purchase-mobile-head">
-                      <div>
-                        <div class="purchase-name">{{ row.course.name }}</div>
-                        <span class="purchase-type">{{ row.course.type_label }}</span>
-                      </div>
-                      <el-button link type="danger" aria-label="移除课程" @click="removePurchase(row.course.id)">
+                      <button
+                        type="button"
+                        class="purchase-mobile-summary"
+                        :aria-expanded="expandedPurchaseId === row.course.id"
+                        :aria-label="`${expandedPurchaseId === row.course.id ? '收起' : '编辑'}${row.course.name}`"
+                        @click="togglePurchaseCard(row.course.id)"
+                      >
+                        <span class="purchase-mobile-title">
+                          <strong>{{ row.course.name }}</strong>
+                          <span>
+                            {{ row.course.type_label }} · 购买 {{ row.detail.hours }} 课时
+                            <template v-if="row.detail.gift_hours"> · 赠 {{ row.detail.gift_hours }}</template>
+                          </span>
+                        </span>
+                        <span
+                          class="purchase-mobile-subtotal"
+                          :class="{ 'is-manual': row.subtotalEdited }"
+                        >
+                          小计 ¥{{ row.subtotal.toFixed(2) }}
+                        </span>
+                        <el-icon class="purchase-mobile-chevron"><ArrowDown /></el-icon>
+                      </button>
+                      <el-button
+                        class="purchase-mobile-remove"
+                        link
+                        type="danger"
+                        aria-label="移除课程"
+                        @click.stop="removePurchase(row.course.id)"
+                      >
                         <el-icon><Delete /></el-icon>
                       </el-button>
                     </header>
-                    <label class="purchase-mobile-field">
-                      <span>定价标准</span>
-                      <el-select v-model="row.detail.price_standard">
-                        <el-option :label="row.course.price_label" :value="row.course.price_label" />
-                      </el-select>
-                    </label>
-                    <div class="purchase-mobile-grid">
-                      <div class="purchase-mobile-field">
-                        <span>购买课时</span>
-                        <div class="course-stepper">
-                          <button type="button" aria-label="购买课时减0.25" :disabled="row.detail.hours <= 0.01" @click="changePurchaseHours(row.detail, 'hours', -0.25)"><el-icon><Minus /></el-icon></button>
-                          <el-input v-model.number="row.detail.hours" inputmode="decimal" aria-label="购买课时" @blur="normalizePurchaseNumber(row.detail, 'hours')" />
-                          <button type="button" aria-label="购买课时加0.25" @click="changePurchaseHours(row.detail, 'hours', 0.25)"><el-icon><Plus /></el-icon></button>
-                        </div>
-                      </div>
-                      <div class="purchase-mobile-field">
-                        <span>赠送课时</span>
-                        <div class="course-stepper">
-                          <button type="button" aria-label="赠送课时减0.25" :disabled="row.detail.gift_hours <= 0" @click="changePurchaseHours(row.detail, 'gift_hours', -0.25)"><el-icon><Minus /></el-icon></button>
-                          <el-input v-model.number="row.detail.gift_hours" inputmode="decimal" aria-label="赠送课时" @blur="normalizePurchaseNumber(row.detail, 'gift_hours')" />
-                          <button type="button" aria-label="赠送课时加0.25" @click="changePurchaseHours(row.detail, 'gift_hours', 0.25)"><el-icon><Plus /></el-icon></button>
-                        </div>
-                      </div>
-                    </div>
-                    <div class="purchase-mobile-field">
-                      <span>直减/折扣</span>
-                      <div class="discount-control">
-                        <el-select v-model="row.detail.discount_type" @change="onDiscountTypeChange(row.detail)">
-                          <el-option label="直减" value="reduce" />
-                          <el-option label="折扣" value="rate" />
+                    <div v-show="expandedPurchaseId === row.course.id" class="purchase-mobile-body">
+                      <label class="purchase-mobile-field purchase-mobile-price-standard">
+                        <span>定价标准</span>
+                        <el-select v-model="row.detail.price_standard">
+                          <el-option :label="row.course.price_label" :value="row.course.price_label" />
                         </el-select>
-                        <el-input-number v-model="row.detail.discount_value" :min="0" :max="row.detail.discount_type === 'rate' ? 10 : row.total" :precision="row.detail.discount_type === 'rate' ? 1 : 2" :step="row.detail.discount_type === 'rate' ? 0.1 : 50" :controls="false" />
-                        <span>{{ row.detail.discount_type === 'rate' ? '折' : '元' }}</span>
+                      </label>
+                      <div class="purchase-mobile-grid">
+                        <div class="purchase-mobile-field">
+                          <span>购买课时</span>
+                          <div class="course-stepper">
+                            <button type="button" aria-label="购买课时减0.25" :disabled="row.detail.hours <= 0.01" @click="changePurchaseHours(row.detail, 'hours', -0.25)"><el-icon><Minus /></el-icon></button>
+                            <el-input v-model.number="row.detail.hours" inputmode="decimal" aria-label="购买课时" @blur="normalizePurchaseNumber(row.detail, 'hours')" />
+                            <button type="button" aria-label="购买课时加0.25" @click="changePurchaseHours(row.detail, 'hours', 0.25)"><el-icon><Plus /></el-icon></button>
+                          </div>
+                        </div>
+                        <div class="purchase-mobile-field">
+                          <span>赠送课时</span>
+                          <div class="course-stepper">
+                            <button type="button" aria-label="赠送课时减0.25" :disabled="row.detail.gift_hours <= 0" @click="changePurchaseHours(row.detail, 'gift_hours', -0.25)"><el-icon><Minus /></el-icon></button>
+                            <el-input v-model.number="row.detail.gift_hours" inputmode="decimal" aria-label="赠送课时" @blur="normalizePurchaseNumber(row.detail, 'gift_hours')" />
+                            <button type="button" aria-label="赠送课时加0.25" @click="changePurchaseHours(row.detail, 'gift_hours', 0.25)"><el-icon><Plus /></el-icon></button>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="purchase-mobile-field">
+                        <span>优惠调整</span>
+                        <div class="discount-control">
+                          <el-select v-model="row.detail.discount_type" @change="onDiscountTypeChange(row.detail)">
+                            <el-option label="直减" value="reduce" />
+                            <el-option label="折扣" value="rate" />
+                          </el-select>
+                          <el-input-number
+                            v-model="row.detail.discount_value"
+                            :min="0"
+                            :max="row.detail.discount_type === 'rate' ? 10 : row.total"
+                            :precision="row.detail.discount_type === 'rate' ? 1 : 2"
+                            :step="row.detail.discount_type === 'rate' ? 0.1 : 50"
+                            :controls="false"
+                            @change="onDiscountValueChange(row.detail)"
+                          />
+                          <span>{{ row.detail.discount_type === 'rate' ? '折' : '元' }}</span>
+                        </div>
+                      </div>
+                      <div class="purchase-mobile-field purchase-mobile-subtotal-field">
+                        <span>
+                          小计（可改）
+                          <em v-if="row.subtotalEdited" class="subtotal-manual-tag">已改价</em>
+                        </span>
+                        <div class="subtotal-edit is-mobile" :class="{ 'is-manual': row.subtotalEdited }">
+                          <span class="subtotal-edit__yen">¥</span>
+                          <el-input
+                            :model-value="
+                              row.detail.subtotal_override != null
+                                ? row.subtotal
+                                : row.subtotal.toFixed(2)
+                            "
+                            inputmode="decimal"
+                            class="subtotal-edit__input"
+                            aria-label="小计金额，可编辑"
+                            @update:model-value="
+                              (v: string) => setPurchaseSubtotal(row.course.id, row.total, v)
+                            "
+                            @blur="(e: FocusEvent) => onSubtotalBlur(row.course.id, row.total, e)"
+                          />
+                        </div>
+                        <p class="form-hint">
+                          原价 ¥{{ row.total.toFixed(2) }}；改小计不联动优惠，改优惠会重算小计
+                        </p>
                       </div>
                     </div>
-                    <footer class="purchase-mobile-total">
-                      <span>原价 ¥{{ row.total.toFixed(2) }}</span>
-                      <strong>小计 ¥{{ row.subtotal.toFixed(2) }}</strong>
-                    </footer>
                   </section>
                 </div>
               </div>
-              <el-empty v-else description="请选择报名课程" :image-size="52" />
-              <div class="section-total">应收合计 <strong>¥{{ receivableTotal.toFixed(2) }}</strong></div>
+              <el-empty
+                v-else
+                :description="isTransfer ? '请选择转入课程' : '请选择报名课程'"
+                :image-size="52"
+              />
+              <div v-if="isTransfer" class="section-total transfer-calc">
+                <span>转入合计 <b>¥{{ transferInTotal.toFixed(2) }}</b></span>
+                <span>转出合计 <b>¥{{ transferOutTotal.toFixed(2) }}</b></span>
+                <span v-if="transferFeeTotal > 0">手续费 <b>¥{{ transferFeeTotal.toFixed(2) }}</b></span>
+                <span class="recv">
+                  应收金额
+                  <strong>¥{{ receivableTotal.toFixed(2) }}</strong>
+                </span>
+              </div>
+              <div v-else class="section-total">
+                应收合计 <strong>¥{{ receivableTotal.toFixed(2) }}</strong>
+              </div>
             </section>
 
             <section class="form-section">
@@ -1064,10 +1946,18 @@ onUnmounted(() => {
                 <div><span>实收金额</span><strong>¥{{ receivedTotal.toFixed(2) }}</strong></div>
                 <div :class="{ 'has-arrears': arrearsTotal > 0 }"><span>欠费金额</span><strong>¥{{ arrearsTotal.toFixed(2) }}</strong></div>
               </div>
-              <el-form-item label="收款方式" required>
+              <el-form-item
+                :label="receivableTotal > 0 ? '收款方式' : '收款方式（可选）'"
+                :required="receivableTotal > 0"
+              >
                 <div class="pay-block">
                   <el-checkbox-group v-model="enrollForm.pay_methods" class="pay-method-grid">
-                    <div v-for="m in PAY_METHOD_OPTIONS" :key="m" class="pay-method-item">
+                    <div
+                      v-for="m in PAY_METHOD_OPTIONS"
+                      :key="m"
+                      class="pay-method-item"
+                      :class="{ 'is-selected': enrollForm.pay_methods.includes(m) }"
+                    >
                       <el-checkbox :value="m">{{ m }}</el-checkbox>
                       <el-input-number
                         v-if="enrollForm.pay_methods.includes(m)"
@@ -1090,7 +1980,21 @@ onUnmounted(() => {
                     placeholder="请填写其他支付方式说明"
                   />
                   <p v-if="receivedTotal > receivableTotal" class="form-error">实收金额不能大于应收金额</p>
-                  <p class="form-hint">可组合收款；未收部分会作为欠费同步到财务订单。</p>
+                  <p
+                    v-else-if="!isTransfer && receivableTotal > 0 && receivedTotal <= 0"
+                    class="form-error"
+                  >
+                    报名/续费须填写实收金额，不能零支付提交
+                  </p>
+                  <p class="form-hint">
+                    {{
+                      isTransfer && receivableTotal <= 0
+                        ? '转出金额已覆盖转入，无需补差价；可直接确认转课。'
+                        : !isTransfer
+                          ? '报名/续费须至少有一笔实收；可组合收款，未收部分记为欠费。'
+                          : '可组合收款；未收部分会作为欠费同步到财务订单。'
+                    }}
+                  </p>
                 </div>
               </el-form-item>
             </section>
@@ -1111,7 +2015,7 @@ onUnmounted(() => {
               <div class="attr-block">
                 <el-table
                   v-if="enrollForm.attributions.length"
-                  v-show="!isCompact"
+                  v-show="!isApp"
                   :data="enrollForm.attributions"
                   size="small"
                   border
@@ -1157,7 +2061,7 @@ onUnmounted(() => {
                     </template>
                   </el-table-column>
                 </el-table>
-                <div v-if="isCompact && enrollForm.attributions.length" class="attr-mobile-list">
+                <div v-if="isApp && enrollForm.attributions.length" class="attr-mobile-list">
                   <section v-for="(row, index) in enrollForm.attributions" :key="row.key" class="attr-mobile-card">
                     <label>
                       <span>归属人</span>
@@ -1235,7 +2139,71 @@ onUnmounted(() => {
               </el-form-item>
             </section>
 
-            <el-form-item v-if="!isCompact">
+            <!-- 提交前确认摘要 -->
+            <section class="confirm-summary" :class="{ 'is-ready': canSubmit }">
+              <div class="confirm-summary__accent" aria-hidden="true" />
+              <div class="confirm-summary__head">
+                <div class="confirm-summary__title-wrap">
+                  <span class="confirm-summary__kicker">提交前核对</span>
+                  <strong class="confirm-summary__title">确认摘要</strong>
+                </div>
+                <el-tag
+                  size="small"
+                  effect="dark"
+                  round
+                  :type="canSubmit ? 'success' : 'warning'"
+                  class="confirm-summary__badge"
+                >
+                  {{ canSubmit ? '可提交' : '待完善' }}
+                </el-tag>
+              </div>
+
+              <div class="confirm-summary__identity">
+                <div class="confirm-summary__avatar" aria-hidden="true">
+                  {{ (selected.name || '?').slice(0, 1) }}
+                </div>
+                <div class="confirm-summary__who">
+                  <div class="confirm-summary__name">{{ selected.name }}</div>
+                  <div class="confirm-summary__meta">
+                    <el-tag size="small" effect="plain" round type="warning">
+                      {{ kindLabels[enrollForm.kind] || enrollForm.kind }}
+                    </el-tag>
+                    <span class="confirm-summary__course" :title="confirmCourseLabel">
+                      {{ isTransfer ? '转入' : '课程' }} · {{ confirmCourseLabel }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="confirm-summary__money">
+                <div class="confirm-money-pill">
+                  <span class="confirm-money-pill__label">应收</span>
+                  <strong class="confirm-money-pill__value">¥{{ receivableTotal.toFixed(2) }}</strong>
+                </div>
+                <div class="confirm-money-pill is-received">
+                  <span class="confirm-money-pill__label">实收</span>
+                  <strong class="confirm-money-pill__value">¥{{ receivedTotal.toFixed(2) }}</strong>
+                </div>
+                <div v-if="arrearsTotal > 0" class="confirm-money-pill is-arrears">
+                  <span class="confirm-money-pill__label">欠费</span>
+                  <strong class="confirm-money-pill__value">¥{{ arrearsTotal.toFixed(2) }}</strong>
+                </div>
+              </div>
+
+              <div class="confirm-summary__pay">
+                <span class="confirm-summary__pay-label">支付方式</span>
+                <strong class="confirm-summary__pay-value">{{ confirmPayLabel }}</strong>
+              </div>
+
+              <p v-if="!canSubmit" class="confirm-summary__hint">
+                请完善课程、支付与业绩归属后再提交
+              </p>
+              <p v-else class="confirm-summary__hint is-ok">
+                信息已齐全，确认无误后提交{{ kindLabels[enrollForm.kind] || '登记' }}
+              </p>
+            </section>
+
+            <el-form-item v-if="!isApp">
               <div class="form-actions">
                 <el-button @click="clearSelected">取消</el-button>
                 <el-button
@@ -1282,7 +2250,7 @@ onUnmounted(() => {
                 size="small"
                 effect="plain"
                 round
-                :type="row.kind === 'enroll' ? 'success' : 'warning'"
+                :type="row.kind === 'enroll' ? 'success' : row.kind === 'transfer' ? 'primary' : 'warning'"
               >
                 {{ kindLabels[row.kind] || row.kind }}
               </el-tag>
@@ -1303,17 +2271,17 @@ onUnmounted(() => {
               </button>
               <span v-else>{{ row.order_no }}</span>
             </div>
-            <div v-if="row.pay_methods?.length" class="recent-pay">
+            <div v-if="!isApp && row.pay_methods?.length" class="recent-pay">
               支付
               {{
                 row.pay_methods.join('、') +
                 (row.pay_other ? `（${row.pay_other}）` : '')
               }}
             </div>
-            <div v-if="courseSummary(row)" class="recent-courses" :title="courseSummary(row)">
+            <div v-if="!isApp && courseSummary(row)" class="recent-courses" :title="courseSummary(row)">
               课程 {{ courseSummary(row) }}
             </div>
-            <div v-if="row.attributions?.length" class="recent-attr">
+            <div v-if="!isApp && row.attributions?.length" class="recent-attr">
               归属
               {{
                 row.attributions
@@ -1389,32 +2357,12 @@ onUnmounted(() => {
             />
           </el-select>
         </el-form-item>
-        <div class="drawer-section-title">关联课程</div>
-        <el-form-item label="选择课程" prop="course_ids">
-          <el-select
-            v-model="createForm.course_ids"
-            multiple
-            filterable
-            collapse-tags
-            collapse-tags-tooltip
-            placeholder="请选择课程（可多选，至少一门）"
-            style="width: 100%"
-          >
-            <el-option
-              v-for="c in courseOptions"
-              :key="c.id"
-              :label="`${c.name}（${c.type_label} · ${c.price_label}）`"
-              :value="c.id"
-            />
-          </el-select>
-          <p class="form-hint">新学员在此建档，须关联至少一门课程；建档后可在学生信息中查看与编辑。</p>
-        </el-form-item>
         <el-form-item label="备注">
           <el-input
             v-model="createForm.notes"
             type="textarea"
             :rows="2"
-            placeholder="选填"
+            placeholder="选填；课程请在建档后的报名表单中选择"
             maxlength="500"
           />
         </el-form-item>
@@ -1438,6 +2386,305 @@ onUnmounted(() => {
   margin-bottom: 14px;
 }
 
+.enroll-steps {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(181, 145, 83, 0.22);
+  background: linear-gradient(180deg, #fffefb, #faf3e6);
+}
+
+.enroll-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #8a8178;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.enroll-step__n {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 750;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(181, 145, 83, 0.28);
+  color: #78716c;
+  flex-shrink: 0;
+}
+
+.enroll-step.is-active {
+  color: #a16207;
+}
+
+.enroll-step.is-active .enroll-step__n {
+  color: #fffdf8;
+  background: linear-gradient(145deg, #c07a12, #a16207);
+  border-color: transparent;
+  box-shadow: 0 3px 8px rgba(161, 98, 7, 0.25);
+}
+
+.enroll-step.is-done .enroll-step__n {
+  color: #15803d;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.enroll-step__line {
+  flex: 1;
+  height: 2px;
+  min-width: 12px;
+  border-radius: 999px;
+  background: rgba(181, 145, 83, 0.2);
+}
+
+.enroll-step__line.is-on {
+  background: linear-gradient(90deg, #d97706, #a16207);
+}
+
+.confirm-summary {
+  position: relative;
+  margin: 8px 0 18px;
+  padding: 16px 16px 14px;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid rgba(181, 145, 83, 0.32);
+  background:
+    linear-gradient(125deg, #ffffff 0%, #fffdf8 42%, #faf3e6 100%);
+  box-shadow:
+    0 12px 28px rgba(88, 60, 24, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+.confirm-summary__accent {
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 4px;
+  border-radius: 0 6px 6px 0;
+  background: linear-gradient(180deg, #d4b483, #a16207);
+}
+
+.confirm-summary.is-ready {
+  border-color: rgba(22, 163, 74, 0.32);
+  background:
+    linear-gradient(125deg, #ffffff 0%, #f7fbf5 45%, #eef8ea 100%);
+  box-shadow:
+    0 12px 28px rgba(22, 101, 52, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+.confirm-summary.is-ready .confirm-summary__accent {
+  background: linear-gradient(180deg, #86efac, #16a34a);
+}
+
+.confirm-summary__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-left: 8px;
+}
+
+.confirm-summary__title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.confirm-summary__kicker {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  color: #a16207;
+}
+
+.confirm-summary.is-ready .confirm-summary__kicker {
+  color: #15803d;
+}
+
+.confirm-summary__title {
+  font-size: 16px;
+  font-weight: 750;
+  color: #3f3a34;
+  line-height: 1.3;
+}
+
+.confirm-summary__badge {
+  flex-shrink: 0;
+  font-weight: 700;
+}
+
+.confirm-summary__identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(181, 145, 83, 0.2);
+  background: rgba(255, 253, 248, 0.85);
+}
+
+.confirm-summary.is-ready .confirm-summary__identity {
+  border-color: rgba(22, 163, 74, 0.18);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.confirm-summary__avatar {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 750;
+  color: #fffdf8;
+  background: linear-gradient(145deg, #c98718, #a16207);
+  box-shadow: 0 4px 10px rgba(161, 98, 7, 0.22);
+}
+
+.confirm-summary__who {
+  flex: 1;
+  min-width: 0;
+}
+
+.confirm-summary__name {
+  font-size: 15px;
+  font-weight: 720;
+  color: #44403c;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.confirm-summary__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.confirm-summary__course {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #78716c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.confirm-summary__money {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-left: 2px;
+}
+
+.confirm-money-pill {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(181, 145, 83, 0.22);
+  background: linear-gradient(180deg, #fffefb, #faf6ee);
+  text-align: left;
+}
+
+.confirm-money-pill.is-received {
+  border-color: rgba(161, 98, 7, 0.28);
+  background: linear-gradient(180deg, #fff8e8, #f5e6c8);
+}
+
+.confirm-money-pill.is-arrears {
+  border-color: rgba(180, 83, 9, 0.28);
+  background: linear-gradient(180deg, #fff7ed, #ffedd5);
+}
+
+.confirm-money-pill__label {
+  display: block;
+  font-size: 11px;
+  font-weight: 650;
+  color: #8a8178;
+  letter-spacing: 0.04em;
+}
+
+.confirm-money-pill__value {
+  display: block;
+  margin-top: 4px;
+  font-size: 16px;
+  font-weight: 750;
+  color: #a16207;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.confirm-money-pill.is-arrears .confirm-money-pill__value {
+  color: #c2410c;
+}
+
+.confirm-summary__pay {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 2px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px dashed rgba(181, 145, 83, 0.28);
+}
+
+.confirm-summary__pay-label {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: #8a8178;
+}
+
+.confirm-summary__pay-value {
+  min-width: 0;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 700;
+  color: #44403c;
+  word-break: break-word;
+}
+
+.confirm-summary__hint {
+  margin: 12px 2px 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #92400e;
+  background: rgba(254, 243, 199, 0.55);
+  border: 1px solid rgba(245, 158, 11, 0.22);
+}
+
+.confirm-summary__hint.is-ok {
+  color: #166534;
+  background: rgba(220, 252, 231, 0.55);
+  border-color: rgba(34, 197, 94, 0.22);
+}
+
 .page-desc {
   margin: 6px 0 0;
   font-size: 13px;
@@ -1455,6 +2702,115 @@ onUnmounted(() => {
 .search-bar {
   padding: 14px 16px;
   margin-bottom: 14px;
+}
+
+.student-picker {
+  margin-bottom: 12px;
+  overflow: hidden;
+  border: 1px solid #e4d5b8;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #fffdf8 0%, #f8f0e1 100%);
+  box-shadow: 0 3px 10px rgba(83, 61, 28, 0.05);
+}
+
+.student-picker-main {
+  width: 100%;
+  min-height: 78px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.student-picker-icon {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #ead9b8;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--oc-primary, #a16207);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.student-picker-copy {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.student-picker-label {
+  color: #8a7150;
+  font-size: 11px;
+}
+
+.student-picker-copy strong {
+  color: var(--oc-ink, #44403c);
+  font-size: 16px;
+}
+
+.student-picker-meta {
+  overflow: hidden;
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.student-picker-action {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--oc-primary, #a16207);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.student-create-action {
+  width: 100%;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-top: 1px solid #eadfc9;
+  background: rgba(255, 255, 255, 0.58);
+  color: #6f5a3c;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.compact-search-results {
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.compact-search-title {
+  margin-bottom: 8px;
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.compact-search-hits {
+  margin-top: 0;
 }
 
 .search-row {
@@ -1654,6 +3010,11 @@ onUnmounted(() => {
   background: #fff;
 }
 
+.pay-method-item.is-selected {
+  border-color: #d4ad65;
+  background: #fffaf0;
+}
+
 .pay-method-item :deep(.el-checkbox) {
   margin-right: 0;
 }
@@ -1737,7 +3098,6 @@ onUnmounted(() => {
   gap: 12px;
 }
 
-.purchase-mobile-card,
 .attr-mobile-card {
   display: grid;
   gap: 14px;
@@ -1747,12 +3107,179 @@ onUnmounted(() => {
   background: #fff;
 }
 
+.purchase-mobile-card {
+  overflow: hidden;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.purchase-mobile-card.is-expanded {
+  border-color: #ddc89e;
+  box-shadow: 0 3px 10px rgba(83, 61, 28, 0.05);
+}
+
 .purchase-mobile-head,
 .purchase-mobile-total {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
+}
+
+.purchase-mobile-head {
+  min-height: 68px;
+  padding: 0 8px 0 12px;
+  background: #fff;
+}
+
+.purchase-mobile-card.is-expanded .purchase-mobile-head {
+  background: #fffaf0;
+}
+
+.purchase-mobile-summary {
+  min-width: 0;
+  min-height: 68px;
+  flex: 1;
+  padding: 9px 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 20px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.purchase-mobile-summary:focus-visible {
+  border-radius: 6px;
+  outline: 2px solid #d4ad65;
+  outline-offset: -2px;
+}
+
+.purchase-mobile-title {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.purchase-mobile-title strong {
+  overflow: hidden;
+  color: var(--oc-ink, #44403c);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.purchase-mobile-title > span {
+  overflow: hidden;
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.purchase-mobile-subtotal {
+  color: var(--oc-primary, #a16207);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.purchase-mobile-subtotal.is-manual {
+  color: #b45309;
+}
+
+.subtotal-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-end;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.subtotal-edit.is-mobile {
+  width: 100%;
+  justify-content: stretch;
+}
+
+.subtotal-edit__yen {
+  flex: 0 0 auto;
+  color: var(--oc-muted, #78716c);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.subtotal-edit__input {
+  width: 100px;
+}
+
+.subtotal-edit.is-mobile .subtotal-edit__input {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.subtotal-edit :deep(.el-input__wrapper) {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.subtotal-edit :deep(.el-input__inner) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.subtotal-edit.is-manual :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px rgba(180, 83, 9, 0.35) inset;
+  background: #fffbeb;
+}
+
+.subtotal-manual-tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #b45309;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 650;
+}
+
+.purchase-mobile-subtotal-field .form-hint {
+  margin: 0;
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.purchase-mobile-chevron {
+  color: #8a7150;
+  transition: transform 0.16s ease;
+}
+
+.purchase-mobile-card.is-expanded .purchase-mobile-chevron {
+  transform: rotate(180deg);
+}
+
+.purchase-mobile-remove {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  margin: 0 !important;
+}
+
+.purchase-mobile-body {
+  padding: 11px 12px 12px;
+  display: grid;
+  gap: 11px;
+  border-top: 1px solid #eadfc9;
+  background: #fff;
 }
 
 .purchase-mobile-field,
@@ -1773,8 +3300,18 @@ onUnmounted(() => {
   width: 100%;
 }
 
+.purchase-mobile-body .discount-control {
+  grid-template-columns: 88px minmax(0, 1fr) 18px;
+  width: 100%;
+}
+
+.purchase-mobile-body .discount-control :deep(.el-input-number) {
+  width: 100%;
+}
+
 .purchase-mobile-total {
-  padding-top: 12px;
+  min-height: 36px;
+  padding-top: 9px;
   border-top: 1px solid var(--oc-border, #e8e0d0);
   color: var(--oc-muted, #78716c);
   font-size: 13px;
@@ -1782,18 +3319,12 @@ onUnmounted(() => {
 
 .purchase-mobile-total strong {
   color: var(--oc-primary, #a16207);
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .attr-mobile-card :deep(.el-input-number),
 .attr-mobile-card :deep(.el-select) {
   width: 100%;
-}
-
-@media (max-width: 520px) {
-  .purchase-mobile-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 .purchase-table {
@@ -1858,13 +3389,21 @@ onUnmounted(() => {
 
 .discount-control {
   display: grid;
-  grid-template-columns: 72px 112px 18px;
+  grid-template-columns: 72px minmax(0, 1fr) 18px;
   align-items: center;
   gap: 5px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .discount-control :deep(.el-input-number) {
-  width: 112px;
+  width: 100%;
+  min-width: 0;
+}
+
+.discount-control > span {
+  text-align: center;
+  white-space: nowrap;
 }
 
 .purchase-name {
@@ -1890,6 +3429,109 @@ onUnmounted(() => {
   margin-left: 10px;
   color: var(--oc-primary, #a16207);
   font-size: 18px;
+}
+
+.form-section-head.sub-head {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--oc-border, #e8e0d0);
+}
+
+.transfer-out-wrap {
+  margin-bottom: 8px;
+}
+
+.transfer-out-sum .sum-fee {
+  margin-left: 10px;
+  color: #a16207;
+}
+
+.transfer-calc {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px 16px;
+  align-items: baseline;
+}
+
+.transfer-calc b {
+  color: var(--oc-ink, #44403c);
+  font-weight: 650;
+}
+
+.transfer-calc .recv strong {
+  font-size: 16px;
+}
+
+.transfer-out-mobile {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.transfer-to-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 520px;
+  padding: 10px 12px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 10px;
+  background: #fffdf8;
+}
+
+.transfer-to-avatar {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(161, 98, 7, 0.12);
+  color: #8b5406;
+  font-weight: 700;
+}
+
+.transfer-to-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.transfer-to-main strong {
+  color: var(--oc-ink, #44403c);
+  font-size: 14px;
+}
+
+.transfer-to-main span {
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+}
+
+.transfer-to-search {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  max-width: 560px;
+}
+
+.transfer-to-input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.transfer-to-hits {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 560px;
+  margin-top: 8px;
 }
 
 .amount-summary {
@@ -2174,11 +3816,6 @@ onUnmounted(() => {
     margin: 6px 0 0;
   }
 
-  .student-banner {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
   .student-banner-left > div {
     min-width: 0;
   }
@@ -2188,14 +3825,226 @@ onUnmounted(() => {
     overflow-wrap: anywhere;
     line-height: 1.55;
   }
+}
 
-  .form-section-head {
-    align-items: flex-start;
-    flex-direction: column;
+@media (max-width: 1199px) {
+  .enroll-page {
+    padding-bottom: 0;
   }
 
-  .amount-summary,
+  .work-area {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .panel {
+    border-radius: 8px;
+    box-shadow: none;
+  }
+
+  .main-panel {
+    min-height: 0;
+    padding: 14px;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .confirm-summary {
+    margin-bottom: 12px;
+    border-radius: 18px;
+    padding: 14px 12px 12px;
+  }
+
+  .confirm-summary__head {
+    padding-left: 6px;
+  }
+
+  .confirm-summary__money {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .confirm-summary__money:has(.is-arrears) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .confirm-money-pill__value {
+    font-size: 15px;
+  }
+
+  .form-section-head h3 {
+    font-weight: 720;
+  }
+
+  .form-section-head h3::before {
+    content: '';
+    display: inline-block;
+    width: 4px;
+    height: 12px;
+    margin-right: 8px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #d97706, #a16207);
+    vertical-align: -1px;
+  }
+
+  .empty-stage {
+    min-height: 190px;
+    padding: 28px 12px 32px;
+  }
+
+  .empty-icon {
+    width: 62px;
+    height: 62px;
+    margin-bottom: 12px;
+    box-shadow: 0 0 0 6px rgba(161, 98, 7, 0.05);
+  }
+
+  .enroll-form :deep(.el-form-item) {
+    display: block;
+    margin-bottom: 14px;
+  }
+
+  .enroll-form :deep(.el-form-item__label) {
+    width: auto !important;
+    height: auto;
+    margin-bottom: 6px;
+    justify-content: flex-start;
+    line-height: 20px;
+  }
+
+  .enroll-form :deep(.el-form-item__content) {
+    margin-left: 0 !important;
+  }
+
+  .form-section {
+    margin-bottom: 14px;
+    padding-bottom: 14px;
+  }
+
+  .form-section-head {
+    min-height: 28px;
+    margin-bottom: 12px;
+    flex-flow: row wrap;
+    align-items: center;
+  }
+
+  .purchase-mobile-list,
+  .attr-mobile-list {
+    gap: 8px;
+  }
+
+  .attr-mobile-card {
+    gap: 10px;
+    padding: 11px;
+  }
+
+  .purchase-mobile-grid {
+    gap: 8px;
+  }
+
+  .amount-summary {
+    margin-bottom: 14px;
+  }
+
+  .amount-summary > div {
+    min-height: 58px;
+    padding: 9px 10px;
+  }
+
+  .amount-summary strong {
+    font-size: 15px;
+  }
+
   .pay-method-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .pay-method-item {
+    min-height: 76px;
+    padding: 7px 8px;
+    grid-template-columns: 1fr;
+    grid-template-rows: 26px 32px;
+    gap: 4px;
+  }
+
+  .pay-method-item :deep(.el-input-number),
+  .pay-amount-empty {
+    width: 100%;
+  }
+
+  .attr-mobile-card {
+    grid-template-columns: minmax(0, 1.35fr) minmax(112px, 0.8fr);
+    align-items: end;
+  }
+
+  .attr-mobile-card > .el-button {
+    grid-column: 1 / -1;
+    min-height: 30px;
+    margin-top: -2px;
+  }
+
+  .recent-panel {
+    padding: 12px;
+  }
+
+  .recent-item {
+    padding: 9px 10px;
+    border-radius: 7px;
+  }
+
+  .recent-meta {
+    margin-top: 3px;
+  }
+
+  .recent-order {
+    overflow: hidden;
+    margin-top: 3px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    word-break: normal;
+  }
+
+  .recent-more {
+    min-height: 40px;
+    margin-top: 10px;
+  }
+}
+
+@media (max-width: 640px) {
+  .student-picker-main {
+    min-height: 74px;
+    padding: 10px 12px;
+  }
+
+  .student-picker-meta {
+    max-width: 205px;
+  }
+
+  .search-hits {
+    grid-template-columns: 1fr;
+  }
+
+  .amount-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .amount-summary > div {
+    padding-inline: 7px;
+  }
+
+  .amount-summary strong {
+    font-size: 14px;
+  }
+
+  .pay-method-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 360px) {
+  .purchase-mobile-grid,
+  .attr-mobile-card {
     grid-template-columns: 1fr;
   }
 }

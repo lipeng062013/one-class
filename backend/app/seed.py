@@ -485,6 +485,24 @@ def migrate_lead_contact_fields(db: Session) -> None:
     _sqlite_add_column(db, "leads", "last_contact_by", "last_contact_by INTEGER")
     _sqlite_add_column(db, "leads", "last_contact_method", "last_contact_method VARCHAR(32) DEFAULT ''")
 
+def migrate_lead_import_fields(db: Session) -> None:
+    """线索 Excel 导入字段（兼容既有 SQLite 数据库）。"""
+    from sqlalchemy import text
+
+    _sqlite_add_column(db, "leads", "external_code", "external_code VARCHAR(128)")
+    _sqlite_add_column(db, "leads", "school", "school VARCHAR(255) DEFAULT ''")
+    _sqlite_add_column(db, "leads", "grade", "grade VARCHAR(64) DEFAULT ''")
+    _sqlite_add_column(db, "leads", "age", "age INTEGER")
+    _sqlite_add_column(db, "leads", "campus", "campus VARCHAR(255) DEFAULT ''")
+    _sqlite_add_column(
+        db,
+        "leads",
+        "imported_creator_name",
+        "imported_creator_name VARCHAR(128) DEFAULT ''",
+    )
+    db.execute(text("CREATE INDEX IF NOT EXISTS ix_leads_external_code ON leads (external_code)"))
+    db.commit()
+
 def migrate_class_default_room(db: Session) -> None:
     """班级默认上课教室。"""
     _sqlite_add_column(db, "class_rooms", "default_room", "default_room VARCHAR(128) DEFAULT ''")
@@ -528,6 +546,12 @@ def migrate_course_package_metadata(db: Session) -> None:
     )
     _sqlite_add_column(
         db,
+        "student_course_packages",
+        "priority_consume",
+        "priority_consume BOOLEAN DEFAULT 0",
+    )
+    _sqlite_add_column(
+        db,
         "course_consumptions",
         "package_allocations",
         "package_allocations TEXT DEFAULT '[]'",
@@ -551,6 +575,7 @@ def seed_essentials(db: Session) -> None:
     migrate_enrollment_order_pay(db)
     migrate_student_linked_courses(db)
     migrate_lead_contact_fields(db)
+    migrate_lead_import_fields(db)
     migrate_class_default_room(db)
     migrate_class_record_salary_hours(db)
     migrate_course_package_metadata(db)
@@ -602,6 +627,13 @@ def seed_demo_business(db: Session) -> None:
     reassign_students_to_crs(db)
     seed_demo_students(db, target=40)
     seed_demo_courses(db)
+    # Keep every development list usable for end-to-end UI testing.  This is
+    # intentionally isolated from production essentials and is idempotent:
+    # existing rows are preserved and only tables with fewer than five rows
+    # receive additional demo records.
+    from app.demo_seed import seed_demo_workspace
+
+    seed_demo_workspace(db)
 
 def seed_all(db: Session) -> None:
     """

@@ -20,6 +20,8 @@ import {
 } from '../../constants/templateParams'
 import { useListDetailStateCleanup } from '../../composables/useListScrollRestore'
 import { usePageBack } from '../../composables/usePageBack'
+import { useBreakpoint } from '../../composables/useBreakpoint'
+import MobileActionBar from '../../components/MobileActionBar.vue'
 
 const SCENE_LABELS: Record<string, string> = {
   xhs_script: '小红书话术',
@@ -32,6 +34,7 @@ const SCENE_LABELS: Record<string, string> = {
 
 const route = useRoute()
 const router = useRouter()
+const { isApp } = useBreakpoint()
 const { goBack } = usePageBack('/templates')
 useListDetailStateCleanup('templates', 'oc-template-list-state')
 
@@ -306,7 +309,7 @@ onMounted(load)
 
 <template>
   <div v-loading="loading" class="tpl-detail oc-page-shell">
-    <div class="page-toolbar">
+    <div v-if="!isApp" class="page-toolbar">
       <el-page-header @back="goBack">
         <template #content>
           <span class="page-title">{{ kindLabel }}详情</span>
@@ -534,6 +537,14 @@ onMounted(load)
           </section>
         </aside>
       </div>
+
+      <MobileActionBar :visible="isApp && Boolean(item)">
+        <el-button v-if="editing" :disabled="saving" @click="cancelEdit">取消</el-button>
+        <el-button v-if="!editing" @click="copyContent">复制</el-button>
+        <el-button v-if="!editing" type="primary" plain @click="goGenerate">生成</el-button>
+        <el-button v-if="!editing" type="primary" @click="startEdit">编辑</el-button>
+        <el-button v-else type="primary" :loading="saving" @click="saveEdit">保存</el-button>
+      </MobileActionBar>
     </template>
   </div>
 </template>
@@ -857,14 +868,67 @@ onMounted(load)
 @media (max-width: 767px) {
   .toolbar-actions {
     width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .toolbar-actions .el-button {
-    flex: 1;
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+  }
+
+  .toolbar-actions .el-button:first-child {
+    grid-column: 1 / -1;
   }
 
   .content-pre {
     max-height: none;
+  }
+}
+
+@media (max-width: 1199px) {
+  .hero {
+    border-color: #e1cfad;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #fffdf8 0%, #faf6ee 48%, #f5e6c8 120%);
+    box-shadow: 0 6px 18px rgba(88, 60, 24, 0.08);
+  }
+
+  .hero-ornament {
+    display: none;
+  }
+
+  .hero-kicker {
+    color: #8b5406;
+  }
+
+  .hero-title {
+    color: #3f3a34;
+  }
+
+  .meta-chip {
+    border-color: rgba(181, 145, 83, 0.24);
+    border-radius: 6px;
+    background: rgba(255, 253, 248, 0.7);
+    color: #44403c;
+  }
+
+  .meta-chip.muted {
+    color: #78716c;
+  }
+
+  .panel {
+    border-color: #dde2e8;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(31, 35, 40, 0.05);
+  }
+
+  .content-pre {
+    border-color: #d8dee6;
+    border-radius: 8px;
+    background: #f8f9fa;
   }
 }
 </style>

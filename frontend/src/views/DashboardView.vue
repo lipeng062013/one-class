@@ -7,6 +7,8 @@ import { getIntegrationsStatus, type IntegrationsStatus } from '../api/system'
 import { listMaterialsApi, type Material } from '../api/materials'
 import { useAuthStore } from '../stores/auth'
 import TodayTodos from '../components/TodayTodos.vue'
+import AppSheet from '../components/AppSheet.vue'
+import { useBreakpoint } from '../composables/useBreakpoint'
 import {
   defaultSelectedIds,
   filterCatalogForRole,
@@ -20,6 +22,7 @@ import {
 
 const auth = useAuthStore()
 const router = useRouter()
+const { isMobile, isApp } = useBreakpoint()
 const summary = ref<DashboardSummary | null>(null)
 const integrations = ref<IntegrationsStatus | null>(null)
 const pending = ref<Material[]>([])
@@ -126,11 +129,15 @@ const storageKey = computed(() =>
 const selectedIds = ref<string[]>([])
 
 function reloadQuickSelection() {
-  selectedIds.value = loadQuickLinkIds(storageKey.value, catalog.value)
+  selectedIds.value = loadQuickLinkIds(storageKey.value, catalog.value).slice(0, MAX_QUICK)
 }
 
 const quickLinks = computed((): QuickLinkDef[] =>
   resolveQuickLinks(selectedIds.value, catalog.value),
+)
+
+const compactQuickLinks = computed(() =>
+  quickLinks.value.slice(0, isMobile.value ? 8 : 12),
 )
 
 /** 自定义弹窗：图标勾选 + 拖拽排序（无长列表） */
@@ -150,7 +157,7 @@ const touchStart = ref<{ x: number; y: number } | null>(null)
 const TOUCH_DRAG_PX = 8
 
 function openCustomQuick() {
-  draftIds.value = [...selectedIds.value]
+  draftIds.value = selectedIds.value.slice(0, MAX_QUICK)
   draggingId.value = null
   dragOverId.value = null
   touchPendingId.value = null
@@ -279,7 +286,7 @@ function onSelPointerUp() {
 }
 
 function resetDraftDefaults() {
-  draftIds.value = defaultSelectedIds(catalog.value)
+  draftIds.value = defaultSelectedIds(catalog.value).slice(0, MAX_QUICK)
 }
 
 function saveCustomQuick() {
@@ -287,8 +294,9 @@ function saveCustomQuick() {
     ElMessage.warning('请至少保留一个快捷入口')
     return
   }
-  saveQuickLinkIds(storageKey.value, draftIds.value)
-  selectedIds.value = [...draftIds.value]
+  const nextIds = draftIds.value.slice(0, MAX_QUICK)
+  saveQuickLinkIds(storageKey.value, nextIds)
+  selectedIds.value = [...nextIds]
   customVisible.value = false
   ElMessage.success('快捷入口已保存')
 }
@@ -346,11 +354,92 @@ onMounted(load)
     :class="{
       'is-ops': !auth.isTeacher,
       'is-teacher': auth.isTeacher,
+      'is-compact': isApp,
       [`work-${workLayout}`]: true,
     }"
   >
+    <div v-if="isApp" class="compact-home">
+      <header class="compact-welcome">
+        <div>
+          <p>{{ todayLabel }}</p>
+          <h1>{{ greeting }}，{{ displayName }}</h1>
+        </div>
+        <span class="compact-role">{{ roleText }}</span>
+      </header>
+
+      <section v-if="stats.length" class="compact-stats" v-loading="loading" aria-label="运营概览">
+        <button
+          v-for="s in stats"
+          :key="s.key"
+          type="button"
+          class="compact-stat"
+          :class="`tone-${s.tone}`"
+          @click="router.push(s.path)"
+        >
+          <el-icon><component :is="s.icon" /></el-icon>
+          <strong>{{ s.value }}</strong>
+          <span>{{ s.title }}</span>
+        </button>
+      </section>
+
+      <section class="compact-section compact-quick">
+        <div class="compact-section-head">
+          <h2>快捷入口</h2>
+          <el-button
+            text
+            circle
+            class="compact-setting"
+            aria-label="自定义快捷入口"
+            title="自定义快捷入口"
+            @click="openCustomQuick"
+          >
+            <el-icon><Setting /></el-icon>
+          </el-button>
+        </div>
+        <div class="compact-quick-grid">
+          <button
+            v-for="link in compactQuickLinks"
+            :key="link.id"
+            type="button"
+            class="compact-quick-item"
+            @click="router.push(link.path)"
+          >
+            <span class="compact-quick-icon">
+              <el-icon><component :is="link.icon" /></el-icon>
+            </span>
+            <span>{{ link.title }}</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="compact-section compact-todo-section">
+        <TodayTodos compact class="compact-todos" />
+      </section>
+
+      <section v-if="showPendingPanel" class="compact-section compact-pending">
+        <div class="compact-section-head">
+          <h2>待处理素材 <span v-if="pending.length">{{ pending.length }}</span></h2>
+          <el-button link type="primary" @click="router.push('/materials')">全部</el-button>
+        </div>
+        <button
+          v-for="row in pending.slice(0, 3)"
+          :key="row.id"
+          type="button"
+          class="compact-pending-item"
+          @click="router.push(`/materials/${row.id}`)"
+        >
+          <span class="compact-pending-title">{{ row.title }}</span>
+          <span class="compact-pending-meta">
+            {{ [row.grade, row.subject].filter(Boolean).join(' · ') || '素材' }}
+          </span>
+          <el-icon><ArrowRight /></el-icon>
+        </button>
+        <p v-if="!loading && !pending.length" class="compact-empty">暂无待处理素材</p>
+      </section>
+    </div>
+
     <!-- 顶栏：欢迎 + AI（有 AI 时并排，无则欢迎区拉满） -->
-    <header class="top-band" :class="{ 'has-ai': showAiPanel }">
+    <header v-if="!isApp" class="top-band" :class="{ 'has-ai': showAiPanel }">
       <section class="hero">
         <div class="hero-ornament" aria-hidden="true" />
         <div class="hero-body">
@@ -408,7 +497,7 @@ onMounted(load)
 
     <!-- 运营：数据概览（全宽；按权限展示卡片） -->
     <section
-      v-if="!auth.isTeacher && stats.length"
+      v-if="!isApp && !auth.isTeacher && stats.length"
       class="section stats-section"
       v-loading="loading"
     >
@@ -441,7 +530,7 @@ onMounted(load)
     </section>
 
     <!-- 主工作区：按可见模块自适应列数，避免权限缺口留白 -->
-    <div class="work-grid" :class="`layout-${workLayout}`">
+    <div v-if="!isApp" class="work-grid" :class="`layout-${workLayout}`">
       <TodayTodos class="todo-block" />
 
       <section class="panel quick-panel">
@@ -466,7 +555,6 @@ onMounted(load)
             :key="link.id"
             type="button"
             class="quick-item"
-            :class="{ 'is-primary': link.primary }"
             @click="router.push(link.path)"
           >
             <span class="quick-icon" aria-hidden="true">
@@ -520,21 +608,22 @@ onMounted(load)
       </section>
     </div>
 
-    <!-- 自定义快捷入口：已选图标网格（拖拽排序）+ 下方勾选目录 -->
-    <el-dialog
+    <!-- 自定义快捷入口：App 用底部 Sheet，PC 用居中 Dialog -->
+    <AppSheet
+      v-if="isApp"
       v-model="customVisible"
       title="自定义快捷入口"
-      width="560px"
-      align-center
-      destroy-on-close
-      append-to-body
-      class="quick-custom-dialog"
+      compact-size="min(92%, 820px)"
+      force-bottom
+      modal-class="quick-custom-sheet"
       :close-on-click-modal="false"
+      destroy-on-close
     >
       <div class="qc-body">
-        <section class="qc-section">
+        <p class="qc-intro">点选下方功能加入首页；已选可拖动排序，最多 {{ MAX_QUICK }} 个。</p>
+        <section class="qc-section qc-section--selected">
           <div class="qc-section-title">
-            已选功能
+            <span class="qc-section-label">已选功能</span>
             <span class="qc-section-hint">拖拽排序 · {{ draftIds.length }}/{{ MAX_QUICK }}</span>
           </div>
           <div v-if="!draftSelected.length" class="qc-empty">尚未选择，请从下方添加</div>
@@ -566,10 +655,10 @@ onMounted(load)
                 @click="removeDraft(item.id, $event)"
                 @pointerdown.stop
               >
-                <el-icon :size="11"><Close /></el-icon>
+                <el-icon :size="12"><Close /></el-icon>
               </button>
               <span class="qc-sel-icon" aria-hidden="true">
-                <el-icon :size="22"><component :is="item.icon" /></el-icon>
+                <el-icon :size="20"><component :is="item.icon" /></el-icon>
               </span>
               <span class="qc-sel-title">{{ item.title }}</span>
             </div>
@@ -577,7 +666,9 @@ onMounted(load)
         </section>
 
         <section v-for="g in catalogGroups" :key="g.group" class="qc-section">
-          <div class="qc-section-title">{{ g.group }}</div>
+          <div class="qc-section-title">
+            <span class="qc-section-label">{{ g.group }}</span>
+          </div>
           <div class="qc-catalog-grid">
             <button
               v-for="item in g.items"
@@ -588,11 +679,11 @@ onMounted(load)
               @click="toggleDraft(item.id)"
             >
               <span class="qc-pick-icon">
-                <el-icon :size="20"><component :is="item.icon" /></el-icon>
+                <el-icon :size="18"><component :is="item.icon" /></el-icon>
               </span>
               <span class="qc-pick-title">{{ item.title }}</span>
               <span v-if="isDraftSelected(item.id)" class="qc-pick-check" aria-hidden="true">
-                <el-icon :size="12"><Check /></el-icon>
+                <el-icon :size="11"><Check /></el-icon>
               </span>
             </button>
           </div>
@@ -601,7 +692,98 @@ onMounted(load)
 
       <template #footer>
         <div class="qc-footer">
-          <el-button text type="primary" @click="resetDraftDefaults">恢复默认</el-button>
+          <button type="button" class="qc-footer-reset" @click="resetDraftDefaults">恢复默认</button>
+          <el-button class="qc-footer-cancel" @click="customVisible = false">取消</el-button>
+          <el-button type="primary" class="qc-footer-save" @click="saveCustomQuick">保存</el-button>
+        </div>
+      </template>
+    </AppSheet>
+
+    <el-dialog
+      v-else
+      v-model="customVisible"
+      title="自定义快捷入口"
+      width="560px"
+      align-center
+      destroy-on-close
+      append-to-body
+      class="quick-custom-dialog"
+      :close-on-click-modal="false"
+    >
+      <div class="qc-body">
+        <p class="qc-intro">点选下方功能加入首页；已选可拖动排序，最多 {{ MAX_QUICK }} 个。</p>
+        <section class="qc-section qc-section--selected">
+          <div class="qc-section-title">
+            <span class="qc-section-label">已选功能</span>
+            <span class="qc-section-hint">拖拽排序 · {{ draftIds.length }}/{{ MAX_QUICK }}</span>
+          </div>
+          <div v-if="!draftSelected.length" class="qc-empty">尚未选择，请从下方添加</div>
+          <div v-else class="qc-sel-grid" @dragover.prevent>
+            <div
+              v-for="item in draftSelected"
+              :key="item.id"
+              class="qc-sel"
+              :class="{
+                'is-dragging': draggingId === item.id,
+                'is-over': dragOverId === item.id && draggingId !== item.id,
+              }"
+              :data-qc-id="item.id"
+              draggable="true"
+              @dragstart="onSelDragStart(item.id, $event)"
+              @dragover="onSelDragOver(item.id, $event)"
+              @dragend="onSelDragEnd"
+              @drop="onSelDrop"
+              @pointerdown="onSelPointerDown(item.id, $event)"
+              @pointermove="onSelPointerMove"
+              @pointerup="onSelPointerUp"
+              @pointercancel="onSelPointerUp"
+            >
+              <button
+                type="button"
+                class="qc-sel-x"
+                title="移除"
+                aria-label="移除"
+                @click="removeDraft(item.id, $event)"
+                @pointerdown.stop
+              >
+                <el-icon :size="12"><Close /></el-icon>
+              </button>
+              <span class="qc-sel-icon" aria-hidden="true">
+                <el-icon :size="20"><component :is="item.icon" /></el-icon>
+              </span>
+              <span class="qc-sel-title">{{ item.title }}</span>
+            </div>
+          </div>
+        </section>
+
+        <section v-for="g in catalogGroups" :key="g.group" class="qc-section">
+          <div class="qc-section-title">
+            <span class="qc-section-label">{{ g.group }}</span>
+          </div>
+          <div class="qc-catalog-grid">
+            <button
+              v-for="item in g.items"
+              :key="item.id"
+              type="button"
+              class="qc-pick"
+              :class="{ 'is-on': isDraftSelected(item.id) }"
+              @click="toggleDraft(item.id)"
+            >
+              <span class="qc-pick-icon">
+                <el-icon :size="18"><component :is="item.icon" /></el-icon>
+              </span>
+              <span class="qc-pick-title">{{ item.title }}</span>
+              <span v-if="isDraftSelected(item.id)" class="qc-pick-check" aria-hidden="true">
+                <el-icon :size="11"><Check /></el-icon>
+              </span>
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <template #footer>
+        <div class="qc-footer">
+          <button type="button" class="qc-footer-reset" @click="resetDraftDefaults">恢复默认</button>
           <div class="qc-footer-right">
             <el-button @click="customVisible = false">取消</el-button>
             <el-button type="primary" @click="saveCustomQuick">保存</el-button>
@@ -1004,51 +1186,77 @@ onMounted(load)
   margin-right: 2px;
 }
 
-/* 自定义快捷入口：内容区（scoped 仍作用于 teleport 内节点） */
+/* 自定义快捷入口：内容区 */
 .qc-body {
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.qc-intro {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed rgba(161, 98, 7, 0.28);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fff9eb, #fffdf8);
+  color: #8b5406;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
 }
 
 .qc-section {
-  margin-bottom: 16px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid rgba(181, 145, 83, 0.2);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 254, 251, 0.96), rgba(250, 246, 238, 0.72));
 }
 
-.qc-section:last-of-type {
-  margin-bottom: 0;
+.qc-section--selected {
+  border-color: rgba(161, 98, 7, 0.28);
+  background: linear-gradient(160deg, #fffefb, #faf3e6);
 }
 
 .qc-section-title {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--oc-ink, #44403c);
   margin-bottom: 10px;
+}
+
+.qc-section-label {
+  font-size: 13px;
+  font-weight: 720;
+  color: #6b4f25;
 }
 
 .qc-section-hint {
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--oc-muted, #78716c);
+  font-variant-numeric: tabular-nums;
 }
 
 .qc-empty {
-  padding: 14px;
+  padding: 18px 12px;
   text-align: center;
   font-size: 13px;
   color: var(--oc-muted, #78716c);
-  border: 1px dashed var(--oc-border, #e8e0d0);
+  border: 1px dashed rgba(181, 145, 83, 0.35);
   border-radius: 12px;
-  background: #faf6ee;
+  background: rgba(255, 253, 248, 0.8);
 }
 
-/* 已选：仅图标网格，可拖拽 */
-.qc-sel-grid {
+/* 固定 4 列，避免 auto-fill 在窄屏形变 */
+.qc-sel-grid,
+.qc-catalog-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .qc-sel {
@@ -1056,14 +1264,19 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: flex-start;
   gap: 6px;
-  padding: 12px 6px 10px;
-  border-radius: 12px;
-  border: 1px solid var(--oc-border, #e8e0d0);
+  min-width: 0;
+  min-height: 86px;
+  padding: 12px 4px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(181, 145, 83, 0.28);
   background: linear-gradient(160deg, #fffdf8, #f5e6c8);
+  box-shadow: 0 4px 12px rgba(88, 60, 24, 0.06);
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
+  box-sizing: border-box;
   transition: box-shadow 0.15s, transform 0.15s, border-color 0.15s, opacity 0.15s;
 }
 
@@ -1074,35 +1287,38 @@ onMounted(load)
 .qc-sel.is-dragging {
   touch-action: none;
   opacity: 0.55;
-  box-shadow: 0 8px 18px rgba(41, 37, 36, 0.12);
+  box-shadow: 0 10px 22px rgba(41, 37, 36, 0.14);
   transform: scale(1.03);
   z-index: 2;
 }
 
 .qc-sel.is-over {
   border-color: var(--oc-primary, #a16207);
-  box-shadow: 0 0 0 2px rgba(161, 98, 7, 0.18);
+  box-shadow: 0 0 0 2px rgba(161, 98, 7, 0.2);
 }
 
 .qc-sel-icon {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
   border-radius: 11px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--oc-primary, #a16207);
+  background: linear-gradient(145deg, #c07a12, #a16207);
   color: #fffdf8;
   pointer-events: none;
+  box-shadow: 0 4px 10px rgba(161, 98, 7, 0.22);
 }
 
 .qc-sel-title {
+  width: 100%;
+  padding: 0 2px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 650;
   color: var(--oc-ink, #44403c);
   text-align: center;
   line-height: 1.25;
-  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1113,64 +1329,67 @@ onMounted(load)
   position: absolute;
   top: 4px;
   right: 4px;
-  width: 18px;
-  height: 18px;
-  border: none;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  border: 1.5px solid #fff;
   border-radius: 50%;
   padding: 0;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(41, 37, 36, 0.55);
+  background: rgba(68, 64, 60, 0.72);
   color: #fff;
   cursor: pointer;
   z-index: 3;
+  box-sizing: border-box;
+  line-height: 0;
 }
 
-.qc-sel-x:hover {
+.qc-sel-x:active {
   background: #b91c1c;
-}
-
-.qc-catalog-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
-  gap: 10px;
 }
 
 .qc-pick {
   appearance: none;
   position: relative;
-  border: 1px solid var(--oc-border, #e8e0d0);
-  border-radius: 12px;
-  background: #fff;
-  padding: 12px 6px 10px;
+  min-width: 0;
+  min-height: 86px;
+  padding: 12px 4px 10px;
+  border: 1px solid rgba(181, 145, 83, 0.22);
+  border-radius: 14px;
+  background: #fffefb;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: flex-start;
   gap: 6px;
   cursor: pointer;
   font: inherit;
   color: inherit;
-  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
-  min-height: 84px;
   box-sizing: border-box;
+  box-shadow: 0 2px 8px rgba(88, 60, 24, 0.04);
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s, transform 0.15s;
 }
 
-.qc-pick:hover {
-  border-color: var(--el-color-primary-light-5);
-  background: #faf6ee;
+.qc-pick:active {
+  transform: scale(0.98);
 }
 
 .qc-pick.is-on {
-  border-color: var(--el-color-primary-light-5);
+  border-color: rgba(161, 98, 7, 0.42);
   background: linear-gradient(160deg, #fffdf8, #f5e6c8);
-  box-shadow: 0 0 0 1px rgba(161, 98, 7, 0.12);
+  box-shadow:
+    0 0 0 1px rgba(161, 98, 7, 0.12),
+    0 6px 14px rgba(161, 98, 7, 0.1);
 }
 
 .qc-pick-icon {
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: 11px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1179,17 +1398,19 @@ onMounted(load)
 }
 
 .qc-pick.is-on .qc-pick-icon {
-  background: var(--oc-primary, #a16207);
+  background: linear-gradient(145deg, #c07a12, #a16207);
   color: #fffdf8;
+  box-shadow: 0 4px 10px rgba(161, 98, 7, 0.2);
 }
 
 .qc-pick-title {
-  font-size: 12px;
-  font-weight: 600;
+  width: 100%;
+  padding: 0 2px;
+  font-size: 11px;
+  font-weight: 650;
   color: var(--oc-ink, #44403c);
   text-align: center;
   line-height: 1.25;
-  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1199,29 +1420,69 @@ onMounted(load)
   position: absolute;
   top: 5px;
   right: 5px;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
   border-radius: 50%;
-  background: var(--oc-primary, #a16207);
+  border: 1.5px solid #fff;
+  background: linear-gradient(145deg, #c07a12, #a16207);
   color: #fff;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
+  line-height: 0;
+  box-shadow: 0 2px 6px rgba(161, 98, 7, 0.28);
 }
 
 .qc-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  flex-wrap: wrap;
+}
+
+.qc-footer-reset {
+  flex: 0 0 auto;
+  height: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #a16207;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 680;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.qc-footer-reset:active {
+  background: rgba(161, 98, 7, 0.08);
 }
 
 .qc-footer-right {
-  display: inline-flex;
+  display: flex;
+  flex: 1 1 auto;
   gap: 8px;
+  min-width: 0;
   margin-left: auto;
+}
+
+.qc-footer-cancel,
+.qc-footer-save,
+.qc-footer-right .el-button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0 !important;
+  border-radius: 12px !important;
+  font-weight: 700 !important;
+}
+
+.qc-footer-cancel {
+  flex: 0 0 88px;
 }
 
 .count-tag {
@@ -1281,16 +1542,6 @@ onMounted(load)
   box-shadow: 0 6px 16px rgba(41, 37, 36, 0.05);
 }
 
-.quick-item.is-primary {
-  border-color: var(--el-color-primary-light-7);
-  background: linear-gradient(145deg, #fffdf8, #f5e6c8);
-}
-
-.quick-item.is-primary .quick-icon {
-  background: var(--oc-primary, #a16207);
-  color: #fffdf8;
-}
-
 .quick-icon {
   width: 40px;
   height: 40px;
@@ -1298,9 +1549,10 @@ onMounted(load)
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f5f0e6;
+  background: linear-gradient(160deg, #faf3e6, #f0e4d0);
   color: var(--oc-primary, #a16207);
   flex-shrink: 0;
+  box-shadow: 0 2px 6px rgba(161, 98, 7, 0.08);
 }
 
 .quick-text {
@@ -1595,7 +1847,7 @@ onMounted(load)
   }
 }
 
-@media (max-width: 991px) {
+@media (max-width: 1199px) {
   .top-band {
     margin-bottom: 14px;
   }
@@ -1627,11 +1879,301 @@ onMounted(load)
     font-size: 1.5rem;
   }
 }
+
+/* WAP / Pad 工作台：App 信息架构 */
+.dashboard.is-compact {
+  max-width: none;
+}
+
+.compact-home {
+  display: grid;
+  gap: 12px;
+}
+
+.compact-welcome {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 14px 12px;
+  border: 1px solid rgba(181, 145, 83, 0.26);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.92), transparent 48%),
+    linear-gradient(160deg, #fffdf8, #f5e6c8);
+  box-shadow: 0 10px 24px rgba(88, 60, 24, 0.08);
+}
+
+.compact-welcome p {
+  margin: 0 0 4px;
+  color: #8b5406;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.compact-welcome h1 {
+  margin: 0;
+  color: var(--oc-ink, #44403c);
+  font-size: 20px;
+  font-weight: 760;
+  line-height: 1.25;
+}
+
+.compact-role {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(161, 98, 7, 0.22);
+  background: rgba(255, 253, 248, 0.88);
+  color: var(--oc-primary, #a16207);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.compact-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-height: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.compact-stat {
+  appearance: none;
+  min-width: 0;
+  min-height: 84px;
+  padding: 12px 10px;
+  border: 1px solid rgba(181, 145, 83, 0.24);
+  border-radius: 16px;
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.9), transparent 50%),
+    #fffdf8;
+  color: var(--oc-muted, #78716c);
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  grid-template-rows: auto auto;
+  align-content: center;
+  align-items: center;
+  gap: 2px 8px;
+  text-align: left;
+  box-shadow: 0 8px 18px rgba(88, 60, 24, 0.06);
+}
+
+.compact-stat:last-child {
+  border-right: 1px solid rgba(181, 145, 83, 0.24);
+}
+
+.compact-stat .el-icon {
+  grid-row: 1 / -1;
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  background: #f5f0e6;
+  color: var(--oc-primary, #a16207);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+
+.compact-stat.tone-rose .el-icon {
+  color: #c4515f;
+  background: #fdf0f1;
+}
+
+.compact-stat.tone-sage .el-icon {
+  color: #438a6b;
+  background: #eef7f2;
+}
+
+.compact-stat strong {
+  color: var(--oc-ink, #44403c);
+  font-size: 20px;
+  font-weight: 760;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.compact-stat span {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-section {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(181, 145, 83, 0.24);
+  border-radius: 18px;
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.78), transparent 42%),
+    #fffdf8;
+  box-shadow: 0 10px 24px rgba(88, 60, 24, 0.07);
+}
+
+.compact-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  margin-bottom: 10px;
+}
+
+.compact-section-head h2 {
+  margin: 0;
+  color: var(--oc-ink, #44403c);
+  font-size: 15px;
+  font-weight: 720;
+}
+
+.compact-section-head h2 span {
+  margin-left: 4px;
+  color: var(--oc-primary, #a16207);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.compact-setting {
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 12px !important;
+  border: 1px solid rgba(161, 98, 7, 0.2) !important;
+  background: linear-gradient(180deg, #fffefb, #f5e6c8) !important;
+  color: #6b4f25 !important;
+}
+
+.compact-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.compact-quick-item {
+  appearance: none;
+  min-width: 0;
+  min-height: 78px;
+  height: auto;
+  padding: 10px 4px 8px;
+  border: 1px solid rgba(181, 145, 83, 0.2);
+  border-radius: 14px;
+  background: #fffefb;
+  color: var(--oc-ink, #44403c);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.2;
+  box-shadow: 0 2px 8px rgba(88, 60, 24, 0.04);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.compact-quick-item:active {
+  background: linear-gradient(160deg, #fffdf8, #f5e6c8);
+  border-color: rgba(161, 98, 7, 0.28);
+  transform: scale(0.98);
+}
+
+.compact-quick-item > span:last-child {
+  width: 100%;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 全部入口统一：浅金图标底 + 金色图标，不再区分 primary 实心块 */
+.compact-quick-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: linear-gradient(160deg, #faf3e6, #f0e4d0);
+  color: var(--oc-primary, #a16207);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  box-shadow: 0 2px 6px rgba(161, 98, 7, 0.08);
+}
+
+.compact-pending-item {
+  appearance: none;
+  width: 100%;
+  min-height: 52px;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid rgba(181, 145, 83, 0.16);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fffefb, #faf6ee);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 18px;
+  align-items: center;
+  gap: 8px;
+  color: var(--oc-ink, #44403c);
+  text-align: left;
+}
+
+.compact-pending-title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-pending-meta,
+.compact-pending-item .el-icon {
+  color: var(--oc-muted, #78716c);
+  font-size: 11px;
+}
+
+.compact-empty {
+  margin: 8px 0 0;
+  color: var(--oc-muted, #78716c);
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (min-width: 768px) and (max-width: 1199px) {
+  .compact-home {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: 14px;
+  }
+
+  .compact-welcome,
+  .compact-stats,
+  .compact-pending {
+    grid-column: 1 / -1;
+  }
+
+  .compact-quick-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 380px) {
+  .compact-quick-grid,
+  .qc-sel-grid,
+  .qc-catalog-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
 </style>
 
 <!-- append-to-body 弹层：壳层样式必须非 scoped -->
 <style>
-/* 遮罩用 flex 把弹窗摆到视口正中（PC 不再贴顶） */
+/* PC：自定义快捷入口居中 Dialog */
 .el-overlay-dialog:has(.quick-custom-dialog) {
   display: flex;
   align-items: center;
@@ -1639,23 +2181,27 @@ onMounted(load)
   overflow: auto;
 }
 
-/* align-center + margin:auto：垂直/水平居中 */
 .quick-custom-dialog.el-dialog {
   max-width: min(560px, calc(100vw - 24px));
   margin: auto !important;
-  border-radius: 14px;
+  border-radius: 16px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   max-height: min(86vh, 86dvh);
   position: relative;
   top: auto;
+  border: 1px solid rgba(181, 145, 83, 0.28);
+  background: linear-gradient(165deg, #fffefb, #fffdf8 40%, #faf6ee);
+  box-shadow: 0 22px 52px rgba(41, 37, 36, 0.16);
 }
 
 .quick-custom-dialog .el-dialog__header {
   flex-shrink: 0;
-  padding: 14px 16px 10px;
+  padding: 16px 18px 12px;
   margin-right: 0;
+  border-bottom: 1px solid rgba(181, 145, 83, 0.18);
+  background: linear-gradient(180deg, #fffdf9, #f8f0e0);
 }
 
 .quick-custom-dialog .el-dialog__body {
@@ -1666,53 +2212,63 @@ onMounted(load)
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding: 4px 16px 12px;
+  padding: 12px 16px 14px;
   touch-action: pan-y;
 }
 
 .quick-custom-dialog .el-dialog__footer {
   flex-shrink: 0;
-  padding: 10px 16px 14px;
-  border-top: 1px solid var(--oc-border, #e8e0d0);
-  background: #fffdf8;
+  padding: 12px 16px 14px;
+  border-top: 1px solid rgba(181, 145, 83, 0.2);
+  background: linear-gradient(180deg, #faf3e6, #fffdf8);
 }
 
-/* wap / pad：更矮可视区，保证正文可滚、目录可见 */
-@media (max-width: 991px) {
-  .quick-custom-dialog.el-dialog {
-    width: calc(100vw - 20px) !important;
-    max-width: calc(100vw - 20px) !important;
-    max-height: min(88vh, 88dvh);
-  }
-
-  .quick-custom-dialog .el-dialog__body {
-    /* 给 header+footer 留空，正文独立滚动 */
-    max-height: min(62vh, 62dvh);
-  }
-
-  .quick-custom-dialog .qc-sel-grid {
-    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
-  }
-
-  .quick-custom-dialog .qc-catalog-grid {
-    grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
-  }
+.quick-custom-dialog .qc-footer-right .el-button {
+  min-width: 96px;
+  min-height: 40px;
+  margin: 0 !important;
+  border-radius: 12px !important;
+  font-weight: 680 !important;
 }
 
-@media (max-width: 480px) {
-  .quick-custom-dialog .el-dialog__footer .qc-footer {
-    flex-direction: column;
-    align-items: stretch;
-  }
+/* AppSheet：快捷入口自定义 */
+.el-drawer.oc-app-sheet.quick-custom-sheet .el-drawer__body {
+  padding: 12px 14px 8px !important;
+}
 
-  .quick-custom-dialog .el-dialog__footer .qc-footer-right {
-    margin-left: 0;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-  }
+.el-drawer.oc-app-sheet.quick-custom-sheet .el-drawer__footer {
+  padding: 10px 14px calc(12px + env(safe-area-inset-bottom, 0px)) !important;
+}
 
-  .quick-custom-dialog .el-dialog__footer .qc-footer-right .el-button {
-    margin: 0;
-  }
+.el-drawer.oc-app-sheet.quick-custom-sheet .qc-footer {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.el-drawer.oc-app-sheet.quick-custom-sheet .qc-footer .el-button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 46px !important;
+  margin: 0 !important;
+  border-radius: 13px !important;
+  font-weight: 720 !important;
+}
+
+.el-drawer.oc-app-sheet.quick-custom-sheet .qc-footer-cancel {
+  flex: 0 0 92px !important;
+}
+
+.el-drawer.oc-app-sheet.quick-custom-sheet .qc-footer-reset {
+  flex: 0 0 auto;
+  height: 46px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #a16207;
+  font-size: 13px;
+  font-weight: 700;
 }
 </style>

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -25,7 +25,7 @@ class StudentCreate(PhoneInputModel):
     status: str = "active"
     source_lead_id: Optional[int] = None
     notes: str = ""
-    # 新建时须关联至少一门课程（与报名页「新建学生」一致）
+    # 建档可选关联课程；报名页新建学生不再要求，课程在报名/续费时选择
     courses: list[StudentCourseLink] = Field(default_factory=list, max_length=20)
 
 
@@ -39,7 +39,7 @@ class StudentUpdate(PhoneInputModel):
     status: Optional[str] = None
     source_lead_id: Optional[int] = None
     notes: Optional[str] = None
-    # 与新建一致：可更新关联课程
+    # 可选：编辑档案不必传；不传则保留原 linked_courses。报读在报名/续费维护。
     courses: Optional[list[StudentCourseLink]] = Field(default=None, max_length=20)
 
 
@@ -135,3 +135,24 @@ class LearningRecordOut(BaseModel):
 
 STUDENT_STATUSES = {"active", "paused", "graduated", "quit"}
 CLASS_STATUSES = {"attended", "absent", "late", "leave", "makeup"}
+
+
+class StudentPackageUpdate(BaseModel):
+    """更新课包：有效期 / 优先消耗。"""
+
+    valid_until: Optional[date] = None
+    clear_valid_until: bool = False
+    priority_consume: Optional[bool] = None
+
+
+class StudentCourseClose(BaseModel):
+    """结课：将某课程下可用课包标记为已结课。"""
+
+    course_id: int
+    clear_remain: bool = False
+
+
+class StudentPackageClearHours(BaseModel):
+    """课时清零备注（可选）。"""
+
+    remark: str = ""

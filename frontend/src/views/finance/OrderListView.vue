@@ -1,20 +1,32 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { createOrderApi, listOrdersApi, type FinanceOrder } from '../../api/finance'
 import { listStudentsApi, type Student } from '../../api/students'
+import ListLoadStatus from '../../components/ListLoadStatus.vue'
 import PcPagerBar from '../../components/PcPagerBar.vue'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import CompactFilterBar from '../../components/CompactFilterBar.vue'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
+import { useResponsiveSurface } from '../../composables/useResponsiveSurface'
+import { SCROLL_CHUNK } from '../../composables/useServerPagedList'
 
 const LIST_STATE_KEY = 'oc-order-list-state'
 const PAGE_SIZES = [10, 20, 50, 100]
 
 const route = useRoute()
 const router = useRouter()
-const { isCompact } = useBreakpoint()
+const { isApp } = useBreakpoint()
+const { surface: formSurface, surfaceProps: formSurfaceProps } = useResponsiveSurface({
+  dialogMaxWidth: '460px',
+  dialogWidth: '460px',
+  compactSize: '88%',
+  modalClass: 'order-manual-sheet',
+})
 const loading = ref(false)
+const loadingMore = ref(false)
 const tab = ref('list')
 const keywordOrder = ref('')
 const keywordStudent = ref('')
@@ -24,10 +36,16 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 const selectedOrderId = ref<number | null>(null)
+const filterVisible = ref(false)
+const sentinelRef = ref<HTMLElement | null>(null)
+let scrollObserver: IntersectionObserver | null = null
 const visibleCount = computed(() => rows.value.length)
+const hasMore = computed(() => rows.value.length < total.value)
+const activeFilterCount = computed(() => Number(Boolean(keywordOrder.value.trim())) + Number(Boolean(keywordStudent.value.trim())) + Number(Boolean(orderType.value)))
 
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('orders', {
   visibleCount,
+  enabled: isApp,
 })
 
 const formVisible = ref(false)
@@ -125,34 +143,98 @@ function saveListState() {
   }
 }
 
-async function load(options?: { forceTop?: boolean }) {
-  const snap = options?.forceTop ? null : takeSnapshotForLoad(route.path)
-  if (options?.forceTop) clearSnapshot()
-  loading.value = true
+function buildOrderParams(pageNum: number, size: number) {
+  return {
+    order_no: keywordOrder.value.trim() || undefined,
+    student_q: keywordStudent.value.trim() || undefined,
+    order_type: orderType.value || undefined,
+    page: pageNum,
+    page_size: size,
+  }
+}
+
+async function load(options?: { forceTop?: boolean; append?: boolean }) {
+  const append = Boolean(options?.append && isApp.value)
+  const snap = options?.forceTop || append ? null : takeSnapshotForLoad(route.path)
+  if (options?.forceTop) {
+    clearSnapshot()
+    page.value = 1
+  }
+
+  if (append) loadingMore.value = true
+  else loading.value = true
+
   try {
-    const res = await listOrdersApi({
-      order_no: keywordOrder.value.trim() || undefined,
-      student_q: keywordStudent.value.trim() || undefined,
-      order_type: orderType.value || undefined,
-      page: page.value,
-      page_size: pageSize.value,
-    })
-    rows.value = res.items
-    total.value = res.total
+    if (isApp.value) {
+      if (!append) page.value = 1
+      const res = await listOrdersApi(buildOrderParams(page.value, SCROLL_CHUNK))
+      rows.value = append ? [...rows.value, ...res.items] : res.items
+      total.value = res.total
+      if (!append && snap?.visibleCount != null) {
+        const need = Math.max(SCROLL_CHUNK, snap.visibleCount)
+        while (rows.value.length < need && rows.value.length < total.value) {
+          page.value += 1
+          const more = await listOrdersApi(buildOrderParams(page.value, SCROLL_CHUNK))
+          rows.value = [...rows.value, ...more.items]
+          total.value = more.total
+          if (!more.items.length) break
+        }
+      }
+    } else {
+      const res = await listOrdersApi(buildOrderParams(page.value, pageSize.value))
+      rows.value = res.items
+      total.value = res.total
+    }
   } catch {
-    rows.value = []
-    total.value = 0
+    if (append) page.value = Math.max(1, page.value - 1)
+    else {
+      rows.value = []
+      total.value = 0
+    }
   } finally {
     loading.value = false
+    loadingMore.value = false
   }
   saveListState()
-  void finishListEnter({ snap, forceTop: !!options?.forceTop })
+  if (!append) void finishListEnter({ snap, forceTop: !!options?.forceTop })
+}
+
+function loadMore() {
+  if (!isApp.value || loading.value || loadingMore.value || !hasMore.value) return
+  page.value += 1
+  void load({ append: true })
+}
+
+function setupScrollObserver() {
+  teardownScrollObserver()
+  if (!isApp.value) return
+  const el = sentinelRef.value
+  if (!el) return
+  scrollObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((e) => e.isIntersecting)) loadMore()
+    },
+    { root: null, rootMargin: '160px 0px', threshold: 0 },
+  )
+  scrollObserver.observe(el)
+}
+
+function teardownScrollObserver() {
+  scrollObserver?.disconnect()
+  scrollObserver = null
 }
 
 function runQuery() {
   page.value = 1
   selectedOrderId.value = null
   void load({ forceTop: true })
+}
+
+function resetFilters() {
+  keywordOrder.value = ''
+  keywordStudent.value = ''
+  orderType.value = ''
+  runQuery()
 }
 
 function onPagerChange() {
@@ -193,7 +275,7 @@ async function saveManual() {
     return
   }
   if (!form.item_summary.trim()) {
-    ElMessage.warning('请填写购买项目/摘要')
+    ElMessage.warning('请填写购买项目摘要')
     return
   }
   saving.value = true
@@ -225,10 +307,28 @@ function goDetail(row: FinanceOrder) {
   void router.push(`/finance/orders/${row.id}`)
 }
 
-onMounted(() => {
-  restoreListState()
-  void load()
+watch(isApp, async () => {
+  selectedOrderId.value = null
+  page.value = 1
+  await load({ forceTop: true })
+  await nextTick()
+  if (isApp.value) setupScrollObserver()
+  else teardownScrollObserver()
 })
+
+watch(sentinelRef, async () => {
+  await nextTick()
+  if (isApp.value) setupScrollObserver()
+})
+
+onMounted(async () => {
+  restoreListState()
+  await load()
+  await nextTick()
+  if (isApp.value) setupScrollObserver()
+})
+
+onUnmounted(() => teardownScrollObserver())
 </script>
 
 <template>
@@ -251,11 +351,11 @@ onMounted(() => {
         </button>
       </div>
 
-      <el-tabs v-model="tab" class="mode-tabs">
+      <el-tabs v-model="tab" class="mode-tabs" :class="{ 'oc-segment-tabs': isApp }">
         <el-tab-pane label="订单列表" name="list" />
       </el-tabs>
 
-      <div class="filter-row">
+      <div v-if="!isApp" class="filter-row">
         <el-input v-model="keywordOrder" clearable placeholder="订单号" class="filter-search" @keyup.enter="runQuery">
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
@@ -280,9 +380,22 @@ onMounted(() => {
         <el-button type="primary" @click="runQuery">查询</el-button>
       </div>
 
-      <div v-if="isCompact" class="m-card-list">
-        <div v-if="!rows.length && !loading" class="m-card m-card-empty">暂无订单</div>
-        <div
+      <CompactFilterBar v-if="isApp" :active-count="activeFilterCount" :total="total" label="笔订单" @open="filterVisible = true" />
+      <MobileFilterSheet v-model="filterVisible" :active-count="activeFilterCount" @apply="runQuery" @reset="resetFilters">
+        <el-form label-position="top" @submit.prevent="runQuery">
+          <el-form-item label="订单号"><el-input v-model="keywordOrder" clearable placeholder="输入订单号" /></el-form-item>
+          <el-form-item label="学员"><el-input v-model="keywordStudent" clearable placeholder="姓名 / 手机号" /></el-form-item>
+          <el-form-item label="订单类型"><el-select v-model="orderType" clearable placeholder="全部类型"><el-option label="报名" value="enroll" /><el-option label="续费" value="renew" /><el-option label="充值" value="recharge" /><el-option label="转课" value="transfer" /><el-option label="退课" value="drop" /><el-option label="退款" value="refund" /><el-option label="其他" value="other" /></el-select></el-form-item>
+        </el-form>
+      </MobileFilterSheet>
+
+      <div v-if="isApp" class="m-card-list">
+        <div v-if="!rows.length && !loading" class="m-card m-card-empty oc-app-empty">
+          <span class="order-empty-ico" aria-hidden="true">🧾</span>
+          <strong>暂无订单</strong>
+          <em>{{ activeFilterCount ? '当前筛选没有匹配订单，可清空条件后重试' : '报名/续费、充值或手工建单后会出现在这里' }}</em>
+        </div>
+        <article
           v-for="row in rows"
           :key="row.id"
           class="m-card order-m-card"
@@ -290,12 +403,12 @@ onMounted(() => {
           @click="goDetail(row)"
         >
           <div class="m-card-head">
-            <div>
+            <div class="order-m-who">
               <div class="link-name">{{ row.order_no }}</div>
               <div class="pc-muted">{{ row.student }} · {{ row.phone || '—' }}</div>
             </div>
             <el-tag
-              :type="row.status === 'void' ? 'info' : 'success'"
+              :type="row.status === 'void' ? 'info' : row.status === 'paid' ? 'success' : 'warning'"
               size="small"
               effect="plain"
               round
@@ -303,14 +416,21 @@ onMounted(() => {
               {{ row.status_label }}
             </el-tag>
           </div>
-          <div class="m-card-meta">
-            <span><span class="k">类型</span>{{ row.order_type_label }}</span>
-            <span><span class="k">项目</span>{{ row.item || '—' }}</span>
-            <span><span class="k">应收</span>{{ formatMoney(row.receivable) }}</span>
-            <span><span class="k">实收</span>{{ formatMoney(row.received) }}</span>
-            <span><span class="k">时间</span>{{ formatTime(row.created_at) }}</span>
+          <div class="oc-meta-chips order-m-chips">
+            <span class="oc-meta-chip">{{ row.order_type_label }}</span>
+            <span v-if="row.item" class="oc-meta-chip">{{ row.item }}</span>
+            <span class="oc-meta-chip is-gold">应收 {{ formatMoney(row.receivable) }}</span>
+            <span class="oc-meta-chip is-ok">实收 {{ formatMoney(row.received) }}</span>
+            <span class="oc-meta-chip">{{ formatTime(row.created_at) }}</span>
           </div>
-        </div>
+        </article>
+        <div ref="sentinelRef" class="list-load-sentinel"><ListLoadStatus :has-more="hasMore"
+          :loading="loadingMore"
+          :loaded="rows.length"
+          :total="total"
+          @more="loadMore"
+          @retry="loadMore"
+        /></div>
       </div>
 
       <div v-else class="oc-compact-table-wrap">
@@ -377,20 +497,18 @@ onMounted(() => {
       @change="onPagerChange"
     />
 
-    <el-dialog
+    <component
+      :is="formSurface"
       v-model="formVisible"
+      v-bind="formSurfaceProps"
       :title="`手工建单 · ${typeLabels[form.order_type] || '其他'}`"
-      width="460px"
-      destroy-on-close
-      align-center
     >
       <el-alert
         type="info"
         :closable="false"
         show-icon
         class="manual-tip"
-        title="转课/退课等为财务记账入口；复杂调课仍请在教务侧调整班级与课包。"
-      />
+        title="转课/退课等为财务记账入口；复杂调课仍请在教务侧调整班级与课包。" />
       <el-form label-width="100px" style="margin-top: 12px">
         <el-form-item label="学员" required>
           <el-select
@@ -420,12 +538,12 @@ onMounted(() => {
         <el-form-item label="项目摘要" required>
           <el-input v-model="form.item_summary" placeholder="如：转至高一物理 / 退剩余课时" />
         </el-form-item>
-        <el-form-item label="应收(元)">
+        <el-form-item label="应收(免">
           <el-input-number v-model="form.receivable" :min="0" :precision="2" style="width: 100%" />
         </el-form-item>
         <el-form-item label="实收(元)">
           <el-input-number v-model="form.received" :min="0" :precision="2" style="width: 100%" />
-          <p class="form-hint">退课/退款可填实退金额；将生成待确认收支。</p>
+          <p class="form-hint">退课退款可填实退金额；将生成待确认收支。</p>
         </el-form-item>
         <el-form-item label="支付方式">
           <el-select v-model="form.pay_method" style="width: 100%">
@@ -441,7 +559,7 @@ onMounted(() => {
         <el-button @click="formVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="saveManual">创建并查看</el-button>
       </template>
-    </el-dialog>
+    </component>
   </div>
 </template>
 
@@ -508,30 +626,62 @@ onMounted(() => {
   box-shadow: 0 0 0 1px rgba(161, 98, 7, 0.16);
 }
 
+.order-m-who {
+  min-width: 0;
+}
+
+.order-m-chips {
+  margin-top: 10px;
+}
+
+.order-empty-ico {
+  font-size: 28px;
+  line-height: 1;
+}
+
 .filter-type {
   width: 140px;
 }
 
-@media (max-width: 991px) {
-  .filter-row {
-    flex-direction: column;
-    align-items: stretch;
+@media (max-width: 1199px) {
+  .module-card {
+    margin-top: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
   }
 
-  .filter-search,
-  .filter-type {
-    width: 100% !important;
+  .module-card :deep(.el-card__body) {
+    padding: 0;
   }
 
   .quick-actions {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 6px;
+    margin-bottom: 12px;
+    padding: 10px 8px;
+    border: 1px solid rgba(181, 145, 83, 0.2);
+    border-radius: 16px;
+    background: #fffdf8;
   }
 
   .quick-item {
     min-width: 0;
+    min-height: 64px;
     padding: 10px 6px;
+  }
+
+  .filter-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+  }
+
+  .filter-search,
+  .filter-type {
+    width: 100% !important;
   }
 }
 

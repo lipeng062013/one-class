@@ -10,6 +10,8 @@ import {
 } from '../../api/copies'
 import { useListDetailStateCleanup } from '../../composables/useListScrollRestore'
 import { usePageBack } from '../../composables/usePageBack'
+import { useBreakpoint } from '../../composables/useBreakpoint'
+import MobileActionBar from '../../components/MobileActionBar.vue'
 
 const MODE_LABELS: Record<string, string> = {
   template: '仅模板',
@@ -27,6 +29,7 @@ const PLATFORM_LABELS: Record<string, string> = {
 
 const route = useRoute()
 const router = useRouter()
+const { isApp } = useBreakpoint()
 const { goBack } = usePageBack('/copies')
 useListDetailStateCleanup('copies', 'oc-copy-list-state')
 
@@ -186,7 +189,7 @@ onMounted(load)
 
 <template>
   <div v-loading="loading" class="copy-detail oc-page-shell">
-    <div class="page-toolbar">
+    <div v-if="!isApp" class="page-toolbar">
       <el-page-header @back="goBack">
         <template #content>
           <span class="page-title">文案详情</span>
@@ -376,6 +379,26 @@ onMounted(load)
           </section>
         </aside>
       </div>
+
+      <MobileActionBar :visible="isApp && Boolean(item)">
+        <el-button v-if="editing" :disabled="saving" @click="cancelEdit">取消</el-button>
+        <el-button v-if="!editing" @click="copyAll">复制全文</el-button>
+        <el-button
+          v-if="!editing"
+          type="primary"
+          @click="startEdit"
+        >
+          编辑
+        </el-button>
+        <el-button
+          v-else
+          type="primary"
+          :loading="saving"
+          @click="saveEdit"
+        >
+          保存
+        </el-button>
+      </MobileActionBar>
     </template>
   </div>
 </template>
@@ -706,7 +729,7 @@ onMounted(load)
 
 @media (max-width: 767px) {
   .toolbar-actions {
-    width: 100%;
+    width: auto;
   }
 
   .toolbar-actions .el-button {
@@ -727,6 +750,54 @@ onMounted(load)
 
   .copy-body-text {
     max-height: none;
+  }
+}
+
+@media (max-width: 1199px) {
+  .hero {
+    border-color: #e1cfad;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #fffdf8 0%, #faf6ee 48%, #f5e6c8 120%);
+    box-shadow: 0 6px 18px rgba(88, 60, 24, 0.08);
+  }
+
+  .hero-ornament {
+    display: none;
+  }
+
+  .hero-kicker,
+  .stat-num {
+    color: #8b5406;
+  }
+
+  .hero-title {
+    color: #3f3a34;
+  }
+
+  .meta-chip,
+  .stat-pill {
+    border-color: rgba(181, 145, 83, 0.24);
+    border-radius: 6px;
+    background: rgba(255, 253, 248, 0.7);
+    color: #44403c;
+  }
+
+  .meta-chip.muted,
+  .stat-label {
+    color: #78716c;
+  }
+
+  .panel {
+    border-color: #dde2e8;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(31, 35, 40, 0.05);
+  }
+
+  .copy-body-text {
+    border-color: #d8dee6;
+    border-radius: 8px;
+    background: #f8f9fa;
   }
 }
 </style>

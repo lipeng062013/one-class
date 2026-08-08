@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -23,9 +23,14 @@ import {
   type TeacherManage,
   type TimeoutClassRecord,
 } from '../../api/academic'
+import ListLoadStatus from '../../components/ListLoadStatus.vue'
 import PcPagerBar from '../../components/PcPagerBar.vue'
+import CompactFilterBar from '../../components/CompactFilterBar.vue'
+import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
+import AppSheet from '../../components/AppSheet.vue'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { SCROLL_CHUNK } from '../../composables/useServerPagedList'
 
 type TabName = 'roll' | 'timeout' | 'makeup'
 type RollStep = 'pick' | 'form'
@@ -48,12 +53,13 @@ const WEEK_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const { isCompact } = useBreakpoint()
-/** 点名/课消写操作：老师默认无 academic.write */
+const { isApp } = useBreakpoint()
+/** 点名/课消写操作：老师默认有 academic.write */
 const canRollCall = computed(() => auth.hasPermission('academic.write'))
 
 const activeTab = ref<TabName>('roll')
 const loading = ref(false)
+const loadingMore = ref(false)
 const exporting = ref(false)
 const page = ref(1)
 const pageSize = ref(20)
@@ -64,6 +70,22 @@ const makeupRows = ref<MakeupClassRecord[]>([])
 const classes = ref<ClassRoom[]>([])
 const courses = ref<Course[]>([])
 const teachers = ref<TeacherManage[]>([])
+const sentinelRef = ref<HTMLElement | null>(null)
+let scrollObserver: IntersectionObserver | null = null
+const hasMore = computed(() => {
+  const len =
+    activeTab.value === 'timeout'
+      ? timeoutRows.value.length
+      : activeTab.value === 'makeup'
+        ? makeupRows.value.length
+        : recordRows.value.length
+  return len < total.value
+})
+const loadedCount = computed(() => {
+  if (activeTab.value === 'timeout') return timeoutRows.value.length
+  if (activeTab.value === 'makeup') return makeupRows.value.length
+  return recordRows.value.length
+})
 
 function defaultDateRange(): [string, string] {
   const end = new Date()
@@ -81,6 +103,14 @@ const filters = reactive({
   status: 'normal' as string | undefined,
   student_q: '',
 })
+const filterVisible = ref(false)
+const activeFilterCount = computed(() =>
+  Number(Boolean(filters.class_id)) +
+  Number(Boolean(filters.course_id)) +
+  Number(Boolean(filters.teacher_id)) +
+  Number(filters.status !== 'normal' && Boolean(filters.status)) +
+  Number(Boolean(filters.student_q.trim())),
+)
 
 const rollVisible = ref(false)
 const saving = ref(false)
@@ -147,7 +177,7 @@ function startOfDay(d: Date) {
   return x
 }
 
-/** 周一为一周起始 */
+/** 周一为一周起始*/
 function startOfWeek(d: Date) {
   const x = startOfDay(d)
   const day = x.getDay()
@@ -247,8 +277,12 @@ function resetFilters() {
   resetPageAndLoad()
 }
 
-async function load() {
-  loading.value = true
+async function load(options?: { append?: boolean }) {
+  const append = Boolean(options?.append && isApp.value)
+  if (isApp.value && !append) page.value = 1
+  if (append) loadingMore.value = true
+  else loading.value = true
+  const size = isApp.value ? SCROLL_CHUNK : pageSize.value
   try {
     if (activeTab.value === 'timeout') {
       const [start, end] = filters.classDate || []
@@ -259,9 +293,9 @@ async function load() {
         start: dateStart(start),
         end: dateEnd(end),
         page: page.value,
-        page_size: pageSize.value,
+        page_size: size,
       })
-      timeoutRows.value = res.items
+      timeoutRows.value = append ? [...timeoutRows.value, ...res.items] : res.items
       total.value = res.total
       return
     }
@@ -273,9 +307,9 @@ async function load() {
         start: dateStart(start),
         end: dateEnd(end),
         page: page.value,
-        page_size: pageSize.value,
+        page_size: size,
       })
-      makeupRows.value = res.items
+      makeupRows.value = append ? [...makeupRows.value, ...res.items] : res.items
       total.value = res.total
       return
     }
@@ -291,18 +325,47 @@ async function load() {
       class_start: dateStart(classStart),
       class_end: dateEnd(classEnd),
       page: page.value,
-      page_size: pageSize.value,
+      page_size: size,
     })
-    recordRows.value = res.items
+    recordRows.value = append ? [...recordRows.value, ...res.items] : res.items
     total.value = res.total
   } catch {
-    recordRows.value = []
-    timeoutRows.value = []
-    makeupRows.value = []
-    total.value = 0
+    if (append) page.value = Math.max(1, page.value - 1)
+    else {
+      recordRows.value = []
+      timeoutRows.value = []
+      makeupRows.value = []
+      total.value = 0
+    }
   } finally {
     loading.value = false
+    loadingMore.value = false
   }
+}
+
+function loadMore() {
+  if (!isApp.value || loading.value || loadingMore.value || !hasMore.value) return
+  page.value += 1
+  void load({ append: true })
+}
+
+function setupScrollObserver() {
+  teardownScrollObserver()
+  if (!isApp.value) return
+  const el = sentinelRef.value
+  if (!el) return
+  scrollObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((e) => e.isIntersecting)) loadMore()
+    },
+    { root: null, rootMargin: '160px 0px', threshold: 0 },
+  )
+  scrollObserver.observe(el)
+}
+
+function teardownScrollObserver() {
+  scrollObserver?.disconnect()
+  scrollObserver = null
 }
 
 async function loadMeta() {
@@ -720,7 +783,7 @@ async function exportRecords() {
     link.click()
     link.remove()
     URL.revokeObjectURL(url)
-    ElMessage.success(`已导出 ${items.length} 条点名记录`)
+    ElMessage.success(`已导出${items.length} 条点名记录`)
   } finally {
     exporting.value = false
   }
@@ -730,26 +793,65 @@ function openTimeoutRoll(row: TimeoutClassRecord) {
   void openRoll({ class_id: row.class_id, schedule_id: row.id })
 }
 
+watch(isApp, async () => {
+  page.value = 1
+  await load()
+  await nextTick()
+  if (isApp.value) setupScrollObserver()
+  else teardownScrollObserver()
+})
+
+watch(sentinelRef, async () => {
+  await nextTick()
+  if (isApp.value) setupScrollObserver()
+})
+
 onMounted(async () => {
   await loadMeta()
   await load()
   await tryOpenRollFromQuery()
+  await nextTick()
+  if (isApp.value) setupScrollObserver()
 })
+
+onUnmounted(() => teardownScrollObserver())
 </script>
 
 <template>
   <div class="record-page">
-    <div class="page-toolbar">
-      <div class="toolbar-title-block">
+    <div
+      v-if="!isApp || canRollCall"
+      class="page-toolbar"
+      :class="{ 'is-app-roll': isApp && canRollCall }"
+    >
+      <div v-if="!isApp" class="toolbar-title-block">
         <el-page-header class="is-title-only" content="上课记录" />
         <p class="page-sub">点名 · 课消 · 超时提醒 · 缺课补课</p>
       </div>
-      <div v-if="canRollCall" class="toolbar-right">
+      <div v-if="canRollCall && !isApp" class="toolbar-right">
         <el-button type="primary" class="tb-btn tb-btn--primary" @click="openRoll()">
           <el-icon><EditPen /></el-icon>
           点名
         </el-button>
       </div>
+      <button
+        v-if="canRollCall && isApp"
+        type="button"
+        class="roll-entry-cta"
+        @click="openRoll()"
+      >
+        <span class="roll-entry-ico" aria-hidden="true">
+          <el-icon><EditPen /></el-icon>
+        </span>
+        <span class="roll-entry-copy">
+          <strong>课堂点名</strong>
+          <em>按周选课 · 一键完成课消</em>
+        </span>
+        <span class="roll-entry-go">
+          去点名
+          <el-icon><ArrowRight /></el-icon>
+        </span>
+      </button>
     </div>
 
     <el-card class="module-card" shadow="never" v-loading="loading">
@@ -780,7 +882,9 @@ onMounted(async () => {
         </el-tab-pane>
       </el-tabs>
 
-      <div class="filter-panel">
+      <CompactFilterBar v-if="isApp" :active-count="activeFilterCount" :total="total" :label="`${tabMeta[activeTab].label}`" @open="filterVisible = true" />
+
+      <div v-if="!isApp" class="filter-panel">
         <div class="filter-panel-head">
           <div class="filter-panel-title">
             <span class="sec-dot" />
@@ -842,7 +946,7 @@ onMounted(async () => {
               <el-input
                 v-model="filters.student_q"
                 clearable
-                placeholder="请输入学员姓名/手机号"
+                placeholder="请输入学员姓名手机号"
                 @keyup.enter="resetPageAndLoad"
               >
                 <template #prefix><el-icon><Search /></el-icon></template>
@@ -899,7 +1003,19 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div class="table-actions">
+      <MobileFilterSheet v-model="filterVisible" :active-count="activeFilterCount" @apply="resetPageAndLoad" @reset="resetFilters">
+        <el-form label-position="top">
+          <el-form-item v-if="activeTab === 'makeup'" label="搜索学员"><el-input v-model="filters.student_q" clearable placeholder="学员姓名 / 手机号" /></el-form-item>
+          <el-form-item label="上课日期"><el-date-picker v-model="filters.classDate" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" range-separator="~" /></el-form-item>
+          <el-form-item v-if="activeTab === 'roll'" label="点名日期"><el-date-picker v-model="filters.recordDate" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" range-separator="~" /></el-form-item>
+          <el-form-item v-if="activeTab === 'roll'" label="状态"><el-select v-model="filters.status" clearable placeholder="全部状态"><el-option label="正常" value="normal" /><el-option label="已撤销" value="void" /></el-select></el-form-item>
+          <el-form-item label="所在班级"><el-select v-model="filters.class_id" clearable filterable placeholder="全部班级"><el-option v-for="c in classes" :key="c.id" :label="c.name" :value="c.id" /></el-select></el-form-item>
+          <el-form-item v-if="activeTab !== 'makeup'" label="授课课程"><el-select v-model="filters.course_id" clearable filterable placeholder="全部课程"><el-option v-for="c in courses" :key="c.id" :label="c.name" :value="c.id" /></el-select></el-form-item>
+          <el-form-item v-if="activeTab !== 'makeup'" label="上课老师"><el-select v-model="filters.teacher_id" clearable filterable placeholder="全部老师"><el-option v-for="t in teachers" :key="t.id" :label="t.name" :value="t.id" /></el-select></el-form-item>
+        </el-form>
+      </MobileFilterSheet>
+
+      <div class="table-actions" :class="{ 'is-app-actions': isApp }">
         <div class="action-left">
           <el-button
             v-if="canRollCall && activeTab === 'makeup'"
@@ -931,14 +1047,19 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div v-if="isCompact" class="m-card-list">
-        <div v-if="!currentRows.length && !loading" class="m-card m-card-empty">暂无数据</div>
+      <div v-if="isApp" class="m-card-list">
+        <div v-if="!currentRows.length && !loading" class="m-card m-card-empty record-empty">
+          <span class="record-empty-ico" aria-hidden="true">📋</span>
+          <strong>暂无{{ tabMeta[activeTab].label }}</strong>
+          <em>{{ tabHint }}</em>
+        </div>
 
-        <div
+        <article
           v-for="row in recordRows"
           v-show="activeTab === 'roll'"
           :key="`r-${row.id}`"
           class="m-card record-m-card"
+          :class="{ 'is-void': row.status === 'void' }"
           @click="openDetail(row)"
         >
           <div class="m-card-head">
@@ -950,6 +1071,7 @@ onMounted(async () => {
                   <el-tag
                     size="small"
                     effect="plain"
+                    round
                     :type="row.status === 'void' ? 'info' : 'success'"
                   >
                     {{ row.status_label }}
@@ -958,15 +1080,23 @@ onMounted(async () => {
                 <div class="record-m-sub">{{ row.course_name || '未关联课程' }}</div>
               </div>
             </div>
-            <span class="pc-mono amount-text">{{ formatMoney(row.amount) }}</span>
+            <div class="record-m-amount">
+              <span class="record-m-amount-label">课消</span>
+              <strong class="pc-mono amount-text">{{ formatMoney(row.amount) }}</strong>
+            </div>
           </div>
-          <div class="m-card-meta">
-            <span><span class="k">点名</span>{{ formatDateTime(row.roll_at) }}</span>
-            <span><span class="k">上课</span>{{ formatTimeRange(row.class_start, row.class_end) }}</span>
-            <span><span class="k">授课</span>{{ row.hours }}课时</span>
-            <span><span class="k">计薪</span>{{ row.salary_hours }}课时</span>
-            <span><span class="k">实到</span>{{ row.attendance }}</span>
-            <span><span class="k">老师</span>{{ row.teachers || '-' }}</span>
+          <div class="record-m-chips">
+            <span class="rm-chip">
+              <el-icon><Clock /></el-icon>
+              {{ formatTimeRange(row.class_start, row.class_end) }}
+            </span>
+            <span class="rm-chip">授课 {{ row.hours }} 课时</span>
+            <span class="rm-chip">计薪 {{ row.salary_hours }} 课时</span>
+            <span class="rm-chip">实到 {{ row.attendance }}</span>
+            <span v-if="row.teachers" class="rm-chip">{{ row.teachers }}</span>
+          </div>
+          <div class="record-m-foot">
+            <span class="record-m-roll-at">点名 {{ formatDateTime(row.roll_at) }}</span>
           </div>
           <div class="m-card-actions" @click.stop>
             <el-button size="small" type="primary" plain @click="openDetail(row)">详情</el-button>
@@ -980,9 +1110,9 @@ onMounted(async () => {
               撤销
             </el-button>
           </div>
-        </div>
+        </article>
 
-        <div
+        <article
           v-for="row in timeoutRows"
           v-show="activeTab === 'timeout'"
           :key="`t-${row.id}`"
@@ -994,27 +1124,31 @@ onMounted(async () => {
               <div class="record-m-text">
                 <div class="m-card-title">
                   {{ row.class_name }}
-                  <el-tag size="small" effect="plain" type="warning">未点名</el-tag>
+                  <el-tag size="small" effect="plain" round type="warning">未点名</el-tag>
                 </div>
                 <div class="record-m-sub">{{ row.course_name || '未关联课程' }}</div>
               </div>
             </div>
+            <span class="timeout-badge">超时</span>
           </div>
-          <div class="m-card-meta">
-            <span><span class="k">上课</span>{{ formatTimeRange(row.start_at, row.end_at) }}</span>
-            <span><span class="k">老师</span>{{ row.teachers || '-' }}</span>
-            <span><span class="k">教室</span>{{ row.room || '-' }}</span>
+          <div class="record-m-chips">
+            <span class="rm-chip">
+              <el-icon><Clock /></el-icon>
+              {{ formatTimeRange(row.start_at, row.end_at) }}
+            </span>
+            <span v-if="row.teachers" class="rm-chip">{{ row.teachers }}</span>
+            <span class="rm-chip">教室 {{ row.room || '未设' }}</span>
           </div>
           <div v-if="canRollCall" class="m-card-actions">
             <el-button size="small" type="primary" @click="openTimeoutRoll(row)">去点名</el-button>
           </div>
-        </div>
+        </article>
 
-        <div
+        <article
           v-for="row in makeupRows"
           v-show="activeTab === 'makeup'"
           :key="`m-${row.id}`"
-          class="m-card record-m-card"
+          class="m-card record-m-card is-makeup"
           @click="openDetail(row)"
         >
           <div class="m-card-head">
@@ -1023,21 +1157,36 @@ onMounted(async () => {
               <div class="record-m-text">
                 <div class="m-card-title">
                   {{ row.student_name }}
-                  <el-tag size="small" effect="plain" type="danger">{{ row.makeup_status_label }}</el-tag>
+                  <el-tag size="small" effect="plain" round type="danger">
+                    {{ row.makeup_status_label }}
+                  </el-tag>
                 </div>
                 <div class="record-m-sub">{{ row.class_name }}</div>
               </div>
             </div>
           </div>
-          <div class="m-card-meta">
-            <span><span class="k">缺课</span>{{ row.absence_status_label }}</span>
-            <span><span class="k">应扣</span>{{ row.expected_hours }}课时</span>
-            <span><span class="k">实扣</span>{{ row.actual_hours }}课时</span>
-            <span><span class="k">上课</span>{{ formatTimeRange(row.class_start, row.class_end) }}</span>
+          <div class="record-m-chips">
+            <span class="rm-chip tone-danger">缺课 {{ row.absence_status_label }}</span>
+            <span class="rm-chip">应扣 {{ row.expected_hours }} 课时</span>
+            <span class="rm-chip">实扣 {{ row.actual_hours }} 课时</span>
+            <span class="rm-chip">
+              <el-icon><Clock /></el-icon>
+              {{ formatTimeRange(row.class_start, row.class_end) }}
+            </span>
           </div>
           <div class="m-card-actions" @click.stop>
-            <el-button size="small" plain @click="openDetail(row)">详情</el-button>
+            <el-button size="small" type="primary" plain @click="openDetail(row)">详情</el-button>
           </div>
+        </article>
+        <div ref="sentinelRef" class="list-load-sentinel">
+          <ListLoadStatus
+            :has-more="hasMore"
+            :loading="loadingMore"
+            :loaded="loadedCount"
+            :total="total"
+            @more="loadMore"
+            @retry="loadMore"
+          />
         </div>
       </div>
 
@@ -1262,37 +1411,37 @@ onMounted(async () => {
 
     <PcPagerBar v-model:page="page" v-model:page-size="pageSize" :total="total" @change="load" />
 
-    <el-dialog
+    <!-- WAP/Pad：点名用底部 AppSheet；PC 用 Dialog -->
+    <AppSheet
+      v-if="isApp"
       v-model="rollVisible"
       :title="rollDialogTitle"
-      :width="isCompact ? '96%' : rollStep === 'pick' ? '780px' : '640px'"
+      compact-size="min(94%, 920px)"
+      force-bottom
+      modal-class="roll-app-sheet"
       destroy-on-close
-      top="4vh"
-      align-center
-      class="roll-dialog"
     >
-      <!-- 步骤一：周课表选课（仅上课记录 / 工作台快捷入口） -->
       <div v-if="rollStep === 'pick'" v-loading="rollOptionsLoading" class="roll-pick">
         <div class="roll-week-nav">
-          <el-button class="tb-btn" plain @click="changeRollWeek(-1)">
+          <button type="button" class="roll-week-nav-btn" @click="changeRollWeek(-1)">
             <el-icon><ArrowLeft /></el-icon>
-            上周
-          </el-button>
+            <span>上周</span>
+          </button>
           <div class="roll-week-center">
             <div class="roll-week-label">{{ rollWeekLabel }}</div>
-            <el-button
-              link
-              type="primary"
+            <button
+              type="button"
+              class="roll-today-link"
               :disabled="isCurrentRollWeek && selectedDayMeta?.isToday"
               @click="resetRollWeekToToday"
             >
               回到今天
-            </el-button>
+            </button>
           </div>
-          <el-button class="tb-btn" plain @click="changeRollWeek(1)">
-            下周
+          <button type="button" class="roll-week-nav-btn" @click="changeRollWeek(1)">
+            <span>下周</span>
             <el-icon><ArrowRight /></el-icon>
-          </el-button>
+          </button>
         </div>
 
         <div ref="dayStripRef" class="roll-day-strip">
@@ -1312,8 +1461,8 @@ onMounted(async () => {
             <span class="rd-week">{{ day.weekLabel }}</span>
             <span class="rd-num">{{ day.dayNum }}</span>
             <span class="rd-month">{{ day.monthLabel }}</span>
-            <span v-if="day.lessonCount" class="rd-badge">
-              {{ day.pendingCount || day.lessonCount }}
+            <span v-if="day.lessonCount" class="rd-badge" :class="{ 'is-pending': day.pendingCount > 0 }">
+              {{ day.pendingCount > 0 ? day.pendingCount : day.lessonCount }}
             </span>
             <span v-if="day.isToday" class="rd-today-tag">今</span>
             <span v-else-if="day.isFuture" class="rd-future-tag">未到</span>
@@ -1383,13 +1532,12 @@ onMounted(async () => {
                 <span v-if="lesson.member_count">{{ lesson.member_count }}人</span>
               </div>
               <div class="rl-action">
-                {{
-                  lesson.status === 'completed'
-                    ? '已完成'
-                    : isLessonRollable(lesson)
-                      ? '点击点名'
-                      : '不可点名'
-                }}
+                <template v-if="lesson.status === 'completed'">已完成</template>
+                <template v-else-if="isLessonRollable(lesson)">
+                  去点名
+                  <el-icon><ArrowRight /></el-icon>
+                </template>
+                <template v-else>不可点名</template>
               </div>
             </button>
           </div>
@@ -1401,14 +1549,11 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- 步骤二：点名表单 -->
       <div v-else class="roll-form-step">
         <div v-if="selectedRollLesson" class="roll-selected-card">
           <div class="rsc-top">
             <span class="rsc-badge">已选课次</span>
-            <el-button class="rsc-reselect" link type="primary" @click="backToRollPick">
-              重选
-            </el-button>
+            <el-button class="rsc-reselect" link type="primary" @click="backToRollPick">重选</el-button>
           </div>
           <div class="rsc-main">
             <span class="rsc-avatar">{{ nameInitial(selectedRollLesson.class_name) }}</span>
@@ -1440,13 +1585,13 @@ onMounted(async () => {
           </div>
         </div>
 
-        <el-form :label-position="isCompact ? 'top' : 'right'" :label-width="isCompact ? undefined : '90px'">
+        <el-form label-position="top" class="roll-form">
           <el-form-item label="授课课时">
             <el-input-number v-model="rollForm.hours" :min="0.01" :step="0.25" :precision="2" />
-            <div class="form-tip">按课次扣学员课时，默认单次 1 课时（与上课墙钟时长无关；计薪课时另计）</div>
+            <div class="form-tip">按课次扣学员课时，默认单次 1 课时</div>
           </el-form-item>
           <el-form-item label="上课内容">
-            <el-input v-model="rollForm.content" type="textarea" :rows="2" placeholder="可选" />
+            <el-input v-model="rollForm.content" type="textarea" :rows="2" placeholder="可选，记录本节课要点" />
           </el-form-item>
         </el-form>
 
@@ -1471,16 +1616,247 @@ onMounted(async () => {
                   <span v-if="m.phone" class="phone">{{ m.phone }}</span>
                 </div>
               </div>
-              <el-radio-group v-model="attendMap[m.id]" size="small">
+              <el-radio-group v-model="attendMap[m.id]" size="small" class="attend-radios">
                 <el-radio-button v-for="o in ATTEND_OPTS" :key="o.value" :value="o.value">
                   {{ o.label }}
                 </el-radio-button>
               </el-radio-group>
             </div>
           </div>
-          <p class="attend-hint">
-            扣课规则：出勤/迟到扣课；请假/缺勤不扣课时。本模块不包含请假申请流程。
+          <p class="attend-hint">扣课规则：出勤/迟到扣课；请假/缺勤不扣课时。</p>
+        </div>
+        <el-empty v-else-if="rollForm.class_id" description="该班级暂无在读学员" :image-size="64" />
+      </div>
+
+      <template #footer>
+        <el-button v-if="rollStep === 'form'" @click="backToRollPick">返回课表</el-button>
+        <el-button @click="rollVisible = false">取消</el-button>
+        <el-button
+          v-if="rollStep === 'form'"
+          type="primary"
+          :loading="saving"
+          @click="submitRoll"
+        >
+          确认点名
+        </el-button>
+      </template>
+    </AppSheet>
+
+    <el-dialog
+      v-else
+      v-model="rollVisible"
+      :title="rollDialogTitle"
+      :width="rollStep === 'pick' ? '780px' : '640px'"
+      destroy-on-close
+      top="4vh"
+      align-center
+      class="roll-dialog"
+    >
+      <!-- 步骤一：周课表选课（仅上课记录 / 工作台快捷入口） -->
+      <div v-if="rollStep === 'pick'" v-loading="rollOptionsLoading" class="roll-pick">
+        <div class="roll-week-nav">
+          <button type="button" class="roll-week-nav-btn" @click="changeRollWeek(-1)">
+            <el-icon><ArrowLeft /></el-icon>
+            <span>上周</span>
+          </button>
+          <div class="roll-week-center">
+            <div class="roll-week-label">{{ rollWeekLabel }}</div>
+            <button
+              type="button"
+              class="roll-today-link"
+              :disabled="isCurrentRollWeek && selectedDayMeta?.isToday"
+              @click="resetRollWeekToToday"
+            >
+              回到今天
+            </button>
+          </div>
+          <button type="button" class="roll-week-nav-btn" @click="changeRollWeek(1)">
+            <span>下周</span>
+            <el-icon><ArrowRight /></el-icon>
+          </button>
+        </div>
+
+        <div ref="dayStripRef" class="roll-day-strip">
+          <button
+            v-for="day in rollDayCols"
+            :key="day.key"
+            type="button"
+            class="roll-day"
+            :class="{
+              'is-today': day.isToday,
+              'is-future': day.isFuture,
+              'is-selected': day.isSelected,
+              'has-pending': day.pendingCount > 0,
+            }"
+            @click="selectRollDay(day)"
+          >
+            <span class="rd-week">{{ day.weekLabel }}</span>
+            <span class="rd-num">{{ day.dayNum }}</span>
+            <span class="rd-month">{{ day.monthLabel }}</span>
+            <span v-if="day.lessonCount" class="rd-badge" :class="{ 'is-pending': day.pendingCount > 0 }">
+              {{ day.pendingCount > 0 ? day.pendingCount : day.lessonCount }}
+            </span>
+            <span v-if="day.isToday" class="rd-today-tag">今</span>
+            <span v-else-if="day.isFuture" class="rd-future-tag">未到</span>
+          </button>
+        </div>
+
+        <div class="roll-day-panel">
+          <div class="roll-day-panel-head">
+            <span class="sec-dot" />
+            <strong>
+              {{ selectedDayMeta?.weekLabel || '' }}
+              {{ selectedDayMeta ? `${selectedDayMeta.monthLabel}${selectedDayMeta.dayNum}日` : '' }}
+            </strong>
+            <span class="roll-day-count">
+              共 {{ selectedDayLessons.length }} 节
+              <template v-if="selectedDayMeta?.pendingCount">
+                · 待点名 {{ selectedDayMeta.pendingCount }}
+              </template>
+            </span>
+          </div>
+
+          <p v-if="selectedDayMeta?.isFuture" class="roll-future-hint">
+            未来课次不可点名，仅可查看；请选择当天或过去日期。
           </p>
+
+          <div v-if="selectedDayLessons.length" class="roll-lesson-list">
+            <button
+              v-for="lesson in selectedDayLessons"
+              :key="lesson.id"
+              type="button"
+              class="roll-lesson-card"
+              :class="{
+                'is-done': lesson.status === 'completed',
+                'is-pending': isLessonRollable(lesson),
+                'is-future': lesson.status === 'scheduled' && !isLessonRollable(lesson),
+              }"
+              :disabled="lesson.status === 'scheduled' && !isLessonRollable(lesson)"
+              @click="selectLessonForRoll(lesson)"
+            >
+              <div class="rl-time">
+                <span class="rl-clock">{{ formatClockRange(lesson.start_at, lesson.end_at) }}</span>
+                <el-tag
+                  size="small"
+                  effect="plain"
+                  :type="
+                    lesson.status === 'completed'
+                      ? 'success'
+                      : isLessonRollable(lesson)
+                        ? 'warning'
+                        : 'info'
+                  "
+                >
+                  {{
+                    lesson.status === 'completed'
+                      ? '已点名'
+                      : isLessonRollable(lesson)
+                        ? '待点名'
+                        : '未到时间'
+                  }}
+                </el-tag>
+              </div>
+              <div class="rl-title">{{ lesson.class_name }}</div>
+              <div class="rl-meta">
+                <span>{{ lesson.course_name || '未关联课程' }}</span>
+                <span v-if="lesson.teachers">{{ lesson.teachers }}</span>
+                <span v-if="lesson.room">{{ lesson.room }}</span>
+                <span v-if="lesson.member_count">{{ lesson.member_count }}人</span>
+              </div>
+              <div class="rl-action">
+                <template v-if="lesson.status === 'completed'">已完成</template>
+                <template v-else-if="isLessonRollable(lesson)">
+                  去点名
+                  <el-icon><ArrowRight /></el-icon>
+                </template>
+                <template v-else>不可点名</template>
+              </div>
+            </button>
+          </div>
+          <el-empty
+            v-else-if="!rollOptionsLoading"
+            description="当天暂无排课，请切换其他日期"
+            :image-size="72"
+          />
+        </div>
+      </div>
+
+      <!-- 步骤二：点名表单 -->
+      <div v-else class="roll-form-step">
+        <div v-if="selectedRollLesson" class="roll-selected-card">
+          <div class="rsc-top">
+            <span class="rsc-badge">已选课次</span>
+            <el-button class="rsc-reselect" link type="primary" @click="backToRollPick">重选</el-button>
+          </div>
+          <div class="rsc-main">
+            <span class="rsc-avatar">{{ nameInitial(selectedRollLesson.class_name) }}</span>
+            <div class="rsc-body">
+              <div class="rsc-title">{{ selectedRollLesson.class_name || '—' }}</div>
+              <div class="rsc-time">
+                <el-icon><Clock /></el-icon>
+                {{ formatClockRange(selectedRollLesson.start_at, selectedRollLesson.end_at) }}
+              </div>
+            </div>
+          </div>
+          <div class="rsc-chips">
+            <span v-if="selectedRollLesson.course_name" class="rsc-chip">
+              <el-icon><Reading /></el-icon>
+              {{ selectedRollLesson.course_name }}
+            </span>
+            <span v-if="selectedRollLesson.teachers" class="rsc-chip">
+              <el-icon><User /></el-icon>
+              {{ selectedRollLesson.teachers }}
+            </span>
+            <span v-if="selectedRollLesson.room" class="rsc-chip">
+              <el-icon><OfficeBuilding /></el-icon>
+              {{ selectedRollLesson.room }}
+            </span>
+            <span v-if="selectedRollLesson.member_count" class="rsc-chip">
+              <el-icon><UserFilled /></el-icon>
+              {{ selectedRollLesson.member_count }} 人
+            </span>
+          </div>
+        </div>
+
+        <el-form label-position="right" label-width="90px" class="roll-form">
+          <el-form-item label="授课课时">
+            <el-input-number v-model="rollForm.hours" :min="0.01" :step="0.25" :precision="2" />
+            <div class="form-tip">按课次扣学员课时，默认单次 1 课时（与上课墙钟时长无关；计薪课时另计）</div>
+          </el-form-item>
+          <el-form-item label="上课内容">
+            <el-input v-model="rollForm.content" type="textarea" :rows="2" placeholder="可选，记录本节课要点" />
+          </el-form-item>
+        </el-form>
+
+        <div v-if="members.length" class="attend-block">
+          <div class="attend-head">
+            <span class="attend-title">
+              <span class="sec-dot" />
+              学员名单
+              <em>{{ members.length }} 人</em>
+            </span>
+            <div class="attend-quick">
+              <el-button link type="primary" @click="markAll('present')">全勤</el-button>
+              <el-button link @click="markAll('absent')">全缺</el-button>
+            </div>
+          </div>
+          <div class="attend-list">
+            <div v-for="m in members" :key="m.id" class="attend-row">
+              <div class="attend-name">
+                <span class="name-avatar xs">{{ nameInitial(m.name) }}</span>
+                <div>
+                  <span class="name">{{ m.name }}</span>
+                  <span v-if="m.phone" class="phone">{{ m.phone }}</span>
+                </div>
+              </div>
+              <el-radio-group v-model="attendMap[m.id]" size="small" class="attend-radios">
+                <el-radio-button v-for="o in ATTEND_OPTS" :key="o.value" :value="o.value">
+                  {{ o.label }}
+                </el-radio-button>
+              </el-radio-group>
+            </div>
+          </div>
+          <p class="attend-hint">扣课规则：出勤/迟到扣课；请假/缺勤不扣课时。</p>
         </div>
         <el-empty v-else-if="rollForm.class_id" description="该班级暂无在读学员" :image-size="64" />
       </div>
@@ -1534,6 +1910,82 @@ onMounted(async () => {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+/* ── App 点名入口 CTA ── */
+.roll-entry-cta {
+  display: none;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(161, 98, 7, 0.28);
+  border-radius: 16px;
+  background:
+    linear-gradient(125deg, #fffefb 0%, #fff7e8 48%, #f5e6c8 120%);
+  box-shadow:
+    0 10px 22px rgba(88, 60, 24, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s ease, box-shadow 0.15s ease;
+}
+
+.roll-entry-cta:active {
+  transform: scale(0.985);
+}
+
+.roll-entry-ico {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: linear-gradient(145deg, #d97706, #a16207);
+  box-shadow: 0 6px 14px rgba(161, 98, 7, 0.28);
+  font-size: 18px;
+}
+
+.roll-entry-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.roll-entry-copy strong {
+  font-size: 15px;
+  font-weight: 750;
+  color: #44403c;
+  line-height: 1.25;
+}
+
+.roll-entry-copy em {
+  font-style: normal;
+  font-size: 12px;
+  color: #8a8178;
+  line-height: 1.3;
+}
+
+.roll-entry-go {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 720;
+  color: #fffdf8;
+  background: linear-gradient(145deg, #c07a12, #a16207);
+  box-shadow: 0 4px 10px rgba(161, 98, 7, 0.22);
 }
 
 .module-card {
@@ -1897,7 +2349,110 @@ onMounted(async () => {
 
 .amount-text {
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.record-m-amount {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.record-m-amount-label {
+  font-size: 11px;
+  color: var(--oc-muted, #78716c);
+  font-weight: 600;
+}
+
+.record-m-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.rm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 26px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #57534e;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(181, 145, 83, 0.2);
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.rm-chip .el-icon {
+  font-size: 12px;
+  color: #a16207;
+  flex-shrink: 0;
+}
+
+.rm-chip.tone-danger {
+  color: #b45309;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.record-m-foot {
+  margin-top: 10px;
+}
+
+.record-m-roll-at {
+  font-size: 12px;
+  color: #a8a29e;
+}
+
+.timeout-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 750;
+  color: #b45309;
+  background: #fef3c7;
+  border: 1px solid #fde68a;
+}
+
+.record-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 36px 20px !important;
+  text-align: center;
+}
+
+.record-empty-ico {
+  font-size: 28px;
+  line-height: 1;
+  filter: grayscale(0.2);
+}
+
+.record-empty strong {
+  font-size: 15px;
+  font-weight: 700;
+  color: #44403c;
+}
+
+.record-empty em {
+  font-style: normal;
+  font-size: 12px;
+  color: #8a8178;
+  line-height: 1.4;
+  max-width: 240px;
 }
 
 .form-tip {
@@ -1919,6 +2474,39 @@ onMounted(async () => {
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(181, 145, 83, 0.22);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9), transparent 48%),
+    linear-gradient(180deg, #fffefb, #faf3e6);
+}
+
+.roll-week-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 11px;
+  border: 1px solid rgba(181, 145, 83, 0.28);
+  background: rgba(255, 253, 248, 0.95);
+  color: #57534e;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(88, 60, 24, 0.04);
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.roll-week-nav-btn:hover {
+  border-color: rgba(161, 98, 7, 0.4);
+  color: #a16207;
+  background: #fffdf8;
+}
+
+.roll-week-nav-btn .el-icon {
+  font-size: 14px;
 }
 
 .roll-week-center {
@@ -1927,13 +2515,37 @@ onMounted(async () => {
   align-items: center;
   gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 
 .roll-week-label {
   font-size: 14px;
-  font-weight: 650;
+  font-weight: 700;
   color: var(--oc-ink, #44403c);
   text-align: center;
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+}
+
+.roll-today-link {
+  border: none;
+  background: none;
+  padding: 2px 6px;
+  color: var(--oc-primary, #a16207);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.roll-today-link:hover:not(:disabled) {
+  background: rgba(161, 98, 7, 0.08);
+}
+
+.roll-today-link:disabled {
+  color: #a8a29e;
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 
 .roll-day-strip {
@@ -1944,6 +2556,11 @@ onMounted(async () => {
   margin-bottom: 4px;
   scroll-snap-type: x mandatory;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.roll-day-strip::-webkit-scrollbar {
+  display: none;
 }
 
 .roll-day {
@@ -1955,14 +2572,15 @@ onMounted(async () => {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  padding: 10px 8px 12px;
-  border-radius: 14px;
+  padding: 12px 8px 12px;
+  border-radius: 16px;
   border: 1px solid var(--oc-border, #e8e0d0);
   background: #fffdf8;
   cursor: pointer;
   scroll-snap-align: center;
-  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
   color: var(--oc-ink, #44403c);
+  -webkit-tap-highlight-color: transparent;
 }
 
 .roll-day:hover {
@@ -1982,10 +2600,12 @@ onMounted(async () => {
 .roll-day.is-selected {
   border-color: var(--oc-primary, #a16207);
   background: linear-gradient(180deg, #fff7e8 0%, #f5e6c8 100%);
-  box-shadow: 0 4px 14px rgba(161, 98, 7, 0.16);
+  box-shadow: 0 0 0 1px rgba(161, 98, 7, 0.18), 0 6px 16px rgba(161, 98, 7, 0.16);
+  transform: translateY(-1px);
 }
 
-.roll-day.has-pending .rd-badge {
+.roll-day.has-pending .rd-badge,
+.rd-badge.is-pending {
   background: #fef3c7;
   color: #b45309;
   border-color: #fde68a;
@@ -1994,11 +2614,12 @@ onMounted(async () => {
 .rd-week {
   font-size: 12px;
   color: var(--oc-muted, #78716c);
+  font-weight: 600;
 }
 
 .rd-num {
-  font-size: 20px;
-  font-weight: 750;
+  font-size: 22px;
+  font-weight: 780;
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
 }
@@ -2044,9 +2665,10 @@ onMounted(async () => {
 
 .roll-future-hint {
   margin: 0 0 10px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: #f5f5f4;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #f8f7f5, #f3f1ee);
+  border: 1px solid #e7e5e4;
   color: #78716c;
   font-size: 12px;
   line-height: 1.5;
@@ -2054,10 +2676,11 @@ onMounted(async () => {
 
 .roll-day-panel {
   border: 1px solid var(--oc-border, #e8e0d0);
-  border-radius: 14px;
+  border-radius: 16px;
   background: linear-gradient(180deg, #fffdfb 0%, #faf6ee 100%);
-  padding: 12px 14px;
+  padding: 14px;
   min-height: 180px;
+  box-shadow: 0 4px 14px rgba(88, 60, 24, 0.04);
 }
 
 .roll-day-panel-head {
@@ -2091,22 +2714,34 @@ onMounted(async () => {
   gap: 4px 12px;
   width: 100%;
   text-align: left;
-  padding: 12px 14px;
-  border-radius: 12px;
+  padding: 14px 14px 14px 16px;
+  border-radius: 14px;
   border: 1px solid #e8e0d0;
-  background: #fffdf8;
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.95), transparent 50%),
+    #fffdf8;
   cursor: pointer;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
   color: inherit;
+  box-shadow: 0 2px 8px rgba(88, 60, 24, 0.04);
+  -webkit-tap-highlight-color: transparent;
 }
 
 .roll-lesson-card:hover {
   border-color: #e6d2b3;
-  box-shadow: 0 4px 12px rgba(41, 37, 36, 0.06);
+  box-shadow: 0 6px 16px rgba(41, 37, 36, 0.08);
 }
 
 .roll-lesson-card.is-pending {
   border-left: 3px solid #d97706;
+  background:
+    linear-gradient(155deg, #fffdf8, transparent 46%),
+    linear-gradient(180deg, #fffbeb, #fffdf8);
+}
+
+.roll-lesson-card.is-pending:hover {
+  border-color: rgba(217, 119, 6, 0.45);
+  box-shadow: 0 8px 18px rgba(180, 83, 9, 0.12);
 }
 
 .roll-lesson-card.is-future {
@@ -2159,14 +2794,43 @@ onMounted(async () => {
   grid-column: 2;
   grid-row: 1 / span 3;
   align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 700;
   color: var(--oc-primary, #a16207);
+  background: rgba(161, 98, 7, 0.08);
+  border: 1px solid rgba(161, 98, 7, 0.14);
   white-space: nowrap;
+}
+
+.rl-action .el-icon {
+  font-size: 12px;
 }
 
 .roll-lesson-card.is-done .rl-action {
   color: #16a34a;
+  background: rgba(22, 163, 74, 0.08);
+  border-color: rgba(22, 163, 74, 0.16);
+}
+
+.roll-lesson-card.is-future .rl-action {
+  color: #a8a29e;
+  background: #f5f5f4;
+  border-color: #e7e5e4;
+}
+
+.roll-form-step {
+  display: grid;
+  gap: 4px;
+}
+
+.roll-form :deep(.el-form-item) {
+  margin-bottom: 14px;
 }
 
 .roll-selected-card {
@@ -2401,26 +3065,28 @@ onMounted(async () => {
   }
 }
 
-@media (max-width: 991px) {
+@media (max-width: 1199px) {
   .page-toolbar,
   .table-actions,
   .filter-actions {
-    flex-direction: column;
-    align-items: stretch;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
   }
 
   .toolbar-right .el-button,
   .action-left .el-button,
   .filter-actions .el-button {
-    width: 100%;
+    width: auto;
   }
 
   .action-left {
-    width: 100%;
+    width: auto;
+    flex-wrap: wrap;
   }
 
   .filter-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
   }
 
@@ -2442,8 +3108,9 @@ onMounted(async () => {
     flex-wrap: wrap;
   }
 
-  .roll-week-nav .tb-btn {
+  .roll-week-nav-btn {
     flex: 1;
+    justify-content: center;
   }
 
   .roll-week-center {
@@ -2463,7 +3130,364 @@ onMounted(async () => {
     grid-column: 1;
     grid-row: auto;
     justify-self: start;
-    margin-top: 4px;
+    margin-top: 6px;
+  }
+}
+
+/* ── WAP / Pad 上课记录全面 App 化 ── */
+@media (max-width: 1199px) {
+  .record-page {
+    display: grid;
+    gap: 10px;
+  }
+
+  .page-toolbar {
+    margin: 0;
+  }
+
+  .page-toolbar.is-app-roll {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .page-sub {
+    display: none;
+  }
+
+  .roll-entry-cta {
+    display: flex;
+  }
+
+  .toolbar-right .tb-btn--primary {
+    min-height: 42px;
+    border-radius: 12px;
+    font-weight: 720;
+  }
+
+  .module-card {
+    margin-top: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .module-card :deep(.el-card__body) {
+    padding: 0;
+  }
+
+  .record-tabs {
+    margin: 0 0 10px;
+    padding: 4px;
+    border-radius: 14px;
+    border: 1px solid rgba(181, 145, 83, 0.2);
+    background: #f3ebe0;
+  }
+
+  .record-tabs :deep(.el-tabs__header) {
+    margin: 0;
+  }
+
+  .record-tabs :deep(.el-tabs__nav-wrap::after) {
+    display: none;
+  }
+
+  .record-tabs :deep(.el-tabs__active-bar) {
+    display: none;
+  }
+
+  .record-tabs :deep(.el-tabs__item) {
+    height: 40px;
+    line-height: 40px;
+    padding: 0 12px !important;
+    border-radius: 11px;
+    color: #78716c;
+    font-weight: 650;
+  }
+
+  .record-tabs :deep(.el-tabs__item.is-active) {
+    color: #fffdf8 !important;
+    background: linear-gradient(145deg, #c07a12, #a16207);
+    box-shadow: 0 4px 12px rgba(161, 98, 7, 0.25);
+  }
+
+  .record-tabs :deep(.el-tabs__item .el-icon) {
+    margin-right: 4px;
+  }
+
+  .table-actions,
+  .table-actions.is-app-actions {
+    margin: 0 0 10px;
+    padding: 12px;
+    border-radius: 16px;
+    border: 1px solid rgba(181, 145, 83, 0.22);
+    background:
+      linear-gradient(135deg, rgba(255, 255, 255, 0.9), transparent 50%),
+      linear-gradient(180deg, #fffefb, #faf3e6);
+    box-shadow: 0 6px 16px rgba(88, 60, 24, 0.05);
+    display: grid;
+    gap: 10px;
+  }
+
+  .table-actions .action-left {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .table-actions .tb-btn {
+    min-height: 40px;
+    border-radius: 12px;
+    font-weight: 650;
+  }
+
+  .table-actions .summary-bar {
+    width: 100%;
+    justify-content: center;
+    margin: 0;
+    border-radius: 12px;
+    background: rgba(255, 253, 248, 0.9);
+  }
+
+  .summary-chip {
+    height: 32px;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #fffefb, #faf3e6);
+    font-weight: 600;
+  }
+
+  .m-card-list {
+    gap: 12px;
+  }
+
+  .record-m-card {
+    padding: 14px 14px 12px 16px;
+    border-radius: 18px !important;
+    border: 1px solid rgba(181, 145, 83, 0.3) !important;
+    background:
+      linear-gradient(155deg, rgba(255, 255, 255, 0.92), transparent 46%),
+      #fffdf8 !important;
+    box-shadow:
+      0 12px 28px rgba(88, 60, 24, 0.09),
+      0 2px 0 rgba(255, 255, 255, 0.9) inset !important;
+  }
+
+  .record-m-card.is-void {
+    opacity: 0.82;
+    border-color: rgba(168, 162, 158, 0.4) !important;
+    background:
+      linear-gradient(155deg, rgba(250, 250, 249, 0.95), transparent 50%),
+      #fafaf9 !important;
+  }
+
+  .record-m-card.is-timeout {
+    border-color: rgba(180, 83, 9, 0.38) !important;
+    background:
+      linear-gradient(155deg, rgba(255, 247, 237, 0.98), transparent 50%),
+      #fffdf8 !important;
+  }
+
+  .record-m-card.is-makeup {
+    border-color: rgba(220, 38, 38, 0.22) !important;
+    background:
+      linear-gradient(155deg, rgba(254, 242, 242, 0.9), transparent 48%),
+      #fffdf8 !important;
+  }
+
+  .record-m-card .m-card-actions {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(181, 145, 83, 0.14);
+  }
+
+  .record-m-card .m-card-actions .el-button {
+    width: 100%;
+    margin: 0;
+    min-height: 42px;
+    border-radius: 12px;
+    font-weight: 700;
+  }
+
+  .record-m-card .m-card-actions .el-button:only-child {
+    grid-column: 1 / -1;
+  }
+
+  .record-m-card .m-card-actions .el-button--primary.is-plain {
+    background: linear-gradient(180deg, #fffefb, #faf3e6);
+    border-color: rgba(161, 98, 7, 0.28);
+    color: #a16207;
+  }
+
+  .name-avatar {
+    width: 42px;
+    height: 42px;
+    border-radius: 13px;
+    font-size: 16px;
+    background: linear-gradient(145deg, #f5e6c8, #c9a066);
+    box-shadow: 0 4px 10px rgba(161, 98, 7, 0.16);
+  }
+
+  .record-tabs {
+    box-shadow: 0 4px 12px rgba(88, 60, 24, 0.05);
+  }
+
+  .record-tabs :deep(.el-tabs__nav) {
+    width: 100%;
+    display: flex;
+  }
+
+  .record-tabs :deep(.el-tabs__item) {
+    flex: 1;
+    justify-content: center;
+    text-align: center;
+    padding: 0 8px !important;
+  }
+
+  .record-tabs :deep(.tab-label) {
+    justify-content: center;
+  }
+
+  /* 点名 Sheet 内容 */
+  .roll-pick,
+  .roll-form-step {
+    display: grid;
+    gap: 12px;
+  }
+
+  .roll-week-nav {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .roll-week-nav-btn {
+    flex: 0 0 auto;
+    min-width: 68px;
+    justify-content: center;
+    padding: 0 10px;
+  }
+
+  .roll-day-strip {
+    gap: 8px;
+    padding: 4px 2px 8px;
+  }
+
+  .roll-day {
+    min-width: 64px;
+    padding: 10px 8px;
+  }
+
+  .roll-day-panel {
+    padding: 12px;
+  }
+
+  .roll-lesson-card {
+    padding: 12px 12px 12px 14px;
+  }
+
+  .rl-action {
+    margin-top: 0;
+  }
+
+  .attend-block {
+    padding: 12px;
+    border-radius: 16px;
+    border: 1px solid rgba(181, 145, 83, 0.2);
+    background: linear-gradient(180deg, #fffefb, #faf6ee);
+  }
+
+  .attend-row {
+    padding: 10px 8px;
+    border-radius: 12px;
+    border-bottom: 1px solid rgba(181, 145, 83, 0.12);
+  }
+
+  .attend-row:last-child {
+    border-bottom: 0;
+  }
+
+  .attend-row :deep(.el-radio-group) {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 }
 </style>
+
+<!-- AppSheet 点名面板：挂 body，需非 scoped -->
+<style>
+.el-drawer.oc-app-sheet.roll-app-sheet .el-drawer__header {
+  margin-bottom: 4px !important;
+  padding: 16px 16px 8px !important;
+}
+
+.el-drawer.oc-app-sheet.roll-app-sheet .el-drawer__title {
+  font-weight: 750 !important;
+  color: #44403c !important;
+  letter-spacing: 0.01em;
+}
+
+.el-drawer.oc-app-sheet.roll-app-sheet .el-drawer__body {
+  padding: 8px 14px 8px !important;
+  background:
+    linear-gradient(180deg, rgba(250, 246, 238, 0.55), transparent 48px),
+    #fffdf8;
+}
+
+.el-drawer.oc-app-sheet.roll-app-sheet .el-drawer__footer {
+  display: flex !important;
+  gap: 10px !important;
+  padding: 10px 14px calc(12px + env(safe-area-inset-bottom, 0px)) !important;
+  border-top: 1px solid rgba(181, 145, 83, 0.18) !important;
+  background: linear-gradient(180deg, #fffefb, #faf3e6) !important;
+}
+
+.el-drawer.oc-app-sheet.roll-app-sheet .el-drawer__footer .el-button {
+  min-height: 46px !important;
+  border-radius: 13px !important;
+  font-weight: 720 !important;
+  margin: 0 !important;
+}
+
+.el-drawer.oc-app-sheet.roll-app-sheet .el-drawer__footer .el-button--primary {
+  flex: 1.35 1 auto;
+  background: linear-gradient(145deg, #c07a12, #a16207) !important;
+  border-color: transparent !important;
+  box-shadow: 0 6px 14px rgba(161, 98, 7, 0.24);
+}
+
+.el-dialog.roll-dialog {
+  border-radius: 16px !important;
+  overflow: hidden;
+  border: 1px solid rgba(181, 145, 83, 0.22);
+  box-shadow: 0 18px 48px rgba(88, 60, 24, 0.14);
+}
+
+.el-dialog.roll-dialog .el-dialog__header {
+  padding: 16px 20px 10px;
+  margin-right: 0;
+  border-bottom: 1px solid rgba(181, 145, 83, 0.14);
+  background: linear-gradient(180deg, #fffefb, #faf6ee);
+}
+
+.el-dialog.roll-dialog .el-dialog__title {
+  font-weight: 750;
+  color: #44403c;
+}
+
+.el-dialog.roll-dialog .el-dialog__body {
+  padding: 16px 20px 8px;
+  background: #fffdf8;
+}
+
+.el-dialog.roll-dialog .el-dialog__footer {
+  padding: 12px 20px 16px;
+  border-top: 1px solid rgba(181, 145, 83, 0.14);
+  background: linear-gradient(180deg, #fffefb, #faf3e6);
+}
+</style>
+

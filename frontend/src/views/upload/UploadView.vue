@@ -5,13 +5,20 @@ import { ElMessage, type FormInstance, type FormRules, type UploadUserFile } fro
 import { createMaterialApi, uploadMaterialFileApi } from '../../api/materials'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { usePageBack } from '../../composables/usePageBack'
+import MobileActionBar from '../../components/MobileActionBar.vue'
 
 const router = useRouter()
-const { isCompact, isMobile } = useBreakpoint()
+const { isApp } = useBreakpoint()
 const { goBack } = usePageBack('/materials')
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const fileList = ref<UploadUserFile[]>([])
+const uploadStep = ref<'basic' | 'scene' | 'images'>('basic')
+const uploadStepOptions = [
+  { label: '基本信息', value: 'basic' },
+  { label: '场景内容', value: 'scene' },
+  { label: '图片', value: 'images' },
+]
 
 const form = reactive({
   title: '',
@@ -37,9 +44,25 @@ const rules: FormRules = {
 
 const imageCount = computed(() => fileList.value.length)
 
+const stepIndex = computed(() => {
+  if (uploadStep.value === 'basic') return 0
+  if (uploadStep.value === 'scene') return 1
+  return 2
+})
+
+const stepHint = computed(() => {
+  if (uploadStep.value === 'basic') return '先写标题与授权，年级科目可选'
+  if (uploadStep.value === 'scene') return '痛点与处理会用于生成文案'
+  return '可多选图片，也可稍后在详情补传'
+})
+
 function selectAuth(value: string) {
   form.auth_status = value
   void formRef.value?.validateField('auth_status')
+}
+
+function goStep(value: 'basic' | 'scene' | 'images') {
+  uploadStep.value = value
 }
 
 function resetForm() {
@@ -56,7 +79,10 @@ function resetForm() {
 
 async function submit() {
   const ok = await formRef.value?.validate().catch(() => false)
-  if (!ok) return
+  if (!ok) {
+    uploadStep.value = 'basic'
+    return
+  }
   loading.value = true
   try {
     const material = await createMaterialApi({ ...form })
@@ -81,7 +107,7 @@ async function submit() {
 <template>
   <div
     class="upload-page oc-page-shell"
-    :class="{ 'is-compact': isCompact, 'is-mobile': isMobile }"
+    :class="{ 'is-compact': isApp }"
   >
     <div class="page-toolbar">
       <el-page-header @back="goBack">
@@ -97,7 +123,7 @@ async function submit() {
       </div>
     </div>
 
-    <section class="hero">
+    <section v-if="!isApp" class="hero">
       <div class="hero-ornament" aria-hidden="true" />
       <div class="hero-body">
         <div class="hero-main">
@@ -120,6 +146,33 @@ async function submit() {
       </div>
     </section>
 
+    <!-- WAP/Pad：步骤条 + 轻提示 -->
+    <section v-if="isApp" class="compact-hero">
+      <div class="compact-hero__top">
+        <div class="compact-hero__kicker">
+          <el-icon><Upload /></el-icon>
+          <span>上传课堂素材</span>
+        </div>
+        <span class="compact-hero__progress">{{ stepIndex + 1 }} / 3</span>
+      </div>
+      <p class="compact-hero__hint">{{ stepHint }}</p>
+      <div class="step-dots" role="tablist" aria-label="上传步骤">
+        <button
+          v-for="(opt, idx) in uploadStepOptions"
+          :key="opt.value"
+          type="button"
+          class="step-dot"
+          :class="{ active: uploadStep === opt.value, done: stepIndex > idx }"
+          role="tab"
+          :aria-selected="uploadStep === opt.value"
+          @click="goStep(opt.value as 'basic' | 'scene' | 'images')"
+        >
+          <span class="step-dot__num">{{ idx + 1 }}</span>
+          <span class="step-dot__label">{{ opt.label }}</span>
+        </button>
+      </div>
+    </section>
+
     <el-form
       ref="formRef"
       v-loading="loading"
@@ -127,12 +180,12 @@ async function submit() {
       :model="form"
       :rules="rules"
       label-position="top"
-      :size="isCompact ? 'large' : 'default'"
+      :size="isApp ? 'large' : 'default'"
       @submit.prevent
     >
-      <div class="upload-layout" :class="{ 'is-compact': isCompact }">
+      <div class="upload-layout" :class="{ 'is-compact': isApp }">
         <div class="main-col">
-          <section class="panel">
+          <section v-show="!isApp || uploadStep === 'basic'" class="panel">
             <div class="panel-head">
               <div>
                 <h2 class="panel-title">基本信息</h2>
@@ -149,7 +202,7 @@ async function submit() {
               />
             </el-form-item>
 
-            <div class="form-grid" :class="{ 'is-compact': isCompact }">
+            <div class="form-grid" :class="{ 'is-compact': isApp }">
               <el-form-item>
                 <template #label>
                   <span class="label-with-opt">年级 <em>可选</em></span>
@@ -165,7 +218,7 @@ async function submit() {
             </div>
 
             <el-form-item label="家长授权" prop="auth_status">
-              <div class="auth-grid" :class="{ 'is-compact': isCompact }">
+              <div class="auth-grid" :class="{ 'is-compact': isApp }">
                 <button
                   v-for="opt in authOptions"
                   :key="opt.value"
@@ -181,7 +234,7 @@ async function submit() {
             </el-form-item>
           </section>
 
-          <section class="panel">
+          <section v-show="!isApp || uploadStep === 'scene'" class="panel">
             <div class="panel-head">
               <div>
                 <h2 class="panel-title">场景内容</h2>
@@ -228,7 +281,7 @@ async function submit() {
           </section>
 
           <!-- compact：图片区落在主列底部（PC 在右侧） -->
-          <section v-if="isCompact" class="panel">
+          <section v-if="isApp" v-show="uploadStep === 'images'" class="panel">
             <div class="panel-head">
               <div>
                 <h2 class="panel-title">图片</h2>
@@ -253,20 +306,10 @@ async function submit() {
               </el-upload>
               <p class="upload-hint">支持多选；建议清晰课堂 / 作品照</p>
             </div>
-            <el-button
-              v-if="!isMobile"
-              class="submit-btn"
-              type="primary"
-              size="large"
-              :loading="loading"
-              @click="submit"
-            >
-              提交素材
-            </el-button>
           </section>
         </div>
 
-        <aside v-if="!isCompact" class="side-col">
+        <aside v-if="!isApp" class="side-col">
           <section class="panel sticky-panel">
             <div class="panel-head">
               <div>
@@ -307,22 +350,28 @@ async function submit() {
       </div>
     </el-form>
 
-    <!-- WAP 底部固定提交 -->
-    <div v-if="isMobile" class="mobile-submit-bar">
-      <el-button type="primary" size="large" :loading="loading" @click="submit">
+    <MobileActionBar v-if="isApp">
+      <el-button v-if="uploadStep === 'basic'" @click="goBack()">取消</el-button>
+      <el-button v-else @click="uploadStep = uploadStep === 'images' ? 'scene' : 'basic'">
+        上一步
+      </el-button>
+      <el-button
+        v-if="uploadStep !== 'images'"
+        type="primary"
+        @click="uploadStep = uploadStep === 'basic' ? 'scene' : 'images'"
+      >
+        下一步
+      </el-button>
+      <el-button v-else type="primary" :loading="loading" @click="submit">
         提交素材
       </el-button>
-    </div>
+    </MobileActionBar>
   </div>
 </template>
 
 <style scoped>
 .upload-page {
   padding-bottom: 24px;
-}
-
-.upload-page.is-mobile {
-  padding-bottom: 88px;
 }
 
 .page-title {
@@ -452,6 +501,181 @@ async function submit() {
   gap: 14px;
 }
 
+.compact-hero {
+  margin: 0 auto 12px;
+  width: min(100%, 720px);
+  padding: 14px 14px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(181, 145, 83, 0.32);
+  background:
+    linear-gradient(125deg, #ffffff 0%, #fffdf8 42%, #faf3e6 100%);
+  box-shadow:
+    0 10px 24px rgba(88, 60, 24, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+.compact-hero__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.compact-hero__kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--oc-primary, #a16207);
+}
+
+.compact-hero__progress {
+  flex-shrink: 0;
+  min-width: 42px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #86530a;
+  background: rgba(245, 230, 200, 0.85);
+  border: 1px solid rgba(181, 145, 83, 0.28);
+}
+
+.compact-hero__hint {
+  margin: 8px 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--oc-muted, #78716c);
+}
+
+.step-dots {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.step-dot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-height: 64px;
+  padding: 10px 6px;
+  border-radius: 14px;
+  border: 1.5px solid rgba(232, 224, 208, 0.95);
+  background: rgba(255, 253, 248, 0.85);
+  color: var(--oc-muted, #78716c);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s,
+    box-shadow 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.step-dot__num {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 750;
+  background: #f5f0e6;
+  color: #78716c;
+}
+
+.step-dot__label {
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.step-dot.done {
+  border-color: rgba(103, 194, 58, 0.35);
+  background: linear-gradient(180deg, #f6fbf3, #eef8ea);
+}
+
+.step-dot.done .step-dot__num {
+  background: #67c23a;
+  color: #fff;
+}
+
+.step-dot.active {
+  border-color: var(--oc-primary, #a16207);
+  background: linear-gradient(180deg, #faf6ee, #f2e8d6);
+  color: var(--oc-primary, #a16207);
+  box-shadow: 0 0 0 1px rgba(161, 98, 7, 0.12);
+}
+
+.step-dot.active .step-dot__num {
+  background: linear-gradient(145deg, #c98718, #a16207);
+  color: #fffdf8;
+}
+
+.step-dot.active .step-dot__label {
+  color: #86530a;
+}
+
+.upload-page.is-compact .upload-form {
+  width: min(100%, 720px);
+  margin: 0 auto;
+}
+
+.upload-page.is-compact .panel {
+  border-radius: 16px;
+  border-color: rgba(181, 145, 83, 0.28);
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.88) 0%, transparent 46%),
+    #fffdf8;
+  box-shadow:
+    0 12px 28px rgba(88, 60, 24, 0.08),
+    0 2px 0 rgba(255, 255, 255, 0.9) inset;
+  padding: 16px 14px 8px;
+}
+
+.upload-page.is-compact .panel-head {
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+}
+
+.upload-page.is-compact .auth-card {
+  min-height: 72px;
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.upload-page.is-compact .auth-card strong {
+  font-size: 13px;
+}
+
+.upload-page.is-compact .upload-zone :deep(.el-upload--picture-card),
+.upload-page.is-compact .upload-zone :deep(.el-upload-list--picture-card .el-upload-list__item) {
+  width: 96px;
+  height: 96px;
+  border-radius: 14px;
+}
+
+.upload-page.is-compact :deep(.el-input__wrapper),
+.upload-page.is-compact :deep(.el-textarea__inner) {
+  min-height: 44px;
+  border-radius: 12px;
+}
+
+.upload-page.is-compact :deep(.el-textarea__inner) {
+  min-height: 96px;
+  padding: 12px 14px;
+}
+
 .main-col {
   display: flex;
   flex-direction: column;
@@ -522,7 +746,7 @@ async function submit() {
 }
 
 .form-grid.is-compact {
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 /* ── 授权卡片 ── */
@@ -634,27 +858,6 @@ async function submit() {
   color: var(--oc-muted, #78716c);
 }
 
-/* ── WAP 底栏 ── */
-.mobile-submit-bar {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 40;
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
-  background: linear-gradient(180deg, rgba(250, 248, 243, 0) 0%, rgba(250, 248, 243, 0.92) 28%, #faf8f3 100%);
-  backdrop-filter: blur(8px);
-  border-top: 1px solid rgba(232, 224, 208, 0.7);
-}
-
-.mobile-submit-bar .el-button {
-  width: 100%;
-  height: 44px;
-  border-radius: 10px;
-  font-weight: 600;
-  box-shadow: 0 2px 8px rgba(161, 98, 7, 0.22);
-}
-
 /* 表单项间距 */
 .upload-form :deep(.el-form-item) {
   margin-bottom: 16px;
@@ -682,11 +885,32 @@ async function submit() {
   .step-line {
     display: none;
   }
-}
 
-@media (max-width: 420px) {
-  .auth-grid.is-compact {
+  .form-grid.is-compact {
     grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .upload-page.is-compact .toolbar-actions {
+    width: 100%;
+  }
+
+  .upload-page.is-compact .toolbar-actions .el-button {
+    width: 100%;
+    min-height: 40px;
+    border-radius: 12px;
   }
 }
+
+@media (min-width: 768px) and (max-width: 1199px) {
+  .upload-page.is-compact .compact-hero,
+  .upload-page.is-compact .upload-form {
+    width: min(100%, 820px);
+  }
+
+  .auth-grid.is-compact {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
 </style>

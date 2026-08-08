@@ -23,10 +23,12 @@ def _parse_json_list(raw: str | None) -> list:
         return []
 
 def _normalize_courses(raw: list | None) -> list[dict] | str:
-    """校验并规范化关联课程；新建学生至少一门。"""
+    """校验并规范化关联课程。
+
+    建档允许不关联课程（空列表）；报名/续费时再选择并写入课包。
+    传入空列表会清空 linked_courses。
+    """
     items = raw or []
-    if not items:
-        return "请至少选择一门关联课程"
     if len(items) > 20:
         return "关联课程最多 20 门"
     out: list[dict] = []
@@ -86,7 +88,43 @@ def latest_learning_at(db: Session, student_id: int) -> datetime | None:
     )
     return row
 
+def student_has_enroll_record(db: Session, student_id: int) -> bool:
+    from app.models.enrollment import EnrollmentRecord
+
+    return (
+        db.query(EnrollmentRecord.id)
+        .filter(
+            EnrollmentRecord.student_id == student_id,
+            EnrollmentRecord.kind == "enroll",
+        )
+        .first()
+        is not None
+    )
+
+
+def allocation_phase(db: Session, s: Student) -> str:
+    """pending_enroll | pending_alloc | allocated | normal"""
+    if not s.source_lead_id:
+        return "normal"
+    if not student_has_enroll_record(db, s.id):
+        return "pending_enroll"
+    if not s.academic_manager_id:
+        return "pending_alloc"
+    return "allocated"
+
+
+def assert_can_assign_manager(db: Session, student: Student) -> str | None:
+    """线索转入学员须先完成报名才能分配学管。返回错误或 None。"""
+    if not student.source_lead_id:
+        return None
+    if student_has_enroll_record(db, student.id):
+        return None
+    return "请先完成报名后再分配学管"
+
+
 def student_to_dict(db: Session, s: Student) -> dict:
+    phase = allocation_phase(db, s)
+    has_enroll = student_has_enroll_record(db, s.id)
     return {
         "id": s.id,
         "name": s.name,
@@ -104,6 +142,9 @@ def student_to_dict(db: Session, s: Student) -> dict:
         "created_at": s.created_at,
         "updated_at": s.updated_at,
         "latest_learning_at": latest_learning_at(db, s.id),
+        "has_enroll": has_enroll,
+        "allocation_phase": phase,
+        "needs_allocation": phase == "pending_alloc",
     }
 
 def list_students(
@@ -205,6 +246,12 @@ def update_student(db: Session, student: Student, data: dict) -> Student | str:
         if err:
             return err
     if "academic_manager_id" in data:
+        new_mgr = data["academic_manager_id"]
+        # 从空设为有值，或变更学管：线索来源须已报名
+        if new_mgr is not None and new_mgr != student.academic_manager_id:
+            gate = assert_can_assign_manager(db, student)
+            if gate:
+                return gate
         mgr = resolve_manager(db, data["academic_manager_id"])
         if isinstance(mgr, str):
             return mgr
@@ -286,6 +333,14 @@ def reassign_students(
         wrong = [s.id for s in students if s.academic_manager_id != from_manager_id]
         if wrong:
             return f"学生 {wrong} 不属于所选原学管师，请重新勾选"
+
+    blocked = []
+    for s in students:
+        gate = assert_can_assign_manager(db, s)
+        if gate:
+            blocked.append(f"{s.name}#{s.id}")
+    if blocked:
+        return f"请先完成报名后再分配学管：{', '.join(blocked)}"
 
     for s in students:
         s.academic_manager_id = to_manager_id
@@ -500,11 +555,82 @@ def can_reassign(user: User) -> bool:
 
 # ── 学生详情 Tab：报读课程 / 消费记录 / 学员动态 ──────────────
 
+PACKAGE_STATUS_LABELS = {
+    "active": "在读",
+    "exhausted": "已耗尽",
+    "refunded": "已退费",
+    "closed": "已结课",
+    "expired": "已过期",
+}
+
+
+def _package_is_available(package) -> bool:
+    return package.status == "active" and (
+        not package.valid_until or package.valid_until >= business_today()
+    )
+
+
+def _resolve_package_order(db: Session, package) -> tuple[int | None, str]:
+    from app.models.enrollment import EnrollmentRecord
+    from app.models.finance import FinanceOrder
+
+    order_no = ""
+    order_id = None
+    if package.enrollment_id:
+        en = db.get(EnrollmentRecord, package.enrollment_id)
+        if en and getattr(en, "order_no", None):
+            order_no = en.order_no or ""
+        fo = (
+            db.query(FinanceOrder)
+            .filter(FinanceOrder.enrollment_id == package.enrollment_id)
+            .first()
+        )
+        if fo:
+            order_id = fo.id
+            order_no = fo.order_no or order_no
+    return order_id, order_no or f"PKG-{package.id}"
+
+
+def _package_row_dict(db: Session, package) -> dict:
+    order_id, order_no = _resolve_package_order(db, package)
+    used = float(package.total_hours or 0) - float(package.remain_hours or 0)
+    if used < 0:
+        used = 0.0
+    gift_hours = float(getattr(package, "gift_hours", 0) or 0)
+    purchase_hours = float(getattr(package, "purchased_hours", 0) or 0)
+    if purchase_hours <= 0 and gift_hours <= 0:
+        purchase_hours = float(package.total_hours or 0)
+    # refunded/closed 且剩余被清零时，把清零部分记为退转数量近似值
+    refund_hours = 0.0
+    if package.status in {"refunded", "closed"} and float(package.remain_hours or 0) <= 0:
+        # 无法精确拆分退转，展示 0；清零操作会写入 total 差值时由前端看 remain
+        refund_hours = 0.0
+    package_status = package.status
+    if package_status == "active" and package.valid_until and package.valid_until < business_today():
+        package_status = "expired"
+    return {
+        "package_id": package.id,
+        "order_id": order_id,
+        "order_no": order_no,
+        "purchase_hours": purchase_hours,
+        "gift_hours": gift_hours,
+        "consumed_hours": round(used, 2),
+        "refund_hours": round(refund_hours, 2),
+        "remain_hours": float(package.remain_hours or 0),
+        "valid_until": package.valid_until.isoformat() if package.valid_until else None,
+        "priority_consume": bool(getattr(package, "priority_consume", False)),
+        "status": package_status,
+        "status_label": PACKAGE_STATUS_LABELS.get(package_status, package_status),
+        "unit_price": float(package.unit_price or 0),
+        "created_at": package.created_at,
+        "can_clear_hours": package.status == "active" and float(package.remain_hours or 0) > 0,
+    }
+
+
 def list_student_course_packages(db: Session, student_id: int) -> dict:
     """报读课程：按课程聚合课包 + 订单行。"""
     from app.models.academic import ClassMember, ClassRoom, Course, StudentCoursePackage
-    from app.models.enrollment import EnrollmentRecord
-    from app.models.finance import CourseConsumption, FinanceOrder
+    from app.models.finance import CourseConsumption
 
     student = get_student(db, student_id)
     if not student:
@@ -513,17 +639,19 @@ def list_student_course_packages(db: Session, student_id: int) -> dict:
     pkgs = (
         db.query(StudentCoursePackage)
         .filter(StudentCoursePackage.student_id == student_id)
-        .order_by(StudentCoursePackage.id.desc())
+        .order_by(
+            StudentCoursePackage.priority_consume.desc(),
+            StudentCoursePackage.id.desc(),
+        )
         .all()
     )
-    def is_available(package) -> bool:
-        return package.status == "active" and (
-            not package.valid_until or package.valid_until >= business_today()
-        )
 
-    total_remain = sum(float(p.remain_hours or 0) for p in pkgs if is_available(p))
-    total_bought = sum(float(p.total_hours or 0) for p in pkgs)
-    total_consumed = total_bought - sum(float(p.remain_hours or 0) for p in pkgs)
+    total_remain = sum(float(p.remain_hours or 0) for p in pkgs if _package_is_available(p))
+    total_bought = sum(float(p.total_hours or 0) for p in pkgs if p.status != "refunded")
+    total_remain_all = sum(
+        float(p.remain_hours or 0) for p in pkgs if p.status not in {"refunded"}
+    )
+    total_consumed = total_bought - total_remain_all
     if total_consumed < 0:
         total_consumed = 0.0
 
@@ -535,9 +663,10 @@ def list_student_course_packages(db: Session, student_id: int) -> dict:
     courses_out = []
     for course_id, group in by_course.items():
         course = db.get(Course, course_id)
-        remain = sum(float(p.remain_hours or 0) for p in group if is_available(p))
-        bought = sum(float(p.total_hours or 0) for p in group)
-        consumed = bought - sum(float(p.remain_hours or 0) for p in group)
+        remain = sum(float(p.remain_hours or 0) for p in group if _package_is_available(p))
+        bought = sum(float(p.total_hours or 0) for p in group if p.status != "refunded")
+        remain_all = sum(float(p.remain_hours or 0) for p in group if p.status != "refunded")
+        consumed = bought - remain_all
         if consumed < 0:
             consumed = 0.0
 
@@ -571,58 +700,12 @@ def list_student_course_packages(db: Session, student_id: int) -> dict:
             class_name = cls.name
             class_id = cls.id
 
-        orders_rows = []
-        for p in group:
-            en = db.get(EnrollmentRecord, p.enrollment_id) if p.enrollment_id else None
-            order_no = ""
-            order_id = None
-            if en and getattr(en, "order_no", None):
-                order_no = en.order_no or ""
-                fo = (
-                    db.query(FinanceOrder)
-                    .filter(FinanceOrder.enrollment_id == en.id)
-                    .first()
-                )
-                if fo:
-                    order_id = fo.id
-                    order_no = fo.order_no or order_no
-            elif p.enrollment_id:
-                fo = (
-                    db.query(FinanceOrder)
-                    .filter(FinanceOrder.enrollment_id == p.enrollment_id)
-                    .first()
-                )
-                if fo:
-                    order_id = fo.id
-                    order_no = fo.order_no or ""
-
-            used = float(p.total_hours or 0) - float(p.remain_hours or 0)
-            if used < 0:
-                used = 0.0
-            gift_hours = float(getattr(p, "gift_hours", 0) or 0)
-            purchase_hours = float(getattr(p, "purchased_hours", 0) or 0)
-            if purchase_hours <= 0 and gift_hours <= 0:
-                purchase_hours = float(p.total_hours or 0)
-            package_status = p.status
-            if package_status == "active" and p.valid_until and p.valid_until < business_today():
-                package_status = "expired"
-            orders_rows.append(
-                {
-                    "package_id": p.id,
-                    "order_id": order_id,
-                    "order_no": order_no or f"PKG-{p.id}",
-                    "purchase_hours": purchase_hours,
-                    "gift_hours": gift_hours,
-                    "consumed_hours": round(used, 2),
-                    "refund_hours": 0,
-                    "remain_hours": float(p.remain_hours or 0),
-                    "valid_until": p.valid_until,
-                    "priority_consume": False,
-                    "status": package_status,
-                    "unit_price": float(p.unit_price or 0),
-                    "created_at": p.created_at,
-                }
-            )
+        orders_rows = [_package_row_dict(db, p) for p in group]
+        active_pkgs = [p for p in group if p.status == "active"]
+        closed_pkgs = [p for p in group if p.status in {"closed", "exhausted", "refunded"}]
+        is_closed = bool(group) and not active_pkgs and bool(closed_pkgs)
+        # 仅有过期 active 也算不可用
+        has_available = any(_package_is_available(p) for p in group)
 
         type_label = ""
         if course:
@@ -640,12 +723,16 @@ def list_student_course_packages(db: Session, student_id: int) -> dict:
                 "class_id": class_id,
                 "class_name": class_name,
                 "packages": orders_rows,
+                "is_closed": is_closed,
+                "has_available": has_available,
+                "can_close": any(p.status == "active" for p in group),
+                "can_operate": any(p.status == "active" for p in group),
             }
         )
 
     # linked_courses 无课包时也展示占位
     linked = _parse_json_list(getattr(student, "linked_courses", None))
-    existing_ids = {c["course_id"] for c in courses_out}
+    existing_ids = {c["course_id"] for c in courses_out if c.get("course_id") is not None}
     for lc in linked:
         cid = lc.get("id")
         if cid and int(cid) in existing_ids:
@@ -665,6 +752,10 @@ def list_student_course_packages(db: Session, student_id: int) -> dict:
                 "class_name": "未选班",
                 "packages": [],
                 "from_link_only": True,
+                "is_closed": False,
+                "has_available": False,
+                "can_close": False,
+                "can_operate": False,
             }
         )
 
@@ -678,6 +769,15 @@ def list_student_course_packages(db: Session, student_id: int) -> dict:
         or 0.0
     )
 
+    # 有剩余课时的课程排前，已结课靠后
+    courses_out.sort(
+        key=lambda c: (
+            1 if c.get("is_closed") else 0,
+            0 if c.get("has_available") else 1,
+            -(c.get("remain_hours") or 0),
+        )
+    )
+
     return {
         "summary": {
             "remain_hours": round(total_remain, 2),
@@ -688,14 +788,141 @@ def list_student_course_packages(db: Session, student_id: int) -> dict:
         "courses": courses_out,
     }
 
+
+def update_student_package(
+    db: Session,
+    student_id: int,
+    package_id: int,
+    *,
+    valid_until: date | None = None,
+    clear_valid_until: bool = False,
+    priority_consume: bool | None = None,
+) -> dict | str:
+    """更新课包有效期 / 优先消耗。"""
+    from app.models.academic import StudentCoursePackage
+
+    student = get_student(db, student_id)
+    if not student:
+        return "学生不存在"
+    pkg = db.get(StudentCoursePackage, package_id)
+    if not pkg or pkg.student_id != student_id:
+        return "课包不存在"
+    if pkg.status in {"refunded"}:
+        return "已退费课包不可修改"
+
+    if clear_valid_until:
+        pkg.valid_until = None
+    elif valid_until is not None:
+        pkg.valid_until = valid_until
+
+    if priority_consume is not None:
+        pkg.priority_consume = bool(priority_consume)
+        # 同一课程仅允许一个优先课包
+        if pkg.priority_consume:
+            (
+                db.query(StudentCoursePackage)
+                .filter(
+                    StudentCoursePackage.student_id == student_id,
+                    StudentCoursePackage.course_id == pkg.course_id,
+                    StudentCoursePackage.id != pkg.id,
+                    StudentCoursePackage.priority_consume.is_(True),
+                )
+                .update({"priority_consume": False}, synchronize_session=False)
+            )
+
+    pkg.updated_at = _utcnow()
+    db.commit()
+    db.refresh(pkg)
+    return _package_row_dict(db, pkg)
+
+
+def clear_package_hours(
+    db: Session,
+    student_id: int,
+    package_id: int,
+    *,
+    remark: str = "",
+) -> dict | str:
+    """课时清零：将剩余课时置 0 并标记 exhausted。"""
+    from app.models.academic import StudentCoursePackage
+
+    student = get_student(db, student_id)
+    if not student:
+        return "学生不存在"
+    pkg = db.get(StudentCoursePackage, package_id)
+    if not pkg or pkg.student_id != student_id:
+        return "课包不存在"
+    if pkg.status != "active":
+        return "仅在读课包可清零课时"
+    remain = float(pkg.remain_hours or 0)
+    if remain <= 0:
+        return "剩余课时已为 0"
+    pkg.remain_hours = 0.0
+    pkg.status = "exhausted"
+    pkg.updated_at = _utcnow()
+    db.commit()
+    db.refresh(pkg)
+    row = _package_row_dict(db, pkg)
+    row["cleared_hours"] = remain
+    row["remark"] = (remark or "").strip()
+    return row
+
+
+def close_student_course(
+    db: Session,
+    student_id: int,
+    course_id: int,
+    *,
+    clear_remain: bool = False,
+) -> dict | str:
+    """结课：课程下 active 课包标记 closed，可选清零剩余。"""
+    from app.models.academic import Course, StudentCoursePackage
+
+    student = get_student(db, student_id)
+    if not student:
+        return "学生不存在"
+    course = db.get(Course, course_id)
+    if not course:
+        return "课程不存在"
+    pkgs = (
+        db.query(StudentCoursePackage)
+        .filter(
+            StudentCoursePackage.student_id == student_id,
+            StudentCoursePackage.course_id == course_id,
+            StudentCoursePackage.status == "active",
+        )
+        .all()
+    )
+    if not pkgs:
+        return "该课程无可结课的在读课包"
+    closed = 0
+    for pkg in pkgs:
+        if clear_remain:
+            pkg.remain_hours = 0.0
+        pkg.status = "closed"
+        pkg.updated_at = _utcnow()
+        closed += 1
+    db.commit()
+    return {
+        "student_id": student_id,
+        "course_id": course_id,
+        "course_name": course.name,
+        "closed_count": closed,
+        "clear_remain": clear_remain,
+    }
+
+
 def list_student_orders(
     db: Session,
     student_id: int,
     *,
     page: int = 1,
     page_size: int = 20,
+    status: str | None = None,
+    order_type: str | None = None,
+    item_q: str | None = None,
 ) -> dict:
-    """消费记录：学员相关财务订单（分页；summary 仍按全量非作废汇总）。"""
+    """消费记录：学员相关财务订单（分页；summary 按筛选后非作废汇总）。"""
     from app.models.finance import FinanceOrder
     from app.modules.finance.service import order_to_dict
 
@@ -706,7 +933,20 @@ def list_student_orders(
     page = clamp_page(page)
     page_size = clamp_page_size(page_size)
     base = db.query(FinanceOrder).filter(FinanceOrder.student_id == student_id)
-    # 汇总：全量非作废
+
+    statuses = [s.strip() for s in (status or "").split(",") if s.strip()]
+    if statuses:
+        base = base.filter(FinanceOrder.status.in_(statuses))
+    if order_type:
+        types = [t.strip() for t in order_type.split(",") if t.strip()]
+        if len(types) == 1:
+            base = base.filter(FinanceOrder.order_type == types[0])
+        elif types:
+            base = base.filter(FinanceOrder.order_type.in_(types))
+    if item_q and item_q.strip():
+        base = base.filter(FinanceOrder.item_summary.contains(item_q.strip()))
+
+    # 汇总：当前筛选条件下非作废
     all_rows = base.all()
     total_recv = sum(float(r.receivable or 0) for r in all_rows if r.status != "void")
     total_paid = sum(float(r.received or 0) for r in all_rows if r.status != "void")
@@ -722,6 +962,96 @@ def list_student_orders(
             "arrears_amount": round(total_arrears, 2),
         },
         "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+def list_student_order_lines(
+    db: Session,
+    student_id: int,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    order_type: str | None = None,
+    item_q: str | None = None,
+) -> dict:
+    """消费记录 · 订单明细：展开购买项目行。"""
+    from app.models.finance import FinanceOrder
+    from app.modules.finance.service import ORDER_TYPE_LABELS, _build_line_items
+
+    student = get_student(db, student_id)
+    if not student:
+        return {"error": "学生不存在"}
+
+    page = clamp_page(page)
+    page_size = clamp_page_size(page_size)
+    q = (
+        db.query(FinanceOrder)
+        .filter(FinanceOrder.student_id == student_id, FinanceOrder.status != "void")
+        .order_by(FinanceOrder.id.desc())
+    )
+    if order_type:
+        types = [t.strip() for t in order_type.split(",") if t.strip()]
+        if len(types) == 1:
+            q = q.filter(FinanceOrder.order_type == types[0])
+        elif types:
+            q = q.filter(FinanceOrder.order_type.in_(types))
+    if item_q and item_q.strip():
+        q = q.filter(FinanceOrder.item_summary.contains(item_q.strip()))
+
+    orders = q.all()
+    lines: list[dict] = []
+    for order in orders:
+        built = _build_line_items(db, order)
+        if not built:
+            lines.append(
+                {
+                    "order_id": order.id,
+                    "order_no": order.order_no,
+                    "order_type": order.order_type,
+                    "order_type_label": ORDER_TYPE_LABELS.get(order.order_type, order.order_type),
+                    "item_name": order.item_summary or "—",
+                    "quantity_label": "—",
+                    "unit_price": 0,
+                    "receivable": float(order.receivable or 0),
+                    "received": float(order.received or 0),
+                    "status": order.status,
+                    "created_at": order.created_at,
+                }
+            )
+            continue
+        for line in built:
+            if item_q and item_q.strip():
+                name = str(line.get("name") or "")
+                if item_q.strip() not in name and item_q.strip() not in (order.item_summary or ""):
+                    continue
+            lines.append(
+                {
+                    "order_id": order.id,
+                    "order_no": order.order_no,
+                    "order_type": order.order_type,
+                    "order_type_label": ORDER_TYPE_LABELS.get(order.order_type, order.order_type),
+                    "item_name": line.get("name") or order.item_summary or "—",
+                    "quantity_label": line.get("quantity_label") or "—",
+                    "unit_price": float(line.get("unit_price") or 0),
+                    "price_label": line.get("price_label") or "",
+                    "receivable": float(line.get("receivable") or line.get("subtotal") or 0),
+                    "received": float(line.get("subtotal") or 0),
+                    "gift_qty": line.get("gift_qty") or "—",
+                    "class_name": line.get("class_name") or "—",
+                    "valid_until": line.get("valid_until") or "—",
+                    "status": order.status,
+                    "created_at": order.created_at,
+                }
+            )
+
+    total = len(lines)
+    start = (page - 1) * page_size
+    page_items = lines[start : start + page_size]
+    return {
+        "items": page_items,
         "total": total,
         "page": page,
         "page_size": page_size,

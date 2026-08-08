@@ -13,12 +13,14 @@ import {
   type Student,
   type StudentStatus,
 } from '../../api/students'
-import { listCoursesApi, type Course } from '../../api/academic'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useCardAccordion } from '../../composables/useCardAccordion'
 import { useListScrollRestore } from '../../composables/useListScrollRestore'
+import ListLoadStatus from '../../components/ListLoadStatus.vue'
 import MobileFilterSheet from '../../components/MobileFilterSheet.vue'
+import CompactFilterBar from '../../components/CompactFilterBar.vue'
+import { useResponsiveSurface } from '../../composables/useResponsiveSurface'
 import {
   isValidOptionalPhone,
   PHONE_INPUT_MESSAGE,
@@ -32,9 +34,19 @@ const SCROLL_CHUNK = 10
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const { isCompact, width } = useBreakpoint()
+const { isApp, width } = useBreakpoint()
 /** Pad 横屏～窄桌面：表格藏次要列，避免横向挤压 */
-const isNarrowTable = computed(() => !isCompact.value && width.value < 1280)
+const isNarrowTable = computed(() => !isApp.value && width.value < 1280)
+const { surface: formSurface, surfaceProps: formSurfaceProps } = useResponsiveSurface({
+  dialogMaxWidth: '560px',
+  compactSize: 'min(92%, 720px)',
+  modalClass: 'student-list-edit-sheet',
+})
+const { surface: reassignSurface, surfaceProps: reassignSurfaceProps } = useResponsiveSurface({
+  dialogMaxWidth: '640px',
+  compactSize: 'min(94%, 820px)',
+  modalClass: 'student-reassign-sheet',
+})
 const loading = ref(false)
 const loadingMore = ref(false)
 const rows = ref<Student[]>([])
@@ -50,7 +62,7 @@ let scrollObserver: IntersectionObserver | null = null
 
 const { takeSnapshotForLoad, finishListEnter, clearSnapshot } = useListScrollRestore('students', {
   visibleCount,
-  enabled: isCompact,
+  enabled: isApp,
   stateStorageKey: LIST_STATE_KEY,
 })
 const { isExpanded, toggle: toggleCard, toggleForce, collapseAll } = useCardAccordion()
@@ -86,8 +98,6 @@ const formVisible = ref(false)
 const editingId = ref<number | null>(null)
 const formRef = ref<FormInstance>()
 const saving = ref(false)
-/** 与报名页一致：真实课程目录 */
-const courseOptions = ref<Course[]>([])
 const form = reactive({
   name: '',
   grade: '',
@@ -97,8 +107,6 @@ const form = reactive({
   academic_manager_id: undefined as number | undefined,
   status: 'active' as StudentStatus,
   notes: '',
-  /** 编辑时须关联至少一门课程 */
-  course_ids: [] as number[],
 })
 const originalPhone = ref('')
 
@@ -152,24 +160,18 @@ const rules = computed<FormRules>(() => ({
   school: [{ required: true, message: '请填写学校', trigger: 'blur' }],
   academic_manager_id: [{ required: true, message: '请选择学管师', trigger: 'change' }],
   phone: [{ required: true, validator: validateEditedPhone, trigger: 'blur' }],
-  // 编辑须关联课程（建档在报名页完成）
-  course_ids: [
-    {
-      type: 'array',
-      required: true,
-      min: 1,
-      message: '请至少选择一门关联课程',
-      trigger: 'change',
-    },
-  ],
 }))
 
+const canEdit = computed(
+  () => auth.hasPermission('students.write') || auth.isAdmin,
+)
 const canReassign = computed(() => auth.hasPermission('students.delete'))
 const canDelete = computed(() => auth.hasPermission('students.delete'))
-/** 操作列宽随可见按钮数变化：详情+编辑 必有；转交/删除仅负责人 */
+/** 操作列宽：详情必有；编辑/转交/删除按权限 */
 const opsColumnWidth = computed(() => {
   // link 二字按钮约 44px，gap 2px，右内边距 8px
-  let n = 2
+  let n = 1
+  if (canEdit.value) n += 1
   if (canReassign.value) n += 1
   if (canDelete.value) n += 1
   return n * 46 + 12
@@ -282,15 +284,8 @@ async function loadManagers() {
   managers.value = await listManagersApi(true)
 }
 
-async function loadCourses() {
-  const page = await listCoursesApi({ enabled: true, page: 1, page_size: 100 }).catch(() => ({
-    items: [] as Course[],
-  }))
-  courseOptions.value = page.items
-}
-
 async function load(opts?: { resetPage?: boolean; append?: boolean }) {
-  const append = !!opts?.append && isCompact.value
+  const append = !!opts?.append && isApp.value
   const snap = opts?.resetPage || append ? null : takeSnapshotForLoad(route.path)
   if (opts?.resetPage) {
     clearSnapshot()
@@ -300,7 +295,7 @@ async function load(opts?: { resetPage?: boolean; append?: boolean }) {
   if (append) loadingMore.value = true
   else loading.value = true
   try {
-    if (isCompact.value) {
+    if (isApp.value) {
       if (!append) page.value = 1
       const res = await listStudentsApi(buildStudentParams(page.value, SCROLL_CHUNK))
       rows.value = append ? [...rows.value, ...res.items] : res.items
@@ -335,14 +330,14 @@ async function load(opts?: { resetPage?: boolean; append?: boolean }) {
 }
 
 async function loadMore() {
-  if (!isCompact.value || loadingMore.value || loading.value || !hasMoreInfinite.value) return
+  if (!isApp.value || loadingMore.value || loading.value || !hasMoreInfinite.value) return
   page.value += 1
   await load({ append: true })
 }
 
 function setupScrollObserver() {
   teardownScrollObserver()
-  if (!isCompact.value) return
+  if (!isApp.value) return
   const el = sentinelRef.value
   if (!el) return
   scrollObserver = new IntersectionObserver(
@@ -359,18 +354,11 @@ function teardownScrollObserver() {
   scrollObserver = null
 }
 
-function buildCoursesPayload() {
-  return courseOptions.value
-    .filter((c) => form.course_ids.includes(c.id))
-    .map((c) => ({
-      id: c.id,
-      name: c.name,
-      type: c.type_label,
-      price_label: c.price_label,
-    }))
-}
-
 async function openEdit(row: Student) {
+  if (!canEdit.value) {
+    ElMessage.warning('无编辑学员权限')
+    return
+  }
   editingId.value = row.id
   form.name = row.name
   form.grade = row.grade
@@ -381,12 +369,7 @@ async function openEdit(row: Student) {
   form.academic_manager_id = row.academic_manager_id ?? undefined
   form.status = (row.status as StudentStatus) || 'active'
   form.notes = row.notes || ''
-  // 回填已关联课程 id
-  const linked = row.linked_courses || []
-  form.course_ids = linked
-    .map((c) => (c.id != null ? Number(c.id) : NaN))
-    .filter((id) => Number.isFinite(id))
-  await Promise.all([loadManagers(), loadCourses()])
+  await loadManagers()
   // 已删除账号不在可选列表；若当前仍挂着已删学管，清空以免脏值提交
   if (
     form.academic_manager_id != null &&
@@ -394,50 +377,15 @@ async function openEdit(row: Student) {
   ) {
     form.academic_manager_id = undefined
   }
-  // 关联课程可能已停用：把已选但未在 options 里的项补进去，避免标签空白
-  for (const c of linked) {
-    if (c.id == null) continue
-    const id = Number(c.id)
-    if (!Number.isFinite(id)) continue
-    if (!courseOptions.value.some((x) => x.id === id)) {
-      courseOptions.value.push({
-        id,
-        name: c.name,
-        course_type: 'group',
-        type_label: c.type || '课程',
-        grade: '',
-        subject: '',
-        term: '',
-        billing_mode: 'hour',
-        billing_label: '按课时',
-        unit_price: 0,
-        price_label: c.price_label || '',
-        leave_rule: 'no_deduct',
-        absent_rule: 'no_deduct',
-        color: '#a16207',
-        enabled: true,
-        student_count: 0,
-        remark: '',
-      })
-    }
-  }
   formVisible.value = true
 }
 
 async function submitForm() {
   const ok = await formRef.value?.validate().catch(() => false)
   if (!ok || editingId.value == null) return
-  if (!form.course_ids.length) {
-    ElMessage.warning('请至少选择一门关联课程')
-    return
-  }
-  const courses = buildCoursesPayload()
-  if (!courses.length) {
-    ElMessage.warning('请至少选择一门关联课程')
-    return
-  }
   saving.value = true
   try {
+    // 不传 courses：保留原有 linked_courses，避免编辑档案时误清空报读快照
     await patchStudentApi(editingId.value, {
       name: form.name,
       grade: form.grade,
@@ -447,7 +395,6 @@ async function submitForm() {
       academic_manager_id: form.academic_manager_id ?? null,
       status: form.status,
       notes: form.notes,
-      courses,
     })
     ElMessage.success('学生已更新')
     formVisible.value = false
@@ -618,17 +565,13 @@ function resetFilters() {
 }
 
 function runQuery() {
-  if (isCompact.value) filterExpanded.value = false
+  if (isApp.value) filterExpanded.value = false
   collapseAll()
   load({ resetPage: true })
 }
 
-function toggleFilterExpand() {
-  filterExpanded.value = !filterExpanded.value
-}
-
-watch(isCompact, async (compact, was) => {
-  if (compact === was) return
+watch(isApp, async (app, was) => {
+  if (app === was) return
   page.value = 1
   await load({ resetPage: true })
   await nextTick()
@@ -636,14 +579,14 @@ watch(isCompact, async (compact, was) => {
 })
 
 watch(sentinelRef, () => {
-  if (isCompact.value) setupScrollObserver()
+  if (isApp.value) setupScrollObserver()
 })
 
 onMounted(async () => {
   restoreListState()
   // 老师端不再按电话筛，避免恢复旧状态带入
   if (auth.isTeacher) filters.phone = ''
-  await Promise.all([loadManagers(), loadCourses()])
+  await loadManagers()
   await load()
   await nextTick()
   setupScrollObserver()
@@ -654,8 +597,8 @@ onUnmounted(() => teardownScrollObserver())
 
 <template>
   <div class="student-list-page">
-    <div class="page-toolbar student-toolbar" :class="{ 'is-compact': isCompact }">
-      <el-page-header class="is-title-only" content="学生信息" />
+    <div class="page-toolbar student-toolbar" :class="{ 'is-compact': isApp }">
+      <el-page-header v-if="!isApp" class="is-title-only" content="学生信息" />
       <div v-if="canDelete || canReassign" class="toolbar-right">
         <el-button
           v-if="canDelete"
@@ -674,7 +617,7 @@ onUnmounted(() => teardownScrollObserver())
     </div>
 
     <!-- PC 筛选 + 列表摘要（档案说明放在这里，不挤在标题下） -->
-    <el-card v-if="!isCompact" class="filters pc-filters" shadow="never">
+    <el-card v-if="!isApp" class="filters pc-filters" shadow="never">
       <div class="pc-filters-head">
         <div class="pc-filters-head-main">
           <span class="pc-filters-title">筛选条件</span>
@@ -733,102 +676,65 @@ onUnmounted(() => teardownScrollObserver())
       </el-form>
     </el-card>
 
-    <!-- wap/pad 筛选 -->
-    <div v-else class="m-filter">
-      <div class="m-filter-search">
-        <el-icon class="m-filter-search__icon"><Search /></el-icon>
-        <input
-          v-model="filters.name"
-          class="m-filter-search__input"
-          type="search"
-          enterkeyhint="search"
-          placeholder="搜索学生姓名"
-          @keyup.enter="runQuery"
-        />
-        <button type="button" class="m-filter-search__btn" @click="runQuery">查询</button>
-      </div>
-      <div class="m-filter-row">
-        <el-select
-          v-model="filters.status"
-          class="m-filter-select"
-          clearable
-          placeholder="状态"
-          teleported
-          placement="bottom-start"
-          :fit-input-width="true"
-          :popper-options="{ strategy: 'fixed' }"
-          popper-class="student-m-select-popper"
-        >
-          <el-option v-for="(label, key) in statusLabels" :key="key" :label="label" :value="key" />
-        </el-select>
-        <el-select
-          v-model="filters.grade"
-          class="m-filter-select"
-          clearable
-          placeholder="年级"
-          teleported
-          placement="bottom-start"
-          :fit-input-width="true"
-          :popper-options="{ strategy: 'fixed' }"
-          popper-class="student-m-select-popper"
-        >
-          <el-option v-for="g in gradeOptions" :key="g" :label="g" :value="g" />
-        </el-select>
-        <button
-          type="button"
-          class="m-filter-more"
-          :class="{ 'is-active': filterExpanded || activeFilterCount > 0 }"
-          @click="toggleFilterExpand"
-        >
-          更多{{ activeFilterCount ? ` · ${activeFilterCount}` : '' }}
-          <el-icon :class="{ 'is-open': filterExpanded }"><ArrowDown /></el-icon>
-        </button>
-      </div>
+    <!-- wap/pad 筛选：CompactFilterBar + MobileFilterSheet -->
+    <div v-else class="student-m-filter">
+      <CompactFilterBar
+        :active-count="activeFilterCount"
+        :total="total"
+        label="名学员"
+        @open="filterExpanded = true"
+      />
       <MobileFilterSheet
         v-model="filterExpanded"
         :active-count="activeFilterCount"
         @reset="resetFilters"
         @apply="runQuery"
       >
-        <el-select
-          v-if="!auth.isTeacher"
-          v-model="filters.academic_manager_id"
-          class="m-filter-panel__full"
-          clearable
-          placeholder="学管师"
-          teleported
-          placement="bottom-start"
-          :fit-input-width="true"
-          :popper-options="{ strategy: 'fixed' }"
-          popper-class="student-m-select-popper"
-        >
-          <el-option
-            v-for="m in allManagers"
-            :key="m.id"
-            :label="managerLabel(m)"
-            :value="m.id"
-          />
-        </el-select>
-        <el-input
-          v-if="showPhoneColumn"
-          v-model="filters.phone"
-          class="m-filter-panel__half"
-          clearable
-          placeholder="电话"
-        />
-        <el-input
-          v-model="filters.school"
-          :class="showPhoneColumn ? 'm-filter-panel__half' : 'm-filter-panel__full'"
-          clearable
-          placeholder="学校"
-        />
+        <el-form label-position="top" @submit.prevent="runQuery">
+          <el-form-item label="姓名">
+            <el-input v-model="filters.name" clearable placeholder="搜索学生姓名" />
+          </el-form-item>
+          <el-form-item label="状态">
+            <el-select v-model="filters.status" clearable placeholder="全部状态" style="width: 100%">
+              <el-option v-for="(label, key) in statusLabels" :key="key" :label="label" :value="key" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="年级">
+            <el-select v-model="filters.grade" clearable placeholder="全部年级" style="width: 100%">
+              <el-option v-for="g in gradeOptions" :key="g" :label="g" :value="g" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="!auth.isTeacher" label="学管师">
+            <el-select
+              v-model="filters.academic_manager_id"
+              clearable
+              filterable
+              placeholder="全部学管师"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="m in allManagers"
+                :key="m.id"
+                :label="managerLabel(m)"
+                :value="m.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="showPhoneColumn" label="电话">
+            <el-input v-model="filters.phone" clearable placeholder="搜索电话" />
+          </el-form-item>
+          <el-form-item label="学校">
+            <el-input v-model="filters.school" clearable placeholder="搜索学校" />
+          </el-form-item>
+        </el-form>
       </MobileFilterSheet>
     </div>
 
     <!-- 平板 / 手机：学生卡片 -->
-    <div v-if="isCompact" v-loading="loading" class="stu-card-list">
-      <div v-if="!total && !loading" class="stu-card stu-card--empty">
-        暂无学生，请到报名管理建档
+    <div v-if="isApp" v-loading="loading" class="stu-card-list">
+      <div v-if="!total && !loading" class="oc-app-empty stu-card--empty">
+        <strong>暂无学生</strong>
+        <em>请到报名管理建档，建档后可在此查看与编辑</em>
       </div>
       <div
         v-for="row in infiniteRows"
@@ -878,31 +784,48 @@ onUnmounted(() => teardownScrollObserver())
           </button>
         </div>
 
-        <div v-show="isExpanded(row.id)" class="m-card-acc-body">
-          <div class="stu-card__meta">
-            <div class="stu-meta-item">
-              <span class="stu-meta-k">学管</span>
-              <span class="stu-meta-v">{{ row.academic_manager_name || '—' }}</span>
-            </div>
-            <div v-if="showPhoneColumn && row.phone" class="stu-meta-item">
-              <span class="stu-meta-k">电话</span>
-              <span class="stu-meta-v">{{ row.phone }}</span>
-            </div>
-            <div v-if="row.parent_name" class="stu-meta-item">
-              <span class="stu-meta-k">家长</span>
-              <span class="stu-meta-v">{{ row.parent_name }}</span>
-            </div>
-            <div v-if="row.latest_learning_at" class="stu-meta-item stu-meta-item--full">
-              <span class="stu-meta-k">学情</span>
-              <span class="stu-meta-v">{{ formatTime(row.latest_learning_at) }}</span>
-            </div>
-          </div>
+        <div class="oc-meta-chips stu-card__chips">
+          <el-tag
+            v-if="row.allocation_phase === 'pending_enroll'"
+            type="warning"
+            size="small"
+            effect="plain"
+            round
+          >
+            待报名
+          </el-tag>
+          <el-tag
+            v-else-if="row.allocation_phase === 'pending_alloc' || row.needs_allocation"
+            type="danger"
+            size="small"
+            effect="dark"
+            round
+          >
+            待调配
+          </el-tag>
+          <el-tag
+            v-if="row.source_lead_id"
+            type="info"
+            size="small"
+            effect="plain"
+            round
+          >
+            线索转入
+          </el-tag>
+          <span class="oc-meta-chip">{{ row.academic_manager_name || '未分配学管' }}</span>
+          <span v-if="showPhoneColumn && row.phone" class="oc-meta-chip">{{ row.phone }}</span>
+          <span v-if="row.parent_name" class="oc-meta-chip">{{ row.parent_name }}</span>
+          <span v-if="row.latest_learning_at" class="oc-meta-chip">
+            学情 {{ formatTime(row.latest_learning_at) }}
+          </span>
+        </div>
 
+        <div v-show="isExpanded(row.id)" class="m-card-acc-body">
           <p v-if="row.notes" class="stu-card__notes">{{ row.notes }}</p>
 
           <div class="stu-card__actions">
             <el-button type="primary" size="small" @click="goDetail(row)">详情</el-button>
-            <el-button size="small" plain @click="openEdit(row)">编辑</el-button>
+            <el-button v-if="canEdit" size="small" plain @click="openEdit(row)">编辑</el-button>
             <el-button v-if="canReassign" size="small" plain @click="openReassign([row.id])">
               转交
             </el-button>
@@ -912,12 +835,18 @@ onUnmounted(() => teardownScrollObserver())
           </div>
         </div>
       </div>
-      <div v-if="total" ref="sentinelRef" class="scroll-sentinel">
-        <span v-if="hasMoreInfinite || loadingMore" class="scroll-hint">
-          {{ loadingMore ? '加载中…' : '上拉加载更多' }}
-        </span>
-        <span v-else class="scroll-hint">已加载全部 {{ total }} 条</span>
+
+      <div ref="sentinelRef" class="list-load-sentinel">
+        <ListLoadStatus
+          :has-more="hasMoreInfinite"
+          :loading="loadingMore"
+          :loaded="rows.length"
+          :total="total"
+          @more="loadMore"
+          @retry="loadMore"
+        />
       </div>
+
     </div>
 
     <!-- 桌面：表格 -->
@@ -979,6 +908,38 @@ onUnmounted(() => teardownScrollObserver())
               <span class="pc-manager">{{ row.academic_manager_name || '—' }}</span>
             </template>
           </el-table-column>
+          <el-table-column v-if="!isNarrowTable" label="流转" width="100" align="center">
+            <template #default="{ row }">
+              <el-tag
+                v-if="row.allocation_phase === 'pending_enroll'"
+                type="warning"
+                size="small"
+                effect="plain"
+                round
+              >
+                待报名
+              </el-tag>
+              <el-tag
+                v-else-if="row.allocation_phase === 'pending_alloc' || row.needs_allocation"
+                type="danger"
+                size="small"
+                effect="dark"
+                round
+              >
+                待调配
+              </el-tag>
+              <el-tag
+                v-else-if="row.source_lead_id"
+                type="info"
+                size="small"
+                effect="plain"
+                round
+              >
+                线索转入
+              </el-tag>
+              <span v-else class="pc-muted">—</span>
+            </template>
+          </el-table-column>
           <el-table-column label="状态" width="92" align="center">
             <template #default="{ row }">
               <el-tag
@@ -1021,7 +982,7 @@ onUnmounted(() => teardownScrollObserver())
             <template #default="{ row }">
               <div class="pc-ops">
                 <el-button link type="primary" @click="goDetail(row)">详情</el-button>
-                <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+                <el-button v-if="canEdit" link type="primary" @click="openEdit(row)">编辑</el-button>
                 <el-button v-if="canReassign" link type="primary" @click="openReassign([row.id])">
                   转交
                 </el-button>
@@ -1035,7 +996,7 @@ onUnmounted(() => teardownScrollObserver())
     </el-card>
 
     <!-- 仅 PC 显示底部分页；wap/pad 用滚动加载 -->
-    <div v-if="!isCompact && total" class="pager-bar pc-pager">
+    <div v-if="!isApp && total" class="pager-bar pc-pager">
       <el-button size="small" plain :disabled="page <= 1" @click="goFirstPage">首页</el-button>
       <el-pagination
         v-model:current-page="page"
@@ -1052,11 +1013,11 @@ onUnmounted(() => teardownScrollObserver())
     </div>
 
     <!-- 编辑学生（建档请到报名管理） -->
-    <el-dialog
+    <component
+      :is="formSurface"
       v-model="formVisible"
       title="编辑学生"
-      width="90%"
-      style="max-width: 560px"
+      v-bind="formSurfaceProps"
       destroy-on-close
     >
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
@@ -1104,25 +1065,6 @@ onUnmounted(() => teardownScrollObserver())
             <el-option v-for="(label, key) in statusLabels" :key="key" :label="label" :value="key" />
           </el-select>
         </el-form-item>
-        <el-form-item label="关联课程" prop="course_ids">
-          <el-select
-            v-model="form.course_ids"
-            multiple
-            filterable
-            collapse-tags
-            collapse-tags-tooltip
-            placeholder="请选择课程（可多选，至少一门）"
-            style="width: 100%"
-          >
-            <el-option
-              v-for="c in courseOptions"
-              :key="c.id"
-              :label="`${c.name}（${c.type_label} · ${c.price_label}）`"
-              :value="c.id"
-            />
-          </el-select>
-          <p class="form-field-hint">须关联至少一门课程；新学员建档请到报名管理。</p>
-        </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="form.notes" type="textarea" :rows="2" placeholder="选填，仅学员档案备注" />
         </el-form-item>
@@ -1131,14 +1073,14 @@ onUnmounted(() => teardownScrollObserver())
         <el-button @click="formVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="submitForm">保存</el-button>
       </template>
-    </el-dialog>
+    </component>
 
     <!-- 批量转交 -->
-    <el-dialog
+    <component
+      :is="reassignSurface"
       v-model="reassignVisible"
       title="批量转交学管师"
-      width="90%"
-      style="max-width: 640px"
+      v-bind="reassignSurfaceProps"
       destroy-on-close
     >
       <el-alert
@@ -1210,7 +1152,7 @@ onUnmounted(() => teardownScrollObserver())
         <el-button @click="reassignVisible = false">取消</el-button>
         <el-button type="primary" :loading="reassignSaving" @click="submitReassign">确认转交</el-button>
       </template>
-    </el-dialog>
+    </component>
   </div>
 </template>
 
@@ -1499,193 +1441,9 @@ onUnmounted(() => teardownScrollObserver())
   gap: 4px;
 }
 
-/* ── wap/pad 筛选壳（勿 overflow:hidden，否则下拉可能被裁） ── */
-.m-filter {
-  position: relative;
-  z-index: 20;
+/* ── wap/pad 筛选：CompactFilterBar 自带外壳 ── */
+.student-m-filter {
   margin-top: 4px;
-  margin-bottom: 8px;
-  padding: 10px 12px;
-  background: var(--oc-card, #fffdf8);
-  border: 1px solid var(--oc-border, #e8e0d0);
-  border-radius: 12px;
-  overflow: visible;
-}
-
-.m-filter-search {
-  display: flex;
-  align-items: center;
-  height: 40px;
-  padding: 0 4px 0 12px;
-  background: #f5f0e6;
-  border: 1px solid var(--oc-border, #e8e0d0);
-  border-radius: 10px;
-}
-
-.m-filter-search__icon {
-  flex-shrink: 0;
-  color: #a8a29e;
-  font-size: 16px;
-}
-
-.m-filter-search__input {
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-  margin: 0 8px;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-size: 14px;
-  color: var(--oc-ink, #44403c);
-  /* 去掉 type=search 的默认清除按钮占位异常 */
-  appearance: none;
-}
-
-.m-filter-search__input::-webkit-search-cancel-button {
-  -webkit-appearance: none;
-}
-
-.m-filter-search__input::placeholder {
-  color: #a8a29e;
-}
-
-.m-filter-search__btn {
-  flex-shrink: 0;
-  height: 32px;
-  padding: 0 14px;
-  margin: 0;
-  border: none;
-  border-radius: 8px;
-  background: var(--oc-primary, #a16207);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.m-filter-search__btn:active {
-  background: var(--oc-primary-hover, #86530a);
-}
-
-.m-filter-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-  overflow: visible;
-}
-
-.m-filter-select {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.m-filter-select :deep(.el-select__wrapper) {
-  min-height: 34px;
-  border-radius: 8px;
-  background: #faf6ef !important;
-  box-shadow: 0 0 0 1px var(--oc-border, #e8e0d0) inset !important;
-}
-
-/* 下拉挂 body + fixed，避免被 main overflow 裁切/错位 */
-:global(.student-m-select-popper.el-popper) {
-  z-index: 5000 !important;
-}
-
-:global(.student-m-select-popper .el-select-dropdown__item) {
-  padding: 0 14px;
-  height: 36px;
-  line-height: 36px;
-  font-size: 14px;
-}
-
-:global(.student-m-select-popper .el-select-dropdown__item.is-selected) {
-  color: var(--oc-primary, #a16207);
-  font-weight: 600;
-  background: #faf3e6;
-}
-
-.m-filter-more {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--oc-border, #e8e0d0);
-  border-radius: 8px;
-  background: #fffdf8;
-  color: var(--oc-ink, #44403c);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.m-filter-more.is-active {
-  border-color: #d4b483;
-  color: var(--oc-primary, #a16207);
-  background: #faf3e6;
-}
-
-.m-filter-more .el-icon {
-  font-size: 12px;
-  transition: transform 0.15s ease;
-}
-
-.m-filter-more .el-icon.is-open {
-  transform: rotate(180deg);
-}
-
-.m-filter-panel {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--oc-border, #e8e0d0);
-  overflow: visible;
-}
-
-.m-filter-panel__full {
-  grid-column: 1 / -1;
-  width: 100%;
-}
-
-.m-filter-panel__half {
-  width: 100%;
-  min-width: 0;
-}
-
-.m-filter-panel__actions {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 12px;
-  padding-top: 2px;
-}
-
-.m-filter-link {
-  border: none;
-  background: none;
-  padding: 0;
-  color: var(--oc-muted, #78716c);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.m-filter-apply {
-  height: 30px;
-  padding: 0 16px;
-  border: none;
-  border-radius: 8px;
-  background: var(--oc-primary, #a16207);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
 }
 
 .hint {
@@ -1703,7 +1461,7 @@ onUnmounted(() => teardownScrollObserver())
   padding-bottom: 8px;
 }
 
-@media (min-width: 768px) and (max-width: 991px) {
+@media (min-width: 768px) and (max-width: 1199px) {
   .stu-card-list {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1711,7 +1469,7 @@ onUnmounted(() => teardownScrollObserver())
   }
 
   .stu-card--empty,
-  .infinite-sentinel {
+  .list-load-sentinel {
     grid-column: 1 / -1;
   }
 }
@@ -1731,11 +1489,11 @@ onUnmounted(() => teardownScrollObserver())
 }
 
 .stu-card--empty {
-  text-align: center;
-  color: var(--oc-muted, #78716c);
-  padding: 36px 16px;
-  border-style: dashed;
-  box-shadow: none;
+  margin-top: 4px;
+}
+
+.stu-card__chips {
+  margin-top: 10px;
 }
 
 .stu-card__top {
@@ -1915,5 +1673,32 @@ onUnmounted(() => teardownScrollObserver())
 .scroll-hint {
   font-size: 12px;
   color: var(--oc-muted, #78716c);
+}
+
+@media (max-width: 1199px) {
+  .student-toolbar.is-compact {
+    margin-bottom: 4px;
+  }
+
+  .student-toolbar.is-compact .toolbar-right {
+    width: 100%;
+  }
+
+  .student-toolbar.is-compact .tb-btn {
+    flex: 1 1 0;
+    min-height: 42px;
+    border-radius: 10px;
+    font-weight: 600;
+  }
+
+  .stu-card {
+    border-radius: 16px;
+  }
+
+  .stu-card__actions .el-button {
+    min-height: 40px;
+    height: auto;
+    border-radius: 10px;
+  }
 }
 </style>

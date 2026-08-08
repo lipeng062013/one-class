@@ -5,6 +5,7 @@
 - 写入 20 条线索 + 20 条学员
 - 补 5 个学管师（CR）便于学员建档联调
 - 恢复系统模板 / 示例知识库
+- 其余业务列表不足 5 条的统一补到 5 条
 
 用法（在 backend 目录）:
   python scripts/reset_demo_data.py
@@ -38,9 +39,11 @@ from app.seed import (
     SOURCES,
     SURNAMES,
     seed_extra_crs,
+    seed_demo_courses,
     seed_sample_knowledge,
     seed_system_templates,
 )
+from app.demo_seed import seed_demo_workspace
 
 def main() -> None:
     db = SessionLocal()
@@ -153,6 +156,11 @@ def main() -> None:
                 )
             )
         db.commit()
+
+        # 课程、班级、排课、点名、报名、财务、素材、文案、海报、学情、
+        # 待办等列表统一补齐；已有达到 5 条的表不会继续追加。
+        seed_demo_courses(db)
+        seed_demo_workspace(db)
 
         print("--- 结果 ---")
         users = (

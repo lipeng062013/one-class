@@ -3,7 +3,7 @@ import pytest
 from app.models.student import Student
 from tests.conftest import auth_header, first_manager_id
 
-# 建档须关联课程（与产品规则一致）
+# 建档可不关联课程；部分用例仍可显式传入
 _SAMPLE_COURSES = [{"name": "测试关联课", "type": "一对多", "price_label": "单价(100元/课时)"}]
 
 
@@ -13,7 +13,6 @@ def _student_payload(**kwargs):
         "grade": "一年级",
         "school": "测试小学",
         "phone": "13800000000",
-        "courses": list(_SAMPLE_COURSES),
     }
     body.update(kwargs)
     return body
@@ -58,6 +57,88 @@ def test_update_student_rejects_invalid_phone(client):
 def test_student_model_rejects_invalid_phone_assignment():
     with pytest.raises(ValueError, match="手机号必须为11位数字且以1开头"):
         Student(name="模型校验", phone="123")
+
+
+def test_create_student_without_courses(client):
+    """报名页建档不再要求关联课程。"""
+    admin = auth_header(client, "admin", "admin123")
+    manager_id = first_manager_id(client, admin)
+    res = client.post(
+        "/api/v1/students",
+        headers=admin,
+        json=_student_payload(
+            name="无课新建生",
+            grade="一年级",
+            school="测试小学",
+            phone="13800003333",
+            academic_manager_id=manager_id,
+        ),
+    )
+    assert res.status_code == 201, res.text
+    data = res.json()["data"]
+    assert data["name"] == "无课新建生"
+    assert data.get("linked_courses") in ([], None) or data["linked_courses"] == []
+
+
+def test_update_student_without_courses_keeps_profile(client):
+    """编辑学生档案不要求关联课程；不传 courses 时保留原快照。"""
+    admin = auth_header(client, "admin", "admin123")
+    manager_id = first_manager_id(client, admin)
+    created = client.post(
+        "/api/v1/students",
+        headers=admin,
+        json=_student_payload(
+            name="编辑无课生",
+            grade="一年级",
+            school="测试小学",
+            phone="13800005555",
+            academic_manager_id=manager_id,
+            courses=list(_SAMPLE_COURSES),
+        ),
+    )
+    assert created.status_code == 201, created.text
+    sid = created.json()["data"]["id"]
+    before = created.json()["data"].get("linked_courses") or []
+
+    res = client.patch(
+        f"/api/v1/students/{sid}",
+        headers=admin,
+        json={
+            "name": "编辑后姓名",
+            "grade": "二年级",
+            "school": "更新小学",
+            "notes": "仅改档案",
+        },
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()["data"]
+    assert data["name"] == "编辑后姓名"
+    assert data["grade"] == "二年级"
+    assert data["school"] == "更新小学"
+    assert data["notes"] == "仅改档案"
+    # 未传 courses → 关联快照不变
+    after = data.get("linked_courses") or []
+    assert len(after) == len(before)
+    assert any(c.get("name") == "测试关联课" for c in after)
+
+
+def test_create_student_with_optional_courses_still_works(client):
+    admin = auth_header(client, "admin", "admin123")
+    manager_id = first_manager_id(client, admin)
+    res = client.post(
+        "/api/v1/students",
+        headers=admin,
+        json=_student_payload(
+            name="带课建档生",
+            grade="二年级",
+            school="测试小学",
+            phone="13800004444",
+            academic_manager_id=manager_id,
+            courses=list(_SAMPLE_COURSES),
+        ),
+    )
+    assert res.status_code == 201, res.text
+    assert any(c.get("name") == "测试关联课" for c in res.json()["data"].get("linked_courses") or [])
 
 
 def test_create_student_with_school_and_manager(client):

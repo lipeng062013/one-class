@@ -17,7 +17,7 @@ import { asyncPool } from '../../utils/asyncPool'
 
 const route = useRoute()
 const { goBack } = usePageBack('/copies')
-const { isCompact } = useBreakpoint()
+const { isApp } = useBreakpoint()
 const loading = ref(false)
 const materials = ref<Material[]>([])
 const templates = ref<CopyTemplate[]>([])
@@ -228,12 +228,12 @@ onUnmounted(revokePreviews)
     </div>
 
     <el-row
-      :gutter="isCompact ? 0 : 20"
+      :gutter="isApp ? 0 : 20"
       class="generate-layout"
-      :class="{ 'is-stacked': isCompact }"
+      :class="{ 'is-stacked': isApp }"
     >
       <!-- 左侧配置 -->
-      <el-col :xs="24" :sm="24" :lg="9" :md="isCompact ? 24 : 10" class="generate-form-col">
+      <el-col :xs="24" :sm="24" :lg="9" :md="isApp ? 24 : 10" class="generate-form-col">
         <el-card class="form-card" shadow="never">
           <template #header>
             <div class="card-head">
@@ -350,7 +350,7 @@ onUnmounted(revokePreviews)
       </el-col>
 
       <!-- 右侧：素材 + 结果 -->
-      <el-col :xs="24" :sm="24" :lg="15" :md="isCompact ? 24 : 14" class="generate-side-col">
+      <el-col :xs="24" :sm="24" :lg="15" :md="isApp ? 24 : 14" class="generate-side-col">
         <el-card class="material-card" shadow="never" v-loading="previewLoading">
           <template #header>
             <div class="card-head">
@@ -392,7 +392,7 @@ onUnmounted(revokePreviews)
             </p>
           </div>
 
-          <div v-else class="material-split" :class="{ 'is-compact': isCompact }">
+          <div v-else class="material-split" :class="{ 'is-compact': isApp }">
             <div class="material-left">
               <div v-if="selectedMaterial.files?.length" class="thumb-row">
                 <button

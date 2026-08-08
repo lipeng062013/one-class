@@ -164,9 +164,9 @@ onFrameStart()
   background: #fff;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1199px) {
   .office-page {
-    margin: -12px;
+    margin: -14px -12px;
     height: calc(100vh - 56px);
     height: calc(100dvh - 56px);
   }
@@ -177,6 +177,12 @@ onFrameStart()
 
   .toolbar {
     padding: 10px 12px;
+  }
+}
+
+@media (max-width: 767px) {
+  .office-page {
+    margin: -10px;
   }
 }
 </style>

@@ -1,7 +1,7 @@
 import client from './client'
 import { asPageResult, type PageResult } from './paging'
 
-export type EnrollmentKind = 'enroll' | 'renew'
+export type EnrollmentKind = 'enroll' | 'renew' | 'transfer'
 
 export interface EnrollmentAttribution {
   user_id: number
@@ -22,6 +22,7 @@ export interface EnrollmentCourse {
   discount_value?: number
   discount?: number
   subtotal?: number
+  role?: string
 }
 
 /** 支付方式固定选项（与后端 PAY_METHOD_OPTIONS 对齐） */
@@ -51,6 +52,15 @@ export interface EnrollmentRecord {
   created_at?: string | null
 }
 
+export interface TransferOutItemInput {
+  package_id: number
+  transfer_hours: number
+  transfer_gift_hours?: number
+  fee?: number
+  exit_order?: boolean
+  transfer_amount?: number
+}
+
 export interface EnrollmentCreateInput {
   student_id: number
   kind: EnrollmentKind
@@ -64,6 +74,12 @@ export interface EnrollmentCreateInput {
   internal_notes?: string
   external_notes?: string
   internal_images?: string[]
+  /** 转课：course=转给其他课程；student=转课给其他学员 */
+  transfer_mode?: 'course' | 'student'
+  transfer_out_course_id?: number | null
+  transfer_out_items?: TransferOutItemInput[]
+  /** 转课给其他学员时的目标学员 */
+  transfer_to_student_id?: number | null
 }
 
 export async function listEnrollmentsApi(params: {

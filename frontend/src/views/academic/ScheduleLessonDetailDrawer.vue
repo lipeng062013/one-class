@@ -10,6 +10,7 @@ import {
   type ScheduleLessonMember,
 } from '../../api/academic'
 import AppSheet from '../../components/AppSheet.vue'
+import { useBreakpoint } from '../../composables/useBreakpoint'
 
 const props = defineProps<{
   modelValue: boolean
@@ -24,6 +25,8 @@ const emit = defineEmits<{
   roll: [ScheduleLessonDetail]
   refreshed: []
 }>()
+
+const { isApp } = useBreakpoint()
 
 const visible = computed({
   get: () => props.modelValue,
@@ -50,6 +53,12 @@ const isDone = computed(() => detail.value?.status === 'completed')
 const memberCount = computed(
   () => detail.value?.members?.length ?? detail.value?.member_count ?? 0,
 )
+
+const isRollable = computed(() => {
+  if (!detail.value || !props.canManage) return false
+  if (detail.value.status !== 'scheduled') return false
+  return canRollCall(detail.value)
+})
 
 function formatTimeRange(d: ScheduleLessonDetail | null) {
   if (!d?.start_at) return '—'
@@ -315,29 +324,53 @@ async function submitAddStudent() {
               <span class="ld-count">共 {{ memberCount }} 名</span>
             </h4>
             <div class="ld-sec-actions">
-              <el-button
-                v-if="canManage && detail.status === 'scheduled' && canRollCall(detail)"
-                type="primary"
-                size="small"
-                @click="onRoll"
-              >
-                去点名
-              </el-button>
               <el-tag
-                v-else-if="canManage && detail.status === 'scheduled'"
+                v-if="canManage && detail.status === 'scheduled' && !isRollable && !isApp"
                 size="small"
                 type="info"
                 effect="plain"
               >
                 未到时间不可点名
               </el-tag>
-              <el-button v-if="canManage" type="primary" plain size="small" @click="openAddStudent">
+              <el-button
+                v-if="canManage"
+                type="primary"
+                plain
+                size="small"
+                @click="openAddStudent"
+              >
                 添加临时学员
               </el-button>
             </div>
           </div>
 
-          <div class="ld-table-wrap">
+          <div v-if="isApp" class="ld-member-list">
+            <article v-for="row in detail.members || []" :key="row.id" class="ld-member-card">
+              <header class="ld-member-head">
+                <span class="ld-member-avatar">{{ memberInitial(row.name) }}</span>
+                <span class="ld-member-main">
+                  <strong>{{ row.name }}</strong>
+                  <small>{{ row.phone || '未填写手机号' }}</small>
+                </span>
+              </header>
+              <div class="ld-member-chips">
+                <span class="ld-chip">{{ row.consume_label || '未关联消耗方式' }}</span>
+                <span class="ld-chip tone-deduct">扣除 {{ deductedLabel(row.deducted_hours) }}</span>
+                <span class="ld-chip tone-remain">剩余 {{ remainLabel(row.remain_hours) }}</span>
+              </div>
+              <footer v-if="canManage" class="ld-member-actions">
+                <el-button size="small" plain type="primary" @click="onTransfer(row)">调课</el-button>
+                <el-button size="small" plain type="warning" @click="onLeave(row)">请假</el-button>
+              </footer>
+            </article>
+            <div v-if="!detail.members?.length" class="ld-member-empty">
+              <span class="ld-empty-ico" aria-hidden="true">👥</span>
+              <strong>暂无学员</strong>
+              <em>可添加临时学员到本班级</em>
+            </div>
+          </div>
+
+          <div v-else class="ld-table-wrap">
             <el-table
               :data="detail.members || []"
               border
@@ -389,42 +422,68 @@ async function submitAddStudent() {
       <el-empty v-else-if="!loading" description="课次不存在或已删除" />
     </div>
 
-    <el-dialog
-      v-model="addVisible"
-      title="添加临时学员"
-      width="420px"
-      append-to-body
-      destroy-on-close
-    >
-      <p class="add-hint">学员将加入本课次关联班级，之后排课/点名均可看到。</p>
-      <el-select
-        v-model="pickStudentIds"
-        multiple
-        filterable
-        remote
-        :remote-method="searchStudents"
-        placeholder="搜索姓名/手机号"
-        style="width: 100%"
+    <template v-if="isRollable || (isApp && canManage && detail)" #footer>
+      <el-button
+        v-if="canManage && isApp"
+        class="tb-btn"
+        plain
+        @click="openAddStudent"
       >
-        <el-option
-          v-for="s in studentOptions"
-          :key="s.id"
-          :label="`${s.name}${s.phone ? ' · ' + s.phone : ''}`"
-          :value="s.id"
-        />
-      </el-select>
-      <template #footer>
-        <el-button class="tb-btn" @click="addVisible = false">取消</el-button>
-        <el-button
-          type="primary"
-          class="tb-btn tb-btn--primary"
-          :loading="addSaving"
-          @click="submitAddStudent"
-        >
-          添加
-        </el-button>
-      </template>
-    </el-dialog>
+        添加学员
+      </el-button>
+      <el-button
+        v-if="isRollable"
+        type="primary"
+        class="tb-btn tb-btn--primary ld-roll-primary"
+        @click="onRoll"
+      >
+        去点名
+      </el-button>
+      <el-button
+        v-else-if="isApp && canManage && detail?.status === 'scheduled'"
+        disabled
+        class="tb-btn"
+      >
+        未到时间不可点名
+      </el-button>
+    </template>
+  </AppSheet>
+
+  <AppSheet
+    v-model="addVisible"
+    title="添加临时学员"
+    size="420px"
+    compact-size="min(78%, 560px)"
+    modal-class="lesson-add-student-sheet"
+  >
+    <p class="add-hint">学员将加入本课次关联班级，之后排课/点名均可看到。</p>
+    <el-select
+      v-model="pickStudentIds"
+      multiple
+      filterable
+      remote
+      :remote-method="searchStudents"
+      placeholder="搜索姓名/手机号"
+      style="width: 100%"
+    >
+      <el-option
+        v-for="s in studentOptions"
+        :key="s.id"
+        :label="`${s.name}${s.phone ? ' · ' + s.phone : ''}`"
+        :value="s.id"
+      />
+    </el-select>
+    <template #footer>
+      <el-button class="tb-btn" @click="addVisible = false">取消</el-button>
+      <el-button
+        type="primary"
+        class="tb-btn tb-btn--primary"
+        :loading="addSaving"
+        @click="submitAddStudent"
+      >
+        添加
+      </el-button>
+    </template>
   </AppSheet>
 </template>
 
@@ -673,6 +732,131 @@ async function submitAddStudent() {
   border: 1px solid var(--oc-border, #e8e0d0);
 }
 
+.ld-member-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ld-member-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--oc-border, #e8e0d0);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fffdfb 0%, #faf6ee 100%);
+}
+
+.ld-member-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ld-member-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ld-member-main strong,
+.ld-member-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ld-member-main strong {
+  color: var(--oc-ink, #44403c);
+  font-size: 14px;
+}
+
+.ld-member-main small {
+  color: var(--oc-muted, #78716c);
+  font-size: 11px;
+}
+
+.ld-member-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.ld-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 24px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  color: #57534e;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(181, 145, 83, 0.22);
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.ld-chip.tone-deduct {
+  color: #9a3412;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.ld-chip.tone-remain {
+  color: #15803d;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.ld-member-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--oc-border, #e8e0d0);
+}
+
+.ld-member-actions .el-button {
+  flex: 1;
+  margin: 0;
+}
+
+.ld-member-empty {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 28px 12px;
+  color: var(--oc-muted, #78716c);
+  text-align: center;
+  border-radius: 14px;
+  border: 1px dashed var(--oc-border, #e8e0d0);
+  background: rgba(255, 253, 248, 0.7);
+}
+
+.ld-empty-ico {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.ld-member-empty strong {
+  color: #44403c;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ld-member-empty em {
+  font-style: normal;
+  font-size: 12px;
+  color: #8a8178;
+}
+
 .ld-table {
   width: 100%;
   --el-table-border-color: #f0e9dc;
@@ -686,13 +870,13 @@ async function submitAddStudent() {
 }
 
 .ld-member-avatar {
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   flex-shrink: 0;
   color: #fff;
@@ -737,7 +921,16 @@ async function submitAddStudent() {
   line-height: 1.5;
 }
 
+.ld-roll-primary {
+  flex: 1.4 1 auto;
+  min-width: 120px;
+}
+
 @media (max-width: 640px) {
+  .ld-member-list {
+    grid-template-columns: 1fr;
+  }
+
   .ld-stat-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

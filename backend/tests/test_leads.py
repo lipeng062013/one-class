@@ -74,10 +74,26 @@ def test_create_and_update_lead(client):
     patch = client.patch(
         f"/api/v1/leads/{lid}",
         headers=h,
-        json={"status": "contacted", "notes": "已电话"},
+        json={
+            "status": "contacted",
+            "notes": "已电话",
+            "external_code": "EDIT-001",
+            "school": "实验小学",
+            "grade": "三年级",
+            "age": 9,
+            "campus": "中心校区",
+            "imported_creator_name": "历史创建人",
+        },
     )
     assert patch.status_code == 200
-    assert patch.json()["data"]["status"] == "contacted"
+    updated = patch.json()["data"]
+    assert updated["status"] == "contacted"
+    assert updated["external_code"] == "EDIT-001"
+    assert updated["school"] == "实验小学"
+    assert updated["grade"] == "三年级"
+    assert updated["age"] == 9
+    assert updated["campus"] == "中心校区"
+    assert updated["imported_creator_name"] == "历史创建人"
 
     acts2 = client.get(f"/api/v1/leads/{lid}/activities", headers=h)
     kinds = [a["kind"] for a in acts2.json()["data"]["items"]]

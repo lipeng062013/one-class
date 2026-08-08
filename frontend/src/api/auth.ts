@@ -32,3 +32,32 @@ export async function changePasswordApi(current_password: string, new_password: 
   const res = await client.post('/auth/change-password', { current_password, new_password })
   return res.data.data
 }
+
+export interface PasswordHelpInfo {
+  supports_self_reset: boolean
+  method: string
+  title: string
+  summary: string
+  steps: string[]
+  admins: { display_name: string }[]
+}
+
+export interface ForgotPasswordResult {
+  accepted: boolean
+  message: string
+}
+
+/** Public: login-page forgot-password guidance. */
+export async function passwordHelpApi(): Promise<PasswordHelpInfo> {
+  const res = await client.get('/auth/password-help')
+  return res.data.data
+}
+
+/** Public: notify admins to reset password for the given username. */
+export async function forgotPasswordApi(
+  username: string,
+  note = '',
+): Promise<ForgotPasswordResult> {
+  const res = await client.post('/auth/forgot-password', { username, note })
+  return res.data.data
+}

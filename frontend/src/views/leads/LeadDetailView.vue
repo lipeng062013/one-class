@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import {
   addLeadCollaborator,
@@ -22,18 +22,51 @@ import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useListDetailStateCleanup } from '../../composables/useListScrollRestore'
 import { usePageBack } from '../../composables/usePageBack'
+import { useResponsiveSurface } from '../../composables/useResponsiveSurface'
+import MobileActionBar from '../../components/MobileActionBar.vue'
 import {
   isValidOptionalPhone,
   PHONE_INPUT_MESSAGE,
   sanitizePhoneInput,
 } from '../../utils/phone'
+import { toBusinessDateTimeIso } from '../../utils/datetime'
 
 const route = useRoute()
+const router = useRouter()
 const { goBack } = usePageBack('/leads')
 useListDetailStateCleanup('leads', 'oc-lead-list-state')
 const auth = useAuthStore()
-const { isMobile } = useBreakpoint()
-const descCols = computed(() => (isMobile.value ? 1 : 2))
+const { isApp } = useBreakpoint()
+
+const isEnrolledLocked = computed(
+  () => lead.value?.status === 'enrolled' || !!lead.value?.locked,
+)
+/** 非负责人：已报名后不可编辑/跟进/协作 */
+const isLeadReadOnly = computed(() => isEnrolledLocked.value && !auth.isAdmin)
+/** 已报名后全员不可写跟进、改团队（含 admin） */
+const canWriteFollow = computed(() => !isEnrolledLocked.value)
+const canManageTeam = computed(() => !isEnrolledLocked.value)
+const canEditLead = computed(() => !isEnrolledLocked.value || auth.isAdmin)
+const canGoEnroll = computed(
+  () => auth.hasPermission('enrollments.manage') || auth.isAdmin,
+)
+const { surface: followSurface, surfaceProps: followSurfaceProps } = useResponsiveSurface({
+  dialogMaxWidth: '520px',
+  compactSize: 'min(88%, 640px)',
+  modalClass: 'lead-follow-sheet',
+  sheetProps: { forceBottom: true },
+})
+const { surface: editSurface, surfaceProps: editSurfaceProps } = useResponsiveSurface({
+  dialogMaxWidth: '560px',
+  compactSize: 'min(94%, 780px)',
+  modalClass: 'lead-edit-sheet',
+})
+const { surface: collabSurface, surfaceProps: collabSurfaceProps } = useResponsiveSurface({
+  dialogMaxWidth: '420px',
+  compactSize: 'min(72%, 520px)',
+  modalClass: 'lead-collab-sheet',
+  sheetProps: { forceBottom: true },
+})
 
 const leadId = computed(() => Number(route.params.id))
 const loading = ref(false)
@@ -108,13 +141,6 @@ function formatTime(v?: string | null) {
   }
 }
 
-function toIso(value: Date | string | null | undefined): string | null {
-  if (!value) return null
-  const d = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(d.getTime())) return null
-  return d.toISOString()
-}
-
 const followerCount = computed(() => lead.value?.followers?.length ?? 0)
 const multiFollow = computed(() => followerCount.value >= 2)
 
@@ -129,6 +155,17 @@ const filteredActivities = computed(() => {
   const list = activities.value
   if (activityFilter.value === 'all') return list
   return list.filter((a) => a.kind === activityFilter.value)
+})
+
+const lastContactText = computed(() => {
+  const item = lead.value
+  if (!item?.last_contact_at) return '暂无联系记录'
+  const parts = [formatTime(item.last_contact_at)]
+  if (item.last_contact_by_name) parts.push(item.last_contact_by_name)
+  if (item.last_contact_method) {
+    parts.push(contactLabels[item.last_contact_method] || item.last_contact_method)
+  }
+  return parts.join(' · ')
 })
 
 const collabCandidates = computed(() => {
@@ -159,6 +196,12 @@ const editFormRef = ref<FormInstance>()
 const editForm = reactive({
   student_or_parent_name: '',
   phone: '',
+  external_code: '',
+  school: '',
+  grade: '',
+  age: null as number | null,
+  campus: '',
+  imported_creator_name: '',
   source: 'other' as LeadSource | string,
   referrer_name: '',
   channel_note: '',
@@ -229,7 +272,17 @@ async function reloadAll() {
   await Promise.all([loadLead(), loadActivities()])
 }
 
+function dialLead() {
+  const phone = lead.value?.phone?.trim()
+  if (!phone) return
+  window.location.href = `tel:${phone}`
+}
+
 function openFollow() {
+  if (!canWriteFollow.value) {
+    ElMessage.warning('该线索已报名，不可再写跟进')
+    return
+  }
   followForm.content = ''
   followForm.contact_method = 'phone'
   followForm.status = lead.value?.status || ''
@@ -238,6 +291,25 @@ function openFollow() {
     : null
   followForm.join_as_collaborator = true
   followVisible.value = true
+}
+
+function goEnrollFromLead() {
+  const sid = lead.value?.converted_student_id
+  if (!sid || !lead.value) return
+  void router.push({
+    path: '/enrollments',
+    query: {
+      student_id: String(sid),
+      kind: 'enroll',
+      from_lead: String(lead.value.id),
+    },
+  })
+}
+
+function goConvertedStudent() {
+  const sid = lead.value?.converted_student_id
+  if (!sid) return
+  void router.push(`/students/${sid}`)
 }
 
 async function submitFollow() {
@@ -249,7 +321,7 @@ async function submitFollow() {
       content: followForm.content.trim(),
       contact_method: followForm.contact_method || '',
       status: followForm.status || null,
-      next_follow_at: toIso(followForm.next_follow_at),
+      next_follow_at: toBusinessDateTimeIso(followForm.next_follow_at),
       join_as_collaborator: followForm.join_as_collaborator,
     })
     lead.value = res.lead
@@ -265,9 +337,19 @@ async function submitFollow() {
 
 function openEdit() {
   if (!lead.value) return
+  if (!canEditLead.value) {
+    ElMessage.warning('该线索已报名，信息已锁定；如需变更请联系负责人')
+    return
+  }
   const L = lead.value
   editForm.student_or_parent_name = L.student_or_parent_name
   editForm.phone = L.phone || ''
+  editForm.external_code = L.external_code || ''
+  editForm.school = L.school || ''
+  editForm.grade = L.grade || ''
+  editForm.age = L.age
+  editForm.campus = L.campus || ''
+  editForm.imported_creator_name = L.imported_creator_name || ''
   editForm.source = L.source
   editForm.referrer_name = L.referrer_name || ''
   editForm.channel_note = L.channel_note || ''
@@ -283,24 +365,51 @@ async function submitEdit() {
   const ok = await editFormRef.value?.validate().catch(() => false)
   if (!ok || !lead.value) return
   editSaving.value = true
+  const wasEnrolled = lead.value.status === 'enrolled'
   try {
-    lead.value = await patchLead(lead.value.id, {
+    const nextFollowAt = toBusinessDateTimeIso(editForm.next_follow_at)
+    const currentNextFollowAt = toBusinessDateTimeIso(lead.value.next_follow_at)
+    // 已报名锁定时全员不可改团队；admin 改资料时也不传 owner
+    const payload: Parameters<typeof patchLead>[1] = {
       student_or_parent_name: editForm.student_or_parent_name.trim(),
       ...(editForm.phone === (lead.value.phone || '')
         ? {}
         : { phone: editForm.phone.trim() || null }),
+      external_code: editForm.external_code.trim() || null,
+      school: editForm.school.trim(),
+      grade: editForm.grade.trim(),
+      age: editForm.age == null || Number.isNaN(editForm.age) ? null : editForm.age,
+      campus: editForm.campus.trim(),
+      imported_creator_name: editForm.imported_creator_name.trim(),
       source: editForm.source,
       referrer_name: editForm.referrer_name.trim() || null,
       channel_note: editForm.channel_note,
       need: editForm.need,
       status: editForm.status,
-      next_follow_at: toIso(editForm.next_follow_at),
-      owner_id: editForm.owner_id ?? null,
+      ...(nextFollowAt === currentNextFollowAt ? {} : { next_follow_at: nextFollowAt }),
       notes: editForm.notes,
-    })
-    ElMessage.success('线索已更新')
+    }
+    if (!isEnrolledLocked.value) {
+      payload.owner_id = editForm.owner_id ?? null
+    }
+    lead.value = await patchLead(lead.value.id, payload)
+    const studentId = lead.value.converted_student_id
+    const becameEnrolled = editForm.status === 'enrolled' && !wasEnrolled
     editVisible.value = false
     await loadActivities()
+    if (becameEnrolled && studentId && canGoEnroll.value) {
+      ElMessage.success('已建档，请完成报名')
+      await router.push({
+        path: '/enrollments',
+        query: {
+          student_id: String(studentId),
+          kind: 'enroll',
+          from_lead: String(lead.value.id),
+        },
+      })
+      return
+    }
+    ElMessage.success('线索已更新')
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
   } finally {
@@ -310,6 +419,10 @@ async function submitEdit() {
 
 async function onJoinTeam() {
   if (!lead.value) return
+  if (!canManageTeam.value) {
+    ElMessage.warning('该线索已报名，跟进团队已冻结')
+    return
+  }
   try {
     lead.value = await joinLeadCollaborator(lead.value.id)
     ElMessage.success('已加入协作跟进')
@@ -400,27 +513,67 @@ onMounted(async () => {
 
 <template>
   <div v-loading="loading" class="lead-detail-page oc-page-shell">
-    <div class="page-toolbar">
+    <div v-if="!isApp" class="page-toolbar">
       <el-page-header @back="goBack">
         <template #content>
           <span>线索详情{{ lead ? ` · ${lead.student_or_parent_name}` : '' }}</span>
         </template>
       </el-page-header>
       <div class="toolbar-actions">
-        <el-button v-if="lead && !isOnTeam" type="warning" plain @click="onJoinTeam">
+        <el-button
+          v-if="lead?.converted_student_id"
+          plain
+          @click="goConvertedStudent"
+        >
+          查看学员
+        </el-button>
+        <el-button
+          v-if="lead?.converted_student_id && canGoEnroll"
+          type="success"
+          plain
+          @click="goEnrollFromLead"
+        >
+          去报名
+        </el-button>
+        <el-button
+          v-if="lead && !isOnTeam && canManageTeam"
+          type="warning"
+          plain
+          @click="onJoinTeam"
+        >
           加入协作
         </el-button>
-        <el-button @click="openEdit">编辑资料</el-button>
-        <el-button type="primary" class="tb-btn tb-btn--primary" @click="openFollow">
+        <el-button v-if="canEditLead" @click="openEdit">
+          {{ isEnrolledLocked ? '变更状态/资料' : '编辑资料' }}
+        </el-button>
+        <el-button
+          v-if="canWriteFollow"
+          type="primary"
+          class="tb-btn tb-btn--primary"
+          @click="openFollow"
+        >
           写跟进
         </el-button>
       </div>
     </div>
 
     <template v-if="lead">
+      <el-alert
+        v-if="isEnrolledLocked"
+        class="collab-alert"
+        type="success"
+        show-icon
+        :closable="false"
+        title="已报名 · 已锁定"
+        :description="
+          isLeadReadOnly
+            ? '获客阶段已结束，线索仅可查看。后续请在学员/报名侧操作；状态仅负责人可变更。'
+            : '跟进与协作团队已冻结。您可变更状态或资料；改出「已报名」后可恢复跟进。'
+        "
+      />
       <!-- 多人协作提示 -->
       <el-alert
-        v-if="multiFollow"
+        v-if="multiFollow && !isEnrolledLocked"
         class="collab-alert"
         type="warning"
         show-icon
@@ -458,11 +611,118 @@ onMounted(async () => {
               </div>
             </div>
 
-            <el-descriptions :column="descCols" border class="profile-desc">
+            <div v-if="isApp" class="app-profile-sections">
+              <section class="app-fact-panel" aria-labelledby="lead-contact-title">
+                <div class="app-section-head">
+                  <div>
+                    <span id="lead-contact-title" class="app-section-title">联系与学员信息</span>
+                    <span class="app-section-caption">首屏保留联系家长前最需要的信息</span>
+                  </div>
+                  <span class="app-section-badge">{{ sourceLabels[lead.source] || lead.source }}</span>
+                </div>
+                <div class="app-fact-grid">
+                  <div class="app-fact is-emphasis">
+                    <span class="app-fact-label">联系电话</span>
+                    <a v-if="lead.phone" class="app-fact-value is-link" :href="`tel:${lead.phone}`">
+                      {{ lead.phone }}
+                    </a>
+                    <strong v-else class="app-fact-value">—</strong>
+                  </div>
+                  <div class="app-fact">
+                    <span class="app-fact-label">学校</span>
+                    <strong class="app-fact-value">{{ lead.school || '—' }}</strong>
+                  </div>
+                  <div class="app-fact">
+                    <span class="app-fact-label">年级 / 年龄</span>
+                    <strong class="app-fact-value">
+                      {{ lead.grade || '—' }}<template v-if="lead.age != null"> · {{ lead.age }}岁</template>
+                    </strong>
+                  </div>
+                  <div class="app-fact">
+                    <span class="app-fact-label">对应校区</span>
+                    <strong class="app-fact-value">{{ lead.campus || '—' }}</strong>
+                  </div>
+                  <div class="app-fact">
+                    <span class="app-fact-label">介绍人</span>
+                    <strong class="app-fact-value">{{ lead.referrer_name || '—' }}</strong>
+                  </div>
+                  <div class="app-fact">
+                    <span class="app-fact-label">主跟进人</span>
+                    <strong class="app-fact-value">{{ lead.owner_name || '未指定' }}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section class="app-follow-panel" aria-labelledby="lead-follow-title">
+                <div class="app-section-head">
+                  <div>
+                    <span id="lead-follow-title" class="app-section-title">跟进重点</span>
+                    <span class="app-section-caption">先看最近联系，再决定下一步动作</span>
+                  </div>
+                </div>
+                <div class="app-highlight-grid">
+                  <article class="app-highlight is-next">
+                    <span class="app-highlight-label">下次跟进</span>
+                    <strong>{{ formatTime(lead.next_follow_at) }}</strong>
+                  </article>
+                  <article class="app-highlight is-contact">
+                    <span class="app-highlight-label">最近联系</span>
+                    <strong>{{ lastContactText }}</strong>
+                  </article>
+                  <article class="app-highlight is-need">
+                    <span class="app-highlight-label">当前需求</span>
+                    <p>{{ lead.need || '暂未记录明确需求' }}</p>
+                  </article>
+                  <article class="app-highlight is-note">
+                    <span class="app-highlight-label">内部备注</span>
+                    <p>{{ lead.notes || '暂无内部备注' }}</p>
+                  </article>
+                  <article v-if="lead.channel_note" class="app-highlight is-wide">
+                    <span class="app-highlight-label">渠道备注</span>
+                    <p>{{ lead.channel_note }}</p>
+                  </article>
+                </div>
+              </section>
+
+              <details class="app-more-details">
+                <summary>
+                  <span>更多档案信息</span>
+                  <small>编号、导入来源与创建时间</small>
+                </summary>
+                <div class="app-fact-grid app-system-grid">
+                  <div class="app-fact">
+                    <span class="app-fact-label">线索编号</span>
+                    <strong class="app-fact-value">{{ lead.external_code || '—' }}</strong>
+                  </div>
+                  <div class="app-fact">
+                    <span class="app-fact-label">导入创建人</span>
+                    <strong class="app-fact-value">{{ lead.imported_creator_name || '—' }}</strong>
+                  </div>
+                  <div class="app-fact">
+                    <span class="app-fact-label">创建时间</span>
+                    <strong class="app-fact-value">{{ formatTime(lead.created_at) }}</strong>
+                  </div>
+                  <div class="app-fact">
+                    <span class="app-fact-label">更新时间</span>
+                    <strong class="app-fact-value">{{ formatTime(lead.updated_at) }}</strong>
+                  </div>
+                </div>
+              </details>
+            </div>
+
+            <el-descriptions v-else :column="2" border class="profile-desc">
               <el-descriptions-item label="姓名">
                 {{ lead.student_or_parent_name }}
               </el-descriptions-item>
               <el-descriptions-item label="电话">{{ lead.phone || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="编号">{{ lead.external_code || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="学校">{{ lead.school || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="年级">{{ lead.grade || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="年龄">{{ lead.age ?? '—' }}</el-descriptions-item>
+              <el-descriptions-item label="对应校区">{{ lead.campus || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="导入创建人">
+                {{ lead.imported_creator_name || '—' }}
+              </el-descriptions-item>
               <el-descriptions-item label="来源">
                 {{ sourceLabels[lead.source] || lead.source }}
               </el-descriptions-item>
@@ -506,7 +766,14 @@ onMounted(async () => {
           <el-card class="activity-card" shadow="never" v-loading="actLoading">
             <div class="section-row">
               <h3 class="section-title">跟进动态</h3>
-              <el-button type="primary" link @click="openFollow">写跟进</el-button>
+              <el-button
+                v-if="canWriteFollow && !isApp"
+                type="primary"
+                link
+                @click="openFollow"
+              >
+                写跟进
+              </el-button>
             </div>
             <p class="section-hint">
               记录每一次联系与资料变更，团队共享同一时间线，减少撞单与口径不一致。
@@ -633,12 +900,35 @@ onMounted(async () => {
 
     <el-empty v-else-if="!loading" description="线索不存在" />
 
+    <MobileActionBar :visible="isApp && Boolean(lead)">
+      <el-button v-if="lead?.phone" plain @click="dialLead">拨号</el-button>
+      <el-button
+        v-if="lead?.converted_student_id && canGoEnroll"
+        plain
+        type="success"
+        @click="goEnrollFromLead"
+      >
+        去报名
+      </el-button>
+      <el-button v-else-if="canEditLead" plain @click="openEdit">
+        {{ isEnrolledLocked ? '变更' : '编辑' }}
+      </el-button>
+      <el-button v-if="canWriteFollow" type="primary" @click="openFollow">写跟进</el-button>
+      <el-button
+        v-else-if="lead?.converted_student_id"
+        type="primary"
+        @click="goConvertedStudent"
+      >
+        学员
+      </el-button>
+    </MobileActionBar>
+
     <!-- 写跟进 -->
-    <el-dialog
+    <component
+      :is="followSurface"
       v-model="followVisible"
       title="写跟进"
-      width="90%"
-      style="max-width: 520px"
+      v-bind="followSurfaceProps"
       destroy-on-close
     >
       <el-alert
@@ -690,14 +980,14 @@ onMounted(async () => {
         <el-button @click="followVisible = false">取消</el-button>
         <el-button type="primary" :loading="followSaving" @click="submitFollow">保存</el-button>
       </template>
-    </el-dialog>
+    </component>
 
     <!-- 编辑资料 -->
-    <el-dialog
+    <component
+      :is="editSurface"
       v-model="editVisible"
       title="编辑线索"
-      width="90%"
-      style="max-width: 560px"
+      v-bind="editSurfaceProps"
       destroy-on-close
     >
       <el-form ref="editFormRef" :model="editForm" :rules="editRules" label-position="top">
@@ -714,6 +1004,37 @@ onMounted(async () => {
             @input="editForm.phone = sanitizePhoneInput(editForm.phone)"
           />
         </el-form-item>
+        <div class="form-row-2">
+          <el-form-item label="编号">
+            <el-input v-model="editForm.external_code" placeholder="外部线索编号" />
+          </el-form-item>
+          <el-form-item label="年龄">
+            <el-input-number
+              v-model="editForm.age"
+              :min="1"
+              :max="99"
+              controls-position="right"
+              placeholder="选填"
+              style="width: 100%"
+            />
+          </el-form-item>
+        </div>
+        <div class="form-row-2">
+          <el-form-item label="学校">
+            <el-input v-model="editForm.school" placeholder="就读学校" />
+          </el-form-item>
+          <el-form-item label="年级">
+            <el-input v-model="editForm.grade" placeholder="如：三年级" />
+          </el-form-item>
+        </div>
+        <div class="form-row-2">
+          <el-form-item label="对应校区">
+            <el-input v-model="editForm.campus" placeholder="所属校区" />
+          </el-form-item>
+          <el-form-item label="导入创建人">
+            <el-input v-model="editForm.imported_creator_name" placeholder="导入文件中的创建人" />
+          </el-form-item>
+        </div>
         <div class="form-row-2">
           <el-form-item label="来源" prop="source">
             <el-select v-model="editForm.source" style="width: 100%">
@@ -736,7 +1057,7 @@ onMounted(async () => {
             </el-select>
           </el-form-item>
         </div>
-        <el-form-item label="主跟进人">
+        <el-form-item v-if="!isEnrolledLocked" label="主跟进人">
           <el-select
             v-model="editForm.owner_id"
             clearable
@@ -776,14 +1097,14 @@ onMounted(async () => {
         <el-button @click="editVisible = false">取消</el-button>
         <el-button type="primary" :loading="editSaving" @click="submitEdit">保存</el-button>
       </template>
-    </el-dialog>
+    </component>
 
     <!-- 添加协作人 -->
-    <el-dialog
+    <component
+      :is="collabSurface"
       v-model="collabVisible"
       title="添加协作人"
-      width="90%"
-      style="max-width: 420px"
+      v-bind="collabSurfaceProps"
       destroy-on-close
     >
       <el-form label-position="top">
@@ -810,7 +1131,7 @@ onMounted(async () => {
         <el-button @click="collabVisible = false">取消</el-button>
         <el-button type="primary" :loading="collabSaving" @click="submitAddCollab">添加</el-button>
       </template>
-    </el-dialog>
+    </component>
   </div>
 </template>
 
@@ -909,6 +1230,201 @@ onMounted(async () => {
 
 .profile-desc {
   margin-top: 4px;
+}
+
+.app-profile-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.app-fact-panel,
+.app-follow-panel,
+.app-more-details {
+  border: 1px solid rgba(181, 145, 83, 0.22);
+  border-radius: 14px;
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.72), rgba(250, 246, 238, 0.72));
+}
+
+.app-fact-panel,
+.app-follow-panel {
+  padding: 14px;
+}
+
+.app-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.app-section-head > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.app-section-title {
+  color: var(--oc-ink, #44403c);
+  font-size: 14px;
+  font-weight: 720;
+}
+
+.app-section-caption {
+  color: var(--oc-muted, #78716c);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.app-section-badge {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border: 1px solid rgba(161, 98, 7, 0.2);
+  border-radius: 999px;
+  background: rgba(245, 230, 200, 0.5);
+  color: var(--oc-primary, #a16207);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.app-fact-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.app-fact {
+  display: flex;
+  min-width: 0;
+  min-height: 68px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 10px 11px;
+  border: 1px solid rgba(181, 145, 83, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 253, 248, 0.82);
+}
+
+.app-fact.is-emphasis {
+  border-color: rgba(161, 98, 7, 0.26);
+  background: linear-gradient(145deg, rgba(245, 230, 200, 0.62), rgba(255, 253, 248, 0.92));
+}
+
+.app-fact-label,
+.app-highlight-label {
+  color: var(--oc-muted, #78716c);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.app-fact-value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--oc-ink, #44403c);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-fact-value.is-link {
+  color: var(--oc-primary, #a16207);
+  text-decoration: none;
+}
+
+.app-highlight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.app-highlight {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid rgba(181, 145, 83, 0.18);
+  border-radius: 12px;
+  background: rgba(255, 253, 248, 0.86);
+}
+
+.app-highlight.is-next {
+  background: linear-gradient(145deg, rgba(255, 244, 214, 0.9), rgba(255, 253, 248, 0.9));
+}
+
+.app-highlight.is-contact {
+  background: linear-gradient(145deg, rgba(239, 248, 242, 0.92), rgba(255, 253, 248, 0.9));
+}
+
+.app-highlight.is-need {
+  background: linear-gradient(145deg, rgba(255, 246, 241, 0.94), rgba(255, 253, 248, 0.9));
+}
+
+.app-highlight.is-note {
+  background: linear-gradient(145deg, rgba(245, 244, 255, 0.9), rgba(255, 253, 248, 0.9));
+}
+
+.app-highlight.is-wide {
+  grid-column: 1 / -1;
+}
+
+.app-highlight strong,
+.app-highlight p {
+  display: block;
+  margin: 5px 0 0;
+  color: var(--oc-ink, #44403c);
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.app-more-details {
+  overflow: hidden;
+}
+
+.app-more-details summary {
+  position: relative;
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 38px 11px 14px;
+  color: var(--oc-ink, #44403c);
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.app-more-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.app-more-details summary::after {
+  content: '⌄';
+  position: absolute;
+  right: 15px;
+  color: var(--oc-primary, #a16207);
+  font-size: 18px;
+  transition: transform 0.18s ease;
+}
+
+.app-more-details[open] summary::after {
+  transform: rotate(180deg);
+}
+
+.app-more-details summary small {
+  color: var(--oc-muted, #78716c);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.app-system-grid {
+  padding: 0 12px 12px;
 }
 
 .section-row {
@@ -1067,11 +1583,224 @@ onMounted(async () => {
   }
 
   .toolbar-actions {
-    width: 100%;
+    width: auto;
   }
 
   .toolbar-actions .el-button {
     flex: 1;
+  }
+
+  .profile-card :deep(.el-card__body) {
+    padding: 14px;
+  }
+
+  .profile-head {
+    margin-bottom: 12px;
+  }
+
+  .app-fact-panel,
+  .app-follow-panel {
+    padding: 12px;
+  }
+
+  .app-highlight-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .app-highlight.is-wide {
+    grid-column: auto;
+  }
+
+  .activity-filters {
+    margin-inline: -2px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .activity-filters::-webkit-scrollbar {
+    display: none;
+  }
+
+  .activity-filters :deep(.el-radio-group) {
+    flex-wrap: nowrap;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1199px) {
+  .app-fact-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .app-system-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1199px) {
+  .detail-grid {
+    margin-top: 12px;
+  }
+
+  .profile-card {
+    overflow: hidden;
+    border-color: #e1cfad;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(31, 35, 40, 0.06);
+  }
+
+  .profile-card :deep(.el-card__body) {
+    padding: 0;
+  }
+
+  .profile-head {
+    margin: 0;
+    padding: 14px;
+    background: linear-gradient(135deg, #fffdf8 0%, #faf6ee 48%, #f5e6c8 120%);
+  }
+
+  .profile-avatar {
+    width: 46px;
+    height: 46px;
+    border: 1px solid #d0a75f;
+    border-radius: 8px;
+    background: linear-gradient(145deg, #d5ad6f, #b7791f);
+    color: #fff9ed;
+  }
+
+  .profile-name {
+    color: #3f3a34;
+  }
+
+  .profile-sub {
+    color: #78716c;
+  }
+
+  .profile-head :deep(.el-tag) {
+    border-color: #d8bb83;
+    background: rgba(255, 253, 248, 0.72);
+    color: #8b5406;
+  }
+
+  .app-profile-sections {
+    gap: 0;
+  }
+
+  .app-fact-panel,
+  .app-follow-panel,
+  .app-more-details {
+    border: 0;
+    border-top: 1px solid #e2e6eb;
+    border-radius: 0;
+    background: #fff;
+  }
+
+  .app-fact-panel,
+  .app-follow-panel {
+    padding: 14px;
+  }
+
+  .app-section-title {
+    color: #20242a;
+  }
+
+  .app-section-caption {
+    color: #69717d;
+  }
+
+  .app-section-badge {
+    border-color: #e6cd9c;
+    border-radius: 4px;
+    background: #fff7e8;
+    color: #8b5406;
+  }
+
+  .app-fact {
+    min-height: 66px;
+    border: 1px solid #e0e5ea;
+    border-radius: 6px;
+    background: #f7f8fa;
+  }
+
+  .app-fact.is-emphasis {
+    border-color: #dfc38d;
+    border-left: 3px solid #a16207;
+    background: #fffaf0;
+  }
+
+  .app-fact-label,
+  .app-highlight-label {
+    color: #69717d;
+  }
+
+  .app-fact-value,
+  .app-highlight strong,
+  .app-highlight p {
+    color: #20242a;
+  }
+
+  .app-fact-value.is-link {
+    color: #8b5406;
+  }
+
+  .app-highlight {
+    border: 1px solid #e0e5ea;
+    border-left-width: 3px;
+    border-radius: 6px;
+    background: #f8f9fa;
+  }
+
+  .app-highlight.is-next {
+    border-left-color: #b7791f;
+    background: #fffaf0;
+  }
+
+  .app-highlight.is-contact {
+    border-left-color: #2f855a;
+    background: #f2faf5;
+  }
+
+  .app-highlight.is-need {
+    border-left-color: #3b82a0;
+    background: #f2f8fa;
+  }
+
+  .app-highlight.is-note {
+    border-left-color: #c2413b;
+    background: #fdf5f4;
+  }
+
+  .app-more-details summary {
+    color: #303640;
+  }
+
+  .app-more-details summary small {
+    color: #7b8490;
+  }
+
+  .app-system-grid {
+    background: #f7f8fa;
+  }
+
+  .activity-card,
+  .team-card,
+  .tips-card,
+  .act-card {
+    border-color: #dde2e8;
+    border-radius: 8px;
+    background: #fff;
+  }
+
+  .team-item {
+    border-color: #dde2e8;
+    border-radius: 6px;
+    background: #f7f8fa;
+  }
+
+  .team-avatar {
+    border-radius: 6px;
+    background: linear-gradient(145deg, #f5e6c8, #d9b878);
+    color: #6b440a;
   }
 }
 </style>

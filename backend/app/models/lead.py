@@ -14,6 +14,12 @@ class Lead(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     student_or_parent_name: Mapped[str] = mapped_column(String(255), default="")
     phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    external_code: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    school: Mapped[str] = mapped_column(String(255), default="")
+    grade: Mapped[str] = mapped_column(String(64), default="")
+    age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    campus: Mapped[str] = mapped_column(String(255), default="")
+    imported_creator_name: Mapped[str] = mapped_column(String(128), default="")
     source: Mapped[str] = mapped_column(String(32), default="other")  # referral|dianping|wechat|walkin|other
     referrer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     channel_note: Mapped[str] = mapped_column(Text, default="")

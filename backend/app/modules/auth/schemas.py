@@ -11,6 +11,13 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=6, max_length=128)
 
 
+class ForgotPasswordRequest(BaseModel):
+    """Unauthenticated password-reset request (notifies admins)."""
+
+    username: str = Field(min_length=1, max_length=64)
+    note: str = Field(default="", max_length=200)
+
+
 class UserOut(BaseModel):
     id: int
     username: str

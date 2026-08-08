@@ -1,9 +1,15 @@
 <script setup lang="ts">
+/**
+ * PC 列表底部分页条。
+ * WAP/Pad 不渲染：移动端统一用无限追加 + ListLoadStatus，禁止页码条。
+ */
 import { computed } from 'vue'
 import { PAGE_SIZES } from '../composables/useServerPager'
+import { useBreakpoint } from '../composables/useBreakpoint'
 
 const page = defineModel<number>('page', { required: true })
 const pageSize = defineModel<number>('pageSize', { required: true })
+const { isApp } = useBreakpoint()
 
 const props = withDefaults(
   defineProps<{
@@ -25,7 +31,8 @@ const emit = defineEmits<{
 
 const totalPages = computed(() => Math.max(1, Math.ceil(props.total / pageSize.value) || 1))
 
-const show = computed(() => !props.hideWhenEmpty || props.total > 0)
+/** 仅桌面显示；WAP/Pad 由 ListLoadStatus 承接 */
+const show = computed(() => !isApp.value && (!props.hideWhenEmpty || props.total > 0))
 
 function goFirstPage() {
   if (page.value <= 1) return

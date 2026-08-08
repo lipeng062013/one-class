@@ -10,6 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.lead import Lead, LeadActivity, LeadCollaborator
+from app.models.student import Student
 from app.models.user import User
 from app.core.timeutil import now as _utcnow
 
@@ -49,6 +50,12 @@ KIND_LABELS = {
 FIELD_LABELS = {
     "student_or_parent_name": "姓名",
     "phone": "电话",
+    "external_code": "编号",
+    "school": "学校",
+    "grade": "年级",
+    "age": "年龄",
+    "campus": "校区",
+    "imported_creator_name": "导入创建人",
     "source": "来源",
     "referrer_name": "介绍人",
     "channel_note": "渠道备注",
@@ -208,10 +215,25 @@ def serialize_lead(
             return user_names.get(user_id or 0, "")
         return _user_name(db, user_id)
 
+    linked = (
+        db.query(Student.id)
+        .filter(Student.source_lead_id == lead.id)
+        .order_by(Student.id.desc())
+        .first()
+    )
+    converted_student_id = int(linked[0]) if linked else None
+    locked = lead.status == "enrolled"
+
     return {
         "id": lead.id,
         "student_or_parent_name": lead.student_or_parent_name,
         "phone": lead.phone,
+        "external_code": lead.external_code,
+        "school": lead.school or "",
+        "grade": lead.grade or "",
+        "age": lead.age,
+        "campus": lead.campus or "",
+        "imported_creator_name": lead.imported_creator_name or "",
         "source": lead.source,
         "referrer_name": lead.referrer_name,
         "channel_note": lead.channel_note or "",
@@ -229,6 +251,107 @@ def serialize_lead(
         "followers": followers if include_followers else [],
         "created_at": lead.created_at,
         "updated_at": lead.updated_at,
+        "locked": locked,
+        "converted_student_id": converted_student_id,
+    }
+
+
+def is_admin_user(user: User) -> bool:
+    return getattr(user, "role", None) == "admin"
+
+
+def assert_lead_mutable(
+    lead: Lead,
+    user: User,
+    *,
+    action: str,
+) -> str | None:
+    """已报名线索锁定。返回错误文案，None 表示允许。
+
+    action: edit | follow | team | status
+    """
+    if lead.status != "enrolled":
+        return None
+    if action == "status":
+        if is_admin_user(user):
+            return None
+        return "仅负责人可变更已报名线索的状态"
+    if action == "edit":
+        if is_admin_user(user):
+            return None
+        return "该线索已报名，信息已锁定；如需变更请联系负责人"
+    if action == "follow":
+        return "该线索已报名，不可再写跟进"
+    if action == "team":
+        return "该线索已报名，跟进团队已冻结；如需调整请负责人先变更状态"
+    return "该线索已报名，操作已锁定"
+
+
+def find_student_by_lead(db: Session, lead_id: int) -> Student | None:
+    return (
+        db.query(Student)
+        .filter(Student.source_lead_id == lead_id)
+        .order_by(Student.id.desc())
+        .first()
+    )
+
+
+def convert_lead_on_enrolled(db: Session, lead: Lead, user: User) -> dict:
+    """线索变为已报名时幂等建档。不发调配待办、不设学管。"""
+    existing = find_student_by_lead(db, lead.id)
+    if existing:
+        return {
+            "converted_student_id": existing.id,
+            "conversion_status": "already_linked",
+        }
+
+    name = (lead.student_or_parent_name or "").strip()
+    if not name:
+        return {
+            "converted_student_id": None,
+            "conversion_status": "incomplete",
+            "message": "姓名为空，无法自动建档，请完善线索后再转",
+        }
+
+    grade = (lead.grade or "").strip() or "待完善"
+    note_parts = [f"来源线索#{lead.id}"]
+    if (lead.need or "").strip():
+        note_parts.append(f"需求：{lead.need.strip()}")
+    if (lead.notes or "").strip():
+        note_parts.append(f"备注：{lead.notes.strip()}")
+    if (lead.campus or "").strip():
+        note_parts.append(f"校区：{lead.campus.strip()}")
+    if (lead.source or "").strip():
+        note_parts.append(f"获客来源：{SOURCE_LABELS.get(lead.source, lead.source)}")
+
+    student = Student(
+        name=name,
+        grade=grade,
+        school=(lead.school or "").strip(),
+        phone=lead.phone,
+        parent_name=None,
+        academic_manager_id=None,
+        status="active",
+        source_lead_id=lead.id,
+        notes="；".join(note_parts),
+        linked_courses="[]",
+        created_by=user.id,
+    )
+    db.add(student)
+    db.flush()
+
+    add_activity(
+        db,
+        lead_id=lead.id,
+        actor=user,
+        kind="system",
+        title="已自动转为学员",
+        content=f"已创建学员「{student.name}」#{student.id}，请完成报名收费；报名成功后由负责人分配学管。",
+        meta={"student_id": student.id, "conversion": "created"},
+    )
+    return {
+        "converted_student_id": student.id,
+        "conversion_status": "created",
     }
 
 def list_leads(
@@ -305,6 +428,12 @@ def create_lead(db: Session, data: dict, user: User) -> Lead:
     lead = Lead(
         student_or_parent_name=(data.get("student_or_parent_name") or "").strip(),
         phone=data.get("phone"),
+        external_code=(data.get("external_code") or "").strip() or None,
+        school=(data.get("school") or "").strip(),
+        grade=(data.get("grade") or "").strip(),
+        age=data.get("age"),
+        campus=(data.get("campus") or "").strip(),
+        imported_creator_name=(data.get("imported_creator_name") or "").strip(),
         source=data.get("source") or "other",
         referrer_name=data.get("referrer_name"),
         channel_note=(data.get("channel_note") or "").strip(),
@@ -330,11 +459,20 @@ def create_lead(db: Session, data: dict, user: User) -> Lead:
     db.refresh(lead)
     return lead
 
-def update_lead(db: Session, lead: Lead, data: dict, user: User) -> Lead:
+def update_lead(
+    db: Session, lead: Lead, data: dict, user: User
+) -> tuple[Lead, dict | None] | str:
+    """更新线索。成功返回 (lead, conversion_meta|None)，失败返回错误文案。"""
     changes: list[dict] = []
     track_fields = [
         "student_or_parent_name",
         "phone",
+        "external_code",
+        "school",
+        "grade",
+        "age",
+        "campus",
+        "imported_creator_name",
         "source",
         "referrer_name",
         "channel_note",
@@ -345,27 +483,57 @@ def update_lead(db: Session, lead: Lead, data: dict, user: User) -> Lead:
         "notes",
     ]
     old_owner = lead.owner_id
+    was_enrolled = lead.status == "enrolled"
+    becoming_enrolled = False
+
+    def _norm_cmp(key: str, new_val: Any, old_val: Any) -> tuple[Any, Any, Any]:
+        """返回 (new_val_normalized, old_cmp, new_cmp)。"""
+        if key in (
+            "student_or_parent_name",
+            "external_code",
+            "school",
+            "grade",
+            "campus",
+            "imported_creator_name",
+            "channel_note",
+            "need",
+            "notes",
+        ):
+            nv = (new_val or "").strip() if new_val is not None else ""
+            return nv, (old_val or "").strip() if old_val is not None else "", nv
+        if key == "owner_id":
+            nv = int(new_val) if new_val is not None else None
+            return nv, old_val, nv
+        return new_val, old_val, new_val
+
+    # 预检已报名锁定（仅对真正会变更的字段）
+    if was_enrolled:
+        for key in track_fields:
+            if key not in data:
+                continue
+            _, old_cmp, new_cmp = _norm_cmp(key, data[key], getattr(lead, key))
+            if old_cmp == new_cmp:
+                continue
+            if key == "status":
+                err = assert_lead_mutable(lead, user, action="status")
+            elif key == "owner_id":
+                err = assert_lead_mutable(lead, user, action="team")
+            else:
+                err = assert_lead_mutable(lead, user, action="edit")
+            if err:
+                return err
 
     for key in track_fields:
         if key not in data:
             continue
-        new_val = data[key]
         old_val = getattr(lead, key)
-        # 规范化比较
-        if key in ("student_or_parent_name", "channel_note", "need", "notes"):
-            new_val = (new_val or "").strip() if new_val is not None else ""
-            old_cmp = (old_val or "").strip() if old_val is not None else ""
-            new_cmp = new_val
-        elif key == "owner_id":
-            old_cmp = old_val
-            new_cmp = int(new_val) if new_val is not None else None
-            new_val = new_cmp
-        else:
-            old_cmp = old_val
-            new_cmp = new_val
+        new_val, old_cmp, new_cmp = _norm_cmp(key, data[key], old_val)
 
         if old_cmp == new_cmp:
             continue
+
+        if key == "status" and new_cmp == "enrolled" and old_cmp != "enrolled":
+            becoming_enrolled = True
 
         changes.append(
             {
@@ -377,10 +545,22 @@ def update_lead(db: Session, lead: Lead, data: dict, user: User) -> Lead:
         )
         setattr(lead, key, new_val)
 
+    conversion: dict | None = None
+    if becoming_enrolled:
+        conversion = convert_lead_on_enrolled(db, lead, user)
+
     if not changes:
         db.commit()
         db.refresh(lead)
-        return lead
+        # 已是 enrolled 时仍返回已关联学员 id，便于前端「去报名」
+        if lead.status == "enrolled" and conversion is None:
+            linked = find_student_by_lead(db, lead.id)
+            if linked:
+                conversion = {
+                    "converted_student_id": linked.id,
+                    "conversion_status": "already_linked",
+                }
+        return lead, conversion
 
     # 主责变更单独记一条，更醒目
     owner_change = next((c for c in changes if c["field"] == "owner_id"), None)
@@ -411,7 +591,7 @@ def update_lead(db: Session, lead: Lead, data: dict, user: User) -> Lead:
 
     db.commit()
     db.refresh(lead)
-    return lead
+    return lead, conversion
 
 def ensure_collaborator(
     db: Session,
@@ -463,6 +643,9 @@ def remove_collaborator(
     user_id: int,
     actor: User,
 ) -> str | None:
+    err = assert_lead_mutable(lead, actor, action="team")
+    if err:
+        return err
     if lead.owner_id == user_id:
         return "主跟进人请通过「更换主责」调整，不能直接移出协作"
     row = (
@@ -493,6 +676,9 @@ def add_collaborator(
     actor: User,
     note: str = "",
 ) -> str | None:
+    err = assert_lead_mutable(lead, actor, action="team")
+    if err:
+        return err
     target = db.get(User, user_id)
     if not target or not target.is_active:
         return "用户不存在或已停用"
@@ -504,6 +690,11 @@ def add_collaborator(
     db.commit()
     return None
 
+
+def remove_collaborator_guard(lead: Lead, actor: User) -> str | None:
+    return assert_lead_mutable(lead, actor, action="team")
+
+
 def create_follow_activity(
     db: Session,
     lead: Lead,
@@ -514,17 +705,28 @@ def create_follow_activity(
     next_follow_at: datetime | None = None,
     status: str | None = None,
     join_as_collaborator: bool = True,
-) -> LeadActivity:
+) -> LeadActivity | tuple[LeadActivity, dict | None] | str:
+    """写跟进。已报名一律拒绝。未报名且 status→enrolled 时建档。
+
+    成功返回 activity，或 (activity, conversion)；失败返回错误文案。
+    """
+    err = assert_lead_mutable(lead, user, action="follow")
+    if err:
+        return err
+
     method = (contact_method or "").strip()
     if method and method not in CONTACT_METHODS:
         method = "other"
 
     # 顺带更新状态 / 下次跟进
     side_changes: list[str] = []
+    becoming_enrolled = False
     if status and status in STATUSES and status != lead.status:
         old = STATUS_LABELS.get(lead.status, lead.status)
         lead.status = status
         side_changes.append(f"状态：{old} → {STATUS_LABELS.get(status, status)}")
+        if status == "enrolled":
+            becoming_enrolled = True
     if next_follow_at is not None:
         lead.next_follow_at = next_follow_at
         side_changes.append(f"下次跟进：{next_follow_at.strftime('%Y-%m-%d %H:%M')}")
@@ -532,6 +734,10 @@ def create_follow_activity(
     lead.last_contact_at = _utcnow()
     lead.last_contact_by = user.id
     lead.last_contact_method = method
+
+    conversion: dict | None = None
+    if becoming_enrolled:
+        conversion = convert_lead_on_enrolled(db, lead, user)
 
     if join_as_collaborator:
         ensure_collaborator(
@@ -566,6 +772,8 @@ def create_follow_activity(
     db.commit()
     db.refresh(act)
     db.refresh(lead)
+    if conversion is not None:
+        return act, conversion
     return act
 
 def serialize_activity(db: Session, row: LeadActivity) -> dict:

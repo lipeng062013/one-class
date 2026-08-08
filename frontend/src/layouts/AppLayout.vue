@@ -3,7 +3,11 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useBreakpoint } from '../composables/useBreakpoint'
+import { useAppMenus } from '../composables/useAppMenus'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
+import AppRail from '../components/AppRail.vue'
+import AppTabBar, { type AppNavItem } from '../components/AppTabBar.vue'
+import { canHistoryBackToParent } from '../composables/usePageBack'
 
 /** 与 .aside width transition 对齐 */
 const ASIDE_MS = 220
@@ -13,18 +17,27 @@ const POPPER_LOCK_MS = 420
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
-const collapsed = ref(false)
+const { isApp, isPadPortrait, isPadLandscape, isNarrowDesktop } = useBreakpoint()
+const {
+  menus,
+  flatMenuItems,
+  displayName,
+  roleText,
+  brandTag,
+} = useAppMenus()
+const collapsed = ref(isNarrowDesktop.value)
+const collapseWasManuallySet = ref(false)
 const brandMetaVisible = ref(true)
+/** PC 窄屏仍可用；WAP/Pad「更多」改为独立页面 /more，不再用侧栏抽屉 */
 const drawer = ref(false)
 const changePwdVisible = ref(false)
 /** 折叠态选中子项后短暂锁侧栏交互，避免弹层闪回 */
 const popperLock = ref(false)
-const { isMobile } = useBreakpoint()
 
 /** 侧栏菜单实例：用于强制关闭折叠弹层 */
 const menuRef = ref<{ close: (index: string) => void } | null>(null)
 
-const GROUP_MENU_INDEXES = ['crm', 'academic', 'finance', 'growth'] as const
+const GROUP_MENU_INDEXES = ['ops', 'crm', 'academic', 'finance', 'growth'] as const
 
 let brandMetaTimer: ReturnType<typeof setTimeout> | null = null
 let popperLockTimer: ReturnType<typeof setTimeout> | null = null
@@ -77,6 +90,7 @@ function lockCollapsedPopper() {
 
 /** 宽度与 EP collapse 同步，避免两拍不同步导致箭头/弹层错乱 */
 function toggleAside() {
+  collapseWasManuallySet.value = true
   clearBrandMetaTimer()
   clearPopperLockTimer()
   popperLock.value = false
@@ -101,31 +115,18 @@ onUnmounted(() => {
   clearPopperLockTimer()
 })
 
-const roleLabel: Record<string, string> = {
-  admin: '负责人',
-  operator: '运营',
-  teacher: '老师',
-  cr: 'CR（班主任，学管师）',
-  academic_manager: 'CR（班主任，学管师）',
-}
-
-const roleText = computed(
-  () => roleLabel[auth.user?.role || ''] || auth.user?.role || '',
-)
-
-const displayName = computed(
-  () => auth.user?.display_name || auth.user?.username || '用户',
-)
-
 const active = computed(() => {
+  if (route.path === '/more' || route.path.startsWith('/more/')) return '/more'
   if (route.path.startsWith('/students')) return '/students'
   if (route.path.startsWith('/enrollments')) return '/enrollments'
   if (route.path.startsWith('/learning')) return '/learning'
-  if (route.path.startsWith('/upload')) return '/upload'
+  // 上传页归属素材模块，侧栏高亮「素材」
+  if (route.path.startsWith('/upload')) return '/materials'
   if (route.path.startsWith('/leads')) return '/leads' // 含 /leads/:id 详情
   if (route.path.startsWith('/knowledge')) return route.path
   if (route.path.startsWith('/copies')) return '/copies'
   if (route.path.startsWith('/posters')) return '/posters'
+  if (route.path.startsWith('/ai-image')) return '/ai-image'
   if (route.path.startsWith('/materials')) return '/materials'
   if (route.path.startsWith('/templates')) return '/templates'
   // 教务 / 财务：新建/详情子页高亮父级列表
@@ -136,187 +137,157 @@ const active = computed(() => {
   return route.path
 })
 
-/** 老师手机底栏高亮（上传 / 素材 / 学生 / 课表 / 学情） */
-const teacherTabActive = computed(() => {
-  if (route.path.startsWith('/upload')) return '/upload'
-  if (route.path.startsWith('/materials')) return '/materials'
-  if (route.path.startsWith('/students')) return '/students'
-  if (route.path.startsWith('/academic/schedule')) return '/academic/schedule'
-  if (route.path.startsWith('/learning')) return '/learning'
-  return ''
-})
+const moreActive = computed(() => route.path === '/more' || route.path.startsWith('/more/'))
 
-type MenuItem = { index: string; title: string; icon: string }
-type MenuGroup = { type: 'group'; index: string; title: string; icon: string; children: MenuItem[] }
-type MenuEntry = (MenuItem & { type?: 'item' }) | MenuGroup
+/**
+ * App 详情/新建流程使用顶栏返回，并隐藏底部主导航，避免误触跳出当前任务。
+ * value 是没有可用浏览历史时的兜底列表页。
+ */
+const appBackFallbacks: Record<string, string> = {
+  upload: '/materials',
+  'material-detail': '/materials',
+  'copies-generate': '/copies',
+  'copy-detail': '/copies',
+  'posters-generate': '/posters',
+  'lead-detail': '/leads',
+  'student-detail': '/students',
+  'enrollment-records': '/enrollments',
+  'learning-new': '/learning',
+  'academic-class-detail': '/academic/classes',
+  'academic-class-record-detail': '/academic/class-records',
+  'academic-courses-new': '/academic/courses',
+  'academic-courses-edit': '/academic/courses',
+  'finance-order-detail': '/finance/orders',
+  'copy-template-detail': '/templates',
+  'poster-template-detail': '/templates',
+}
 
-const menus = computed((): MenuEntry[] => {
+const appRouteTitles: Record<string, string> = {
+  'material-detail': '素材详情',
+  'copies-generate': '生成文案',
+  'copy-detail': '文案详情',
+  'posters-generate': '生成海报',
+  'lead-detail': '线索详情',
+  'student-detail': '学生详情',
+  'enrollment-records': '最近登记',
+  'learning-new': '上传学情',
+  'academic-class-detail': '班级详情',
+  'academic-class-record-detail': '点名详情',
+  'academic-courses-new': '新建课程',
+  'academic-courses-edit': '编辑课程',
+  'finance-order-detail': '订单详情',
+  'copy-template-detail': '文案模板详情',
+  'poster-template-detail': '海报模板详情',
+}
+
+const appBackTarget = computed(() => appBackFallbacks[String(route.name || '')] || '')
+
+/**
+ * 手机 / Pad 的主导航：最多 4 个高频入口，完整菜单通过“更多”面板访问。
+ * 导航只改变展示层，不改变现有权限和路由。
+ */
+const appPrimaryTabs = computed<AppNavItem[]>(() => {
   const can = (code: string) => auth.hasPermission(code)
+  const home: AppNavItem = { index: '/', title: '工作台', icon: 'Odometer' }
+  const preferred: AppNavItem[] = [home]
 
-  // 纯老师默认包且无额外模块权限：精简菜单（手机友好）
-  const hasOpsExtras =
-    can('copies.use') ||
-    can('posters.use') ||
-    can('ai_image.use') ||
-    can('knowledge.read') ||
-    can('leads.read') ||
-    can('finance.read') ||
-    can('enrollments.manage') ||
-    can('academic.write') ||
-    can('users.manage')
-  if (auth.isTeacher && !hasOpsExtras) {
-    return [
-      { index: '/', title: '工作台', icon: 'Odometer' },
-      ...(can('materials.write') ? [{ index: '/upload', title: '上传素材', icon: 'Upload' }] : []),
-      ...(can('materials.read') ? [{ index: '/materials', title: '素材', icon: 'Picture' }] : []),
-      ...(can('students.read') ? [{ index: '/students', title: '学员', icon: 'Avatar' }] : []),
-      // 默认 academic.read：老师可查看自己所带课表
-      ...(can('academic.read')
-        ? [{ index: '/academic/schedule', title: '我的课表', icon: 'Calendar' }]
-        : []),
-      ...(can('learning.write') ? [{ index: '/learning', title: '上传学情', icon: 'EditPen' }] : []),
-    ]
+  if (auth.isTeacher) {
+    if (can('academic.read')) preferred.push({ index: '/academic/schedule', title: '课表', icon: 'Calendar' })
+    if (can('students.read')) preferred.push({ index: '/students', title: '学员', icon: 'Avatar' })
+    if (can('learning.write')) preferred.push({ index: '/learning', title: '学情', icon: 'EditPen' })
+  } else if (auth.isCR) {
+    if (can('leads.read')) preferred.push({ index: '/leads', title: '线索', icon: 'Phone' })
+    if (can('students.read')) preferred.push({ index: '/students', title: '学员', icon: 'Avatar' })
+    if (can('academic.read')) preferred.push({ index: '/academic/schedule', title: '课表', icon: 'Calendar' })
+  } else {
+    if (can('leads.read')) preferred.push({ index: '/leads', title: '线索', icon: 'Phone' })
+    if (can('students.read')) preferred.push({ index: '/students', title: '学员', icon: 'Avatar' })
+    if (can('finance.read')) preferred.push({ index: '/finance/orders', title: '财务', icon: 'Wallet' })
+    if (can('academic.read')) preferred.push({ index: '/academic/schedule', title: '教务', icon: 'School' })
   }
 
-  const items: MenuEntry[] = [{ index: '/', title: '工作台', icon: 'Odometer' }]
-
-  if (can('materials.write')) {
-    items.push({ index: '/upload', title: '上传素材', icon: 'Upload' })
+  const seen = new Set<string>()
+  const result: AppNavItem[] = []
+  for (const item of [...preferred, ...flatMenuItems.value]) {
+    if (seen.has(item.index)) continue
+    seen.add(item.index)
+    result.push(item)
+    if (result.length >= 4) break
   }
-  if (can('materials.read')) {
-    items.push({ index: '/materials', title: '素材', icon: 'Picture' })
-  }
-  if (can('copies.use')) {
-    items.push({ index: '/copies', title: '文案', icon: 'Document' })
-  }
-  if (can('posters.use')) {
-    items.push({ index: '/posters', title: '海报', icon: 'PictureFilled' })
-  }
-  if (can('ai_image.use')) {
-    items.push({ index: '/ai-image', title: 'GPT 生图', icon: 'MagicStick' })
-  }
-
-  if (can('leads.read')) {
-    items.push({
-      type: 'group',
-      index: 'crm',
-      title: '获客中心',
-      icon: 'UserFilled',
-      children: [{ index: '/leads', title: '线索跟进', icon: 'Phone' }],
-    })
-  }
-
-  const academicChildren: MenuItem[] = []
-  if (can('students.read')) {
-    academicChildren.push({ index: '/students', title: '学员管理', icon: 'Avatar' })
-  }
-  if (can('academic.read')) {
-    academicChildren.push(
-      { index: '/academic/classes', title: '班级管理', icon: 'Collection' },
-      { index: '/academic/schedule', title: '课表管理', icon: 'Calendar' },
-      { index: '/academic/class-records', title: '上课记录', icon: 'Notebook' },
-      { index: '/academic/courses', title: '课程管理', icon: 'Reading' },
-      { index: '/academic/teachers', title: '老师管理', icon: 'User' },
-    )
-  }
-  if (can('learning.write')) {
-    academicChildren.push({ index: '/learning', title: '学情', icon: 'EditPen' })
-  }
-  if (academicChildren.length) {
-    items.push({
-      type: 'group',
-      index: 'academic',
-      title: '教务中心',
-      icon: 'School',
-      children: academicChildren,
-    })
-  }
-
-  const financeChildren: MenuItem[] = []
-  if (can('finance.read')) {
-    financeChildren.push({ index: '/finance/orders', title: '订单管理', icon: 'Tickets' })
-  }
-  if (can('enrollments.manage')) {
-    financeChildren.push({ index: '/enrollments', title: '报名/续费', icon: 'Ticket' })
-  }
-  if (can('finance.read')) {
-    financeChildren.push(
-      { index: '/finance/transactions', title: '收支明细', icon: 'List' },
-      { index: '/finance/consumption', title: '课消记录', icon: 'DataLine' },
-      { index: '/finance/recharge', title: '充值管理', icon: 'Coin' },
-    )
-  }
-  if (can('finance.income_report')) {
-    financeChildren.push({
-      index: '/finance/income-report',
-      title: '确认收入报表',
-      icon: 'DataAnalysis',
-    })
-  }
-  if (financeChildren.length) {
-    items.push({
-      type: 'group',
-      index: 'finance',
-      title: '财务中心',
-      icon: 'Wallet',
-      children: financeChildren,
-    })
-  }
-
-  if (can('knowledge.read')) {
-    items.push({
-      type: 'group',
-      index: 'growth',
-      title: '成长中心',
-      icon: 'Reading',
-      children: [
-        { index: '/knowledge/scripts', title: '沟通话术', icon: 'ChatDotRound' },
-        { index: '/knowledge/objections', title: '异议处理', icon: 'Comment' },
-        { index: '/knowledge/banned', title: '禁用词列表', icon: 'Warning' },
-      ],
-    })
-  }
-  if (can('templates.manage')) {
-    items.push({ index: '/templates', title: '模板', icon: 'Files' })
-  }
-  if (can('office.use')) {
-    items.push({ index: '/office', title: '综合办公表', icon: 'Grid' })
-  }
-  if (can('users.manage')) {
-    items.push({ index: '/users', title: '用户管理', icon: 'User' })
-  }
-  return items
+  return result
 })
 
-const brandTag = computed(() => (auth.isTeacher ? '老师端后台' : '管理后台'))
+/** 手机与 Pad 竖屏使用底部主导航，Pad 横屏使用左侧图标轨。 */
+const showAppBottomNav = computed(
+  () => isApp.value && !isPadLandscape.value && !appBackTarget.value,
+)
+const showPadRail = computed(() => isPadLandscape.value)
 
-/** 老师在手机宽度下用底栏主导航（有额外授权时走完整侧栏） */
-const showTeacherTabBar = computed(() => {
-  if (!auth.isTeacher || !isMobile.value) return false
-  const extra =
-    auth.hasPermission('copies.use') ||
-    auth.hasPermission('leads.read') ||
-    auth.hasPermission('finance.read') ||
-    auth.hasPermission('users.manage')
-  return !extra
+const appPageTitle = computed(() => {
+  if (route.path === '/') return '工作台'
+  if (moreActive.value) return '更多'
+  const routeTitle = appRouteTitles[String(route.name || '')]
+  if (routeTitle) return routeTitle
+  // 页面标题优先完整菜单文案；底栏“财务/学员”等短文案仅作为导航标签。
+  const items = [...flatMenuItems.value, ...appPrimaryTabs.value]
+  const matched = items.find((item) => {
+    if (item.index === '/') return route.path === '/'
+    return route.path === item.index || route.path.startsWith(`${item.index}/`)
+  })
+  return matched?.title || '嘉壹启航'
 })
 
-const teacherTabs: MenuItem[] = [
-  { index: '/upload', title: '上传', icon: 'Upload' },
-  { index: '/materials', title: '素材', icon: 'Picture' },
-  { index: '/students', title: '学生', icon: 'User' },
-  { index: '/academic/schedule', title: '课表', icon: 'Calendar' },
-  { index: '/learning', title: '学情', icon: 'EditPen' },
-]
+const drawerSize = computed(() => (isPadPortrait.value ? '320px' : '292px'))
+
+const layoutVars = computed(() => ({
+  '--oc-app-content-left': showPadRail.value
+    ? '76px'
+    : isApp.value
+      ? '0px'
+      : collapsed.value
+        ? '64px'
+        : '232px',
+  '--oc-app-bottom-inset': showAppBottomNav.value
+    ? 'calc(64px + env(safe-area-inset-bottom, 0px))'
+    : '0px',
+}))
+
+function openAppMore() {
+  // WAP/Pad：进「更多」整页；不再弹出左侧抽屉
+  if (route.path !== '/more') void router.push('/more')
+}
+
+/** 仅详情/新建页顶栏返回；「更多」只走底部 Tab，顶部不再放菜单入口 */
+function onAppHeaderLeft() {
+  if (!appBackTarget.value) return
+  const historyBack = window.history.state?.back
+  if (
+    typeof historyBack === 'string' &&
+    canHistoryBackToParent(historyBack, appBackTarget.value)
+  ) {
+    router.back()
+    return
+  }
+  // 直接打开深链或从其它模块进入时，不把当前任务继续压进历史栈。
+  void router.replace(appBackTarget.value)
+}
 
 /** 仅手动 push，不用 el-menu 的 router 属性，避免双跳 + EP 默认蓝底闪一下 */
 function onSelect(index: string) {
   // 分组 index（crm / growth）不导航
   if (!index.startsWith('/')) return
   if (route.path !== index) void router.push(index)
-  if (isMobile.value) drawer.value = false
+  if (isApp.value) drawer.value = false
   // 折叠态：选中子项后锁弹层，避免 pad/touch「关一下又弹回来」
   lockCollapsedPopper()
+}
+
+function onAppSelect(index: string) {
+  if (index === '__more__') {
+    openAppMore()
+    return
+  }
+  onSelect(index)
 }
 
 /** 锁定期内若 EP 又因 hover 打开分组，立刻关掉 */
@@ -331,19 +302,30 @@ function onSubMenuOpen(index: string) {
   })
 }
 
+function openChangePassword() {
+  drawer.value = false
+  changePwdVisible.value = true
+}
+
 function logout() {
   auth.logout()
   router.replace('/login')
 }
 
-watch(isMobile, (v) => {
+watch(isApp, (v) => {
   if (!v) drawer.value = false
+})
+
+watch(isNarrowDesktop, (v) => {
+  if (collapseWasManuallySet.value) return
+  collapsed.value = v
+  brandMetaVisible.value = !v
 })
 
 watch(
   () => route.path,
   () => {
-    if (isMobile.value) drawer.value = false
+    if (isApp.value) drawer.value = false
     // .main 不随路由卸载，切换模块时先回顶；列表若需从详情恢复会在 load 后再滚回去
     requestAnimationFrame(() => {
       const main = document.querySelector('.layout .main') as HTMLElement | null
@@ -354,9 +336,9 @@ watch(
 </script>
 
 <template>
-  <el-container class="layout">
+  <el-container class="layout" :style="layoutVars">
     <el-aside
-      v-if="!isMobile"
+      v-if="!isApp"
       :width="collapsed ? '64px' : '232px'"
       class="aside"
       :class="{ 'is-collapsed': collapsed, 'is-popper-lock': popperLock }"
@@ -410,10 +392,12 @@ watch(
       </div>
     </el-aside>
 
+    <!-- 仅非 App 保留（兼容旧逻辑）；WAP/Pad 的「更多」走 /more 整页 -->
     <el-drawer
+      v-if="!isApp"
       v-model="drawer"
       direction="ltr"
-      size="240px"
+      :size="drawerSize"
       :with-header="false"
       :resizable="false"
       :show-close="false"
@@ -426,6 +410,9 @@ watch(
           <span class="brand-text">嘉壹启航</span>
           <span class="brand-tag">{{ brandTag }}</span>
         </div>
+        <button type="button" class="drawer-close" aria-label="关闭导航" @click="drawer = false">
+          <el-icon><Close /></el-icon>
+        </button>
       </div>
       <el-menu
         class="aside-menu"
@@ -453,36 +440,97 @@ watch(
           </el-menu-item>
         </template>
       </el-menu>
+      <!-- 账号区：所有角色可改自己的密码；退出登录 -->
+      <div class="drawer-account">
+        <div class="drawer-account__who">
+          <span class="drawer-account__avatar">{{ displayName.slice(0, 1) }}</span>
+          <div class="drawer-account__meta">
+            <span class="drawer-account__name">{{ displayName }}</span>
+            <span v-if="roleText" class="drawer-account__role">{{ roleText }}</span>
+          </div>
+        </div>
+        <div class="drawer-account__actions">
+          <button type="button" class="drawer-account__btn" @click="openChangePassword">
+            <el-icon><Lock /></el-icon>
+            <span>修改密码</span>
+          </button>
+          <button type="button" class="drawer-account__btn is-danger" @click="logout">
+            <el-icon><SwitchButton /></el-icon>
+            <span>退出登录</span>
+          </button>
+        </div>
+      </div>
     </el-drawer>
 
-    <el-container class="content-wrap" :class="{ 'has-teacher-tabs': showTeacherTabBar }">
-      <el-header class="header">
-        <el-button v-if="isMobile" text class="icon-btn" @click="drawer = true">
-          <el-icon><Menu /></el-icon>
-        </el-button>
-        <el-button v-else text class="icon-btn" @click="toggleAside">
+    <AppRail
+      v-if="showPadRail"
+      :items="appPrimaryTabs"
+      :active="active"
+      :more-active="moreActive"
+      @select="onAppSelect"
+      @more="openAppMore"
+    />
+
+    <el-container
+      class="content-wrap"
+      :class="{ 'is-app-shell': isApp, 'has-app-tabs': showAppBottomNav, 'has-pad-rail': showPadRail }"
+    >
+      <el-header
+        class="header"
+        :class="{
+          'is-app-header': isApp,
+          'has-back': isApp && Boolean(appBackTarget),
+        }"
+      >
+        <!-- PC：折叠侧栏 -->
+        <el-button
+          v-if="!isApp"
+          text
+          class="icon-btn"
+          :aria-label="collapsed ? '展开侧栏' : '收起侧栏'"
+          @click="toggleAside"
+        >
           <el-icon><Fold v-if="!collapsed" /><Expand v-else /></el-icon>
         </el-button>
-        <button
-          v-if="showTeacherTabBar"
-          type="button"
-          class="header-home"
-          @click="onSelect('/')"
+
+        <!-- App：仅详情/新建显示返回；列表页不再占左侧菜单位 -->
+        <el-button
+          v-if="isApp && appBackTarget"
+          text
+          class="icon-btn header-back"
+          aria-label="返回上一页"
+          @click="onAppHeaderLeft"
         >
-          工作台
-        </button>
+          <el-icon><Back /></el-icon>
+        </el-button>
+
+        <div class="header-title-wrap">
+          <button
+            v-if="isApp && route.path === '/'"
+            type="button"
+            class="header-home"
+            @click="onSelect('/')"
+          >
+            {{ appPageTitle }}
+          </button>
+          <h1 v-else-if="isApp" class="app-page-title">{{ appPageTitle }}</h1>
+        </div>
+
         <div class="spacer" />
-        <el-dropdown>
-          <span class="user-trigger">
-            <el-avatar :size="32" class="user-avatar">{{ displayName.slice(0, 1) }}</el-avatar>
-            <span class="user-meta">
+
+        <el-dropdown trigger="click" placement="bottom-end">
+          <span class="user-trigger" role="button" tabindex="0" aria-label="账号菜单">
+            <el-avatar :size="isApp ? 34 : 32" class="user-avatar">
+              {{ displayName.slice(0, 1) }}
+            </el-avatar>
+            <span v-if="!isApp" class="user-meta">
               <span class="user-name">{{ displayName }}</span>
               <span v-if="roleText" class="user-role">{{ roleText }}</span>
             </span>
           </span>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item @click="changePwdVisible = true">修改密码</el-dropdown-item>
+              <el-dropdown-item @click="openChangePassword">修改密码</el-dropdown-item>
               <el-dropdown-item divided @click="logout">退出登录</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -496,20 +544,14 @@ watch(
         </router-view>
       </el-main>
 
-      <!-- 老师 WAP：底栏（与侧栏能力对齐） -->
-      <nav v-if="showTeacherTabBar" class="teacher-tabbar" aria-label="老师主导航">
-        <button
-          v-for="tab in teacherTabs"
-          :key="tab.index"
-          type="button"
-          class="teacher-tab"
-          :class="{ 'is-active': teacherTabActive === tab.index }"
-          @click="onSelect(tab.index)"
-        >
-          <el-icon :size="20"><component :is="tab.icon" /></el-icon>
-          <span>{{ tab.title }}</span>
-        </button>
-      </nav>
+      <AppTabBar
+        v-if="showAppBottomNav"
+        :items="appPrimaryTabs"
+        :active="active"
+        :more-active="moreActive"
+        @select="onAppSelect"
+        @more="openAppMore"
+      />
     </el-container>
 
     <ChangePasswordDialog v-model="changePwdVisible" />
@@ -1006,9 +1048,125 @@ watch(
   max-height: 58px;
   padding: 0 16px;
   box-sizing: border-box;
-  background: #2c2825;
-  color: var(--oc-gold, #f5e6c8);
-  border-bottom: 1px solid rgba(245, 230, 200, 0.12);
+  background: linear-gradient(135deg, #fffdf8 0%, #faf6ee 55%, #f5e6c8 120%);
+  color: #6b4f25;
+  border-bottom: 1px solid #e8e0d0;
+}
+
+.drawer-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin-left: auto;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #78716c;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.drawer-close:hover,
+.drawer-close:focus-visible {
+  background: rgba(161, 98, 7, 0.08);
+  color: #8b5406;
+  outline: none;
+}
+
+.drawer-account {
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding: 12px 14px calc(14px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid #e8e0d0;
+  background: linear-gradient(180deg, rgba(250, 246, 238, 0.55) 0%, #faf6ee 100%);
+}
+
+.drawer-account__who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  min-width: 0;
+}
+
+.drawer-account__avatar {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #c9a066;
+  color: #fffdf8;
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: 0 0 0 2px rgba(161, 98, 7, 0.14);
+}
+
+.drawer-account__meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.drawer-account__name {
+  font-size: 14px;
+  font-weight: 650;
+  color: #44403c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer-account__role {
+  font-size: 12px;
+  color: #78716c;
+}
+
+.drawer-account__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.drawer-account__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid #e8e0d0;
+  border-radius: 10px;
+  background: #fffdf8;
+  color: #57534e;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.drawer-account__btn:hover,
+.drawer-account__btn:focus-visible {
+  background: rgba(161, 98, 7, 0.08);
+  border-color: rgba(161, 98, 7, 0.28);
+  color: #8b5406;
+  outline: none;
+}
+
+.drawer-account__btn.is-danger {
+  color: #b45309;
+}
+
+.drawer-account__btn.is-danger:hover,
+.drawer-account__btn.is-danger:focus-visible {
+  background: rgba(180, 83, 9, 0.08);
+  border-color: rgba(180, 83, 9, 0.28);
+  color: #9a3412;
 }
 
 .content-wrap {
@@ -1060,23 +1218,48 @@ watch(
   flex: 1;
 }
 
+.header-title-wrap {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
 .header-home {
-  margin-left: 4px;
+  margin: 0;
   border: none;
   background: transparent;
   color: var(--oc-primary, #a16207);
-  font-size: 14px;
-  font-weight: 650;
+  font-size: 15px;
+  font-weight: 700;
   cursor: pointer;
-  padding: 6px 8px;
+  padding: 4px 0;
   border-radius: 8px;
+  line-height: 1.2;
 }
 
 .header-home:hover {
-  background: rgba(161, 98, 7, 0.08);
+  color: var(--oc-primary-hover, #86530a);
 }
 
-.content-wrap.has-teacher-tabs .main {
+.app-page-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--oc-ink, #44403c);
+  font-size: 17px;
+  font-weight: 740;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-back {
+  flex: 0 0 auto;
+  margin-right: 2px;
+}
+
+.content-wrap.has-app-tabs .main {
   padding-bottom: 72px;
 }
 
@@ -1184,20 +1367,100 @@ watch(
   scrollbar-gutter: stable;
 }
 
-@media (max-width: 991px) {
+@media (max-width: 1199px) {
+  .content-wrap.is-app-shell {
+    background:
+      radial-gradient(ellipse 80% 42% at 50% -12%, rgba(245, 230, 200, 0.55), transparent 58%),
+      linear-gradient(180deg, #faf6ee 0%, #f5efe3 100%);
+  }
+
+  .is-app-shell .header,
+  .header.is-app-header {
+    --oc-topbar-h: 52px;
+    --el-header-height: 52px;
+    gap: 8px;
+    padding: 0 14px 0 16px;
+    border-bottom: 1px solid rgba(181, 145, 83, 0.2);
+    background: linear-gradient(180deg, #fffefb 0%, #faf6ee 100%);
+    box-shadow: 0 4px 14px rgba(88, 60, 24, 0.06);
+  }
+
+  /* 无返回时：标题贴左，不再空一块菜单位 */
+  .header.is-app-header:not(.has-back) {
+    padding-left: 16px;
+  }
+
+  .header.is-app-header.has-back {
+    padding-left: 6px;
+  }
+
+  .is-app-shell .header .icon-btn,
+  .header.is-app-header .header-back {
+    width: 40px;
+    height: 40px;
+    margin: 0;
+    border-radius: 12px;
+    color: #57534e;
+  }
+
+  .is-app-shell .header .icon-btn:hover,
+  .is-app-shell .header .icon-btn:active,
+  .header.is-app-header .header-back:hover,
+  .header.is-app-header .header-back:active {
+    background: rgba(161, 98, 7, 0.08) !important;
+    color: #8b5406;
+  }
+
+  .header.is-app-header .header-title-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .header.is-app-header .spacer {
+    display: none;
+  }
+
+  .header.is-app-header .app-page-title,
+  .header.is-app-header .header-home {
+    max-width: 100%;
+    color: #3f3a34;
+    font-size: 17px;
+    font-weight: 760;
+  }
+
+  .header.is-app-header .header-home {
+    color: #8b5406;
+  }
+
+  .header.is-app-header .user-trigger {
+    flex: 0 0 auto;
+    padding: 2px;
+    border: 1px solid rgba(181, 145, 83, 0.28);
+    border-radius: 999px;
+    background: linear-gradient(180deg, #fffefb, #f5e6c8);
+    box-shadow: 0 2px 8px rgba(88, 60, 24, 0.06);
+  }
+
+  .header.is-app-header .user-avatar {
+    background: linear-gradient(145deg, #d4b483, #a16207);
+    color: #fffdf8;
+    box-shadow: none;
+  }
+
   .main {
     /*
      * Windows / DevTools 经典滚动条只吃右侧宽度，会显得「右边距更大」。
      * both-edges：左右各留同等槽位，内容视觉居中对称。
      * pad（768–991）与手机一样走主区滚动，勿依赖 body 滚动。
      */
-    padding: 14px 12px;
+    padding: 16px;
     overflow-x: hidden;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     touch-action: pan-y;
     scrollbar-gutter: stable both-edges;
     scrollbar-width: thin;
+    background: transparent;
   }
 
   .main::-webkit-scrollbar {
@@ -1224,7 +1487,7 @@ watch(
   }
 
   .main {
-    padding: 10px;
+    padding: 12px;
     overflow-x: hidden;
     overflow-y: auto;
     flex: 1 1 0;
@@ -1235,7 +1498,7 @@ watch(
     scrollbar-width: thin;
   }
 
-  .header {
+  .header:not(.is-app-header) {
     padding: 0 8px;
     position: relative;
     top: auto;
@@ -1248,17 +1511,15 @@ watch(
 .nav-drawer {
   --oc-menu-active-bg: linear-gradient(
     90deg,
-    rgba(161, 98, 7, 0.42) 0%,
-    rgba(180, 140, 60, 0.22) 55%,
-    rgba(180, 140, 60, 0.1) 100%
+    rgba(245, 230, 200, 0.9) 0%,
+    rgba(250, 246, 238, 0.82) 100%
   );
   --el-menu-bg-color: transparent;
-  --el-menu-hover-bg-color: rgba(245, 230, 200, 0.1);
-  --el-menu-active-color: #f5e6c8;
+  --el-menu-hover-bg-color: rgba(161, 98, 7, 0.08);
+  --el-menu-active-color: #8b5406;
   --el-color-primary: #a16207;
-  /* 盖掉 EP 默认浅色底，否则右侧会透出一条「白边」 */
-  --el-drawer-bg-color: #2c2825;
-  --el-bg-color: #2c2825;
+  --el-drawer-bg-color: #fffdf8;
+  --el-bg-color: #fffdf8;
 }
 
 /*
@@ -1277,15 +1538,15 @@ watch(
 .el-drawer.nav-drawer.ltr,
 .el-drawer.nav-drawer.open,
 .nav-drawer.el-drawer {
-  background: #2c2825 !important;
-  background-color: #2c2825 !important;
+  background: linear-gradient(180deg, #fffdf9 0%, #faf6ee 100%) !important;
+  background-color: #fffdf8 !important;
   border: none !important;
   border-right: none !important;
   outline: none !important;
   /* 禁止 EP 默认 el-box-shadow-dark（多层浅阴影在深色边缘会发白） */
   box-shadow: none !important;
   /* 单独用深色投影，不发白 */
-  filter: drop-shadow(6px 0 16px rgba(0, 0, 0, 0.4));
+  filter: drop-shadow(6px 0 16px rgba(88, 60, 24, 0.18));
   overflow: visible !important;
 }
 
@@ -1298,7 +1559,7 @@ watch(
   right: -2px;
   bottom: 0;
   width: 4px;
-  background: #2c2825;
+  background: #e4d3b3;
   pointer-events: none;
   z-index: 5;
 }
@@ -1306,8 +1567,8 @@ watch(
 .nav-drawer .el-drawer__body,
 .el-drawer.nav-drawer .el-drawer__body {
   padding: 0 !important;
-  background: #2c2825 !important;
-  background-color: #2c2825 !important;
+  background: linear-gradient(180deg, #fffdf9 0%, #faf6ee 100%) !important;
+  background-color: #fffdf8 !important;
   border: none !important;
   box-shadow: none !important;
   overflow-x: hidden !important;
@@ -1323,6 +1584,38 @@ watch(
 .nav-drawer .aside-menu {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.nav-drawer .drawer-account {
+  flex: 0 0 auto;
+  margin-top: auto;
+}
+
+.nav-drawer .el-menu {
+  --el-menu-text-color: #57534e;
+  --el-menu-hover-bg-color: rgba(161, 98, 7, 0.08);
+  --el-menu-active-color: #8b5406;
+}
+
+.nav-drawer .el-menu-item,
+.nav-drawer .el-sub-menu__title {
+  color: #57534e !important;
+}
+
+.nav-drawer .el-menu-item:hover,
+.nav-drawer .el-sub-menu__title:hover {
+  background: rgba(161, 98, 7, 0.08) !important;
+  color: #8b5406 !important;
+}
+
+.nav-drawer .el-menu-item.is-active {
+  color: #8b5406 !important;
+  box-shadow: inset 0 0 0 1px rgba(161, 98, 7, 0.14);
+}
+
+.nav-drawer .el-menu-item .el-icon,
+.nav-drawer .el-sub-menu__title .el-icon {
+  color: #9a7440 !important;
 }
 
 .nav-drawer .el-drawer__header {
@@ -1342,10 +1635,10 @@ watch(
  */
 .oc-aside-popper.el-popper,
 .oc-aside-popper {
-  background: #2c2825 !important;
-  border: 1px solid rgba(245, 230, 200, 0.18) !important;
-  border-radius: 12px !important;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35) !important;
+  background: #fffdf8 !important;
+  border: 1px solid #e1cfad !important;
+  border-radius: 8px !important;
+  box-shadow: 0 12px 32px rgba(88, 60, 24, 0.16) !important;
   padding: 6px !important;
   min-width: 160px !important;
   overflow: hidden;
@@ -1359,10 +1652,10 @@ watch(
   min-width: 148px !important;
   box-shadow: none !important;
   --el-menu-bg-color: transparent;
-  --el-menu-text-color: #e7e5e4;
-  --el-menu-hover-bg-color: rgba(245, 230, 200, 0.12);
-  --el-menu-hover-text-color: #f5e6c8;
-  --el-menu-active-color: #f5e6c8;
+  --el-menu-text-color: #57534e;
+  --el-menu-hover-bg-color: rgba(161, 98, 7, 0.08);
+  --el-menu-hover-text-color: #8b5406;
+  --el-menu-active-color: #8b5406;
   --el-color-primary: #a16207;
 }
 
@@ -1372,41 +1665,41 @@ watch(
   margin: 2px 0 !important;
   padding: 0 14px !important;
   border-radius: 8px !important;
-  color: #e7e5e4 !important;
+  color: #57534e !important;
   background: transparent !important;
   background-color: transparent !important;
 }
 
 .oc-aside-popper .el-menu-item:hover,
 .oc-aside-popper .el-menu-item:focus {
-  background: rgba(245, 230, 200, 0.12) !important;
-  background-color: rgba(245, 230, 200, 0.12) !important;
-  color: #f5e6c8 !important;
+  background: rgba(161, 98, 7, 0.08) !important;
+  background-color: rgba(161, 98, 7, 0.08) !important;
+  color: #8b5406 !important;
 }
 
 .oc-aside-popper .el-menu-item.is-active {
   background: linear-gradient(
     90deg,
-    rgba(161, 98, 7, 0.42) 0%,
-    rgba(180, 140, 60, 0.18) 100%
+    rgba(245, 230, 200, 0.9) 0%,
+    rgba(250, 246, 238, 0.8) 100%
   ) !important;
-  color: #f5e6c8 !important;
+  color: #8b5406 !important;
   font-weight: 600;
 }
 
 .oc-aside-popper .el-menu-item .el-icon {
-  color: rgba(245, 230, 200, 0.7) !important;
+  color: #9a7440 !important;
   margin-right: 8px;
 }
 
 .oc-aside-popper .el-menu-item.is-active .el-icon {
-  color: #f5e6c8 !important;
+  color: #8b5406 !important;
 }
 
 /* 箭头小三角 */
 .oc-aside-popper .el-popper__arrow::before {
-  background: #2c2825 !important;
-  border: 1px solid rgba(245, 230, 200, 0.18) !important;
+  background: #fffdf8 !important;
+  border: 1px solid #e1cfad !important;
 }
 
 .content-wrap::before {
@@ -1423,6 +1716,11 @@ watch(
   border: 1.5px solid rgba(161, 98, 7, 0.12);
   background: radial-gradient(circle, rgba(245, 230, 200, 0.35) 0%, transparent 65%);
   box-shadow: inset 0 0 0 28px rgba(255, 253, 248, 0.12);
+}
+
+.content-wrap.is-app-shell::before,
+.content-wrap.is-app-shell::after {
+  display: none;
 }
 
 .content-wrap::after {
@@ -1442,12 +1740,49 @@ watch(
 
 .content-wrap > .header,
 .content-wrap > .main,
-.content-wrap > .teacher-tabbar {
+.content-wrap > .teacher-tabbar,
+.content-wrap > .app-tabbar {
   position: relative;
   z-index: 1;
 }
 
 .content-wrap > .teacher-tabbar {
   z-index: 40;
+}
+
+.content-wrap > .app-tabbar {
+  position: sticky;
+  bottom: 0;
+  z-index: 40;
+  flex-shrink: 0;
+}
+
+/*
+ * 部分业务弹窗没有 teleport 到 body，而是保留在 .main 内。
+ * .main 默认层级为 1，移动端底部导航层级为 40，因而会盖住弹窗底部按钮。
+ * 仅在主内容区存在可见 Element Plus 遮罩时提升层级，让弹窗完整覆盖应用导航；
+ * 关闭弹窗后立即恢复原层级，不改变普通页面的导航与滚动行为。
+ */
+@media (max-width: 1199px) {
+  .content-wrap.is-app-shell > .main:has(.el-overlay:not([style*='display: none'])) {
+    z-index: 50;
+  }
+}
+
+/* App 顶栏已经承担页面标题；内容区只保留副标题、筛选与业务操作。 */
+.content-wrap.is-app-shell .main .page-toolbar > .el-page-header,
+.content-wrap.is-app-shell .main .toolbar-title-block > .el-page-header.is-title-only {
+  display: none;
+}
+
+.content-wrap.is-app-shell .main .page-toolbar:has(> .el-page-header.is-title-only) {
+  justify-content: flex-end;
+}
+
+/* 生成/编辑类页面仍保留了 PC 专用 .page-head 容器。
+ * App 顶栏已经提供返回与页面标题，移动端隐藏这行可避免重复占位，
+ * 同时不影响 PC 端的原有页面头部。 */
+.content-wrap.is-app-shell .main .page-head:has(> .el-page-header) {
+  display: none;
 }
 </style>

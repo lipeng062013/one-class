@@ -64,7 +64,7 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
         "查看财务",
         "finance",
         "财务",
-        "查看订单、收支、课消等（学管师仅可见自己绑定的学员）",
+        "查看订单/课消等；学管仅名下学员；运营仅本人相关订单与学员课消；负责人全机构",
     ),
     PermissionDef("finance.write", "操作财务", "finance", "财务", "创建订单、确认收支等写操作"),
     PermissionDef(
@@ -102,6 +102,12 @@ _OPERATOR = frozenset(
         "office.use",
         "leads.read",
         "leads.write",
+        # 线索转学员后：查看档案 + 办理报名/续费（不默认删学员/转交学管）
+        "students.read",
+        "enrollments.manage",
+        # 仅看自己的订单 / 自己相关学员的课消（数据范围在 finance 服务约束）
+        # 不给 academic.read：避免侧栏出现完整「教务中心」；报名选课走 enrollments.manage 放行目录接口
+        "finance.read",
     }
 )
 
@@ -248,13 +254,16 @@ def validate_permission_codes(codes: Iterable[str]) -> tuple[list[str], str | No
 
 def user_permission_payload(user: User) -> dict:
     role_defaults = sorted(role_default_permissions(user.role))
-    extra = parse_extra_permissions(getattr(user, "extra_permissions", None))
+    raw_extra = parse_extra_permissions(getattr(user, "extra_permissions", None))
     # Admin: extras unused; effective is full set
     if user.role == "admin":
         effective = sorted(PERMISSION_CODES)
-        extra = []
+        extra: list[str] = []
     else:
-        effective = sorted(set(role_defaults) | set(extra))
+        # 角色默认升级后，库里可能仍残留已并入默认包的码；对外只展示真正的「额外」
+        defaults_set = set(role_defaults)
+        extra = [c for c in raw_extra if c not in defaults_set]
+        effective = sorted(defaults_set | set(raw_extra))
     return {
         "role": user.role,
         "role_defaults": role_defaults,

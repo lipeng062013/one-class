@@ -62,6 +62,10 @@ def create_enrollment(
             "internal_notes": body.internal_notes,
             "external_notes": body.external_notes,
             "internal_images": body.internal_images,
+            "transfer_mode": body.transfer_mode,
+            "transfer_out_course_id": body.transfer_out_course_id,
+            "transfer_out_items": [t.model_dump() for t in body.transfer_out_items],
+            "transfer_to_student_id": body.transfer_to_student_id,
         },
     )
     if isinstance(result, str):

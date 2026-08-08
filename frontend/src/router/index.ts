@@ -253,6 +253,13 @@ const router = createRouter({
           component: () => import('../views/users/UserListView.vue'),
           meta: { permissions: [P.usersManage] },
         },
+        {
+          path: 'more',
+          name: 'app-more',
+          component: () => import('../views/MoreView.vue'),
+          // 登录即可：页面内按权限过滤入口
+          meta: {},
+        },
       ],
     },
     // 旧 /m 书签 → 统一正式路径（不再挂 MobileLayout）

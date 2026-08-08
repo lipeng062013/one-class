@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.pagination import clamp_page, clamp_page_size, page_payload, paginate_query
-from app.core.roles import managed_student_ids
+from app.core.roles import is_operator_finance_scoped, managed_student_ids
 from app.core.timeutil import now as _utcnow
 from app.core.timeutil import today as business_today
 from app.models.academic import (
@@ -335,6 +335,18 @@ def get_order_detail(db: Session, order_id: int) -> dict | str:
     base["payments"] = [tx_to_dict(db, p) for p in pays]
     return base
 
+def _order_visible_to_user(db: Session, user: User, order: FinanceOrder) -> bool:
+    """学管：仅名下学员；运营：本人业绩/创建 或 本人相关学员。"""
+    scope = managed_student_ids(db, user)
+    if scope is None:
+        return True
+    if is_operator_finance_scoped(user.role):
+        if order.performance_owner_id == user.id or order.created_by == user.id:
+            return True
+        return order.student_id is not None and int(order.student_id) in scope
+    return order.student_id is not None and int(order.student_id) in scope
+
+
 def get_order_detail_for_user(
     db: Session, order_id: int, user: User | None = None, *, log_view: bool = False
 ) -> dict | str:
@@ -342,11 +354,9 @@ def get_order_detail_for_user(
     if isinstance(detail, str):
         return detail
     if user is not None:
-        scope = managed_student_ids(db, user)
-        if scope is not None:
-            sid = detail.get("student_id")
-            if sid is None or int(sid) not in scope:
-                return "订单不存在或无权查看"
+        row = db.get(FinanceOrder, order_id)
+        if row is None or not _order_visible_to_user(db, user, row):
+            return "订单不存在或无权查看"
     if log_view and user is not None:
         add_order_log(
             db,
@@ -498,7 +508,17 @@ def list_orders(
     page_size = clamp_page_size(page_size)
     query = db.query(FinanceOrder)
     scope = managed_student_ids(db, viewer) if viewer is not None else None
-    if scope is not None:
+    if viewer is not None and is_operator_finance_scoped(viewer.role):
+        # 运营：本人业绩/创建的订单，或本人相关学员的订单
+        owner_cond = or_(
+            FinanceOrder.performance_owner_id == viewer.id,
+            FinanceOrder.created_by == viewer.id,
+        )
+        if scope:
+            query = query.filter(or_(owner_cond, FinanceOrder.student_id.in_(scope)))
+        else:
+            query = query.filter(owner_cond)
+    elif scope is not None:
         if not scope:
             return page_payload([], total=0, page=page, page_size=page_size)
         query = query.filter(FinanceOrder.student_id.in_(scope))
@@ -509,7 +529,9 @@ def list_orders(
     if student_q:
         qq = student_q.strip()
         sq = db.query(Student).filter((Student.name.contains(qq)) | (Student.phone.contains(qq)))
-        if scope is not None:
+        if scope is not None and not is_operator_finance_scoped(
+            getattr(viewer, "role", None) if viewer else None
+        ):
             sq = sq.filter(Student.id.in_(scope))
         sids = [s.id for s in sq.all()]
         if not sids:
@@ -1213,6 +1235,8 @@ def assert_student_in_finance_scope(db: Session, user: User, student_id: int) ->
     if scope is None:
         return None
     if int(student_id) not in scope:
+        if is_operator_finance_scoped(user.role):
+            return "仅可查看/操作自己相关的学员"
         return "仅可操作自己绑定的学员"
     return None
 

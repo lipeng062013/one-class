@@ -89,6 +89,8 @@ CSS 变量（`style.css` `:root`，**仅工作台**使用）：
 | 行悬停 | 表格 | `#faf6ee` |
 | `--oc-dialog-footer-gap` | 弹窗/抽屉底部按钮间距 | `12px` |
 | `--oc-dialog-footer-pad-y` | 弹窗 footer 上下内边距 | `12px` |
+| `--oc-dialog-pc-max-height` | PC 弹窗内容高度上限 | `860px` |
+| `--oc-dialog-pc-edge-gap` | PC 弹窗与视口上下最小间距 | `32px` |
 
 ---
 
@@ -136,6 +138,18 @@ CSS 变量（`style.css` `:root`，**仅工作台**使用）：
 ```
 
 美化或新开弹窗时，**只改** `style.css` 里的 `--oc-dialog-footer-gap` 即可全站生效。
+
+---
+
+## 1.2 PC 弹窗高度与滚动（必做）
+
+> 全局实现：`frontend/src/style.css`（`@media (min-width: 992px)` 下的 `.el-dialog` 规则）。
+
+- 普通弹窗最大高度为 `min(860px, 100dvh - 64px)`，上下至少各留 `32px`。
+- 短弹窗按内容自然高度显示，不强制拉满。
+- 标题和底部操作区固定，仅 `.el-dialog__body` 纵向滚动；页面和遮罩层不得滚动。
+- 新弹窗不要在 scoped 样式中重复设置 `max-height`、`overflow-y` 或页面滚动。
+- 全屏预览、排课表等特殊弹窗可通过专用 class 覆盖全局 token 或高度规则。
 
 ---
 
@@ -216,36 +230,88 @@ const pcHeaderStyle = {
 - 状态：`el-tag` + `effect="plain" round`
 - 操作列：`.pc-ops` 右对齐 link 按钮
 
-### 2.4 PC 底部分页（必须）
+### 2.4 分页分工（必须）
 
-> 全局：`.pager-bar.pc-pager`（`style.css`）  
-> **凡有列表数据的业务页，PC 端都必须有分页**；无数据不渲染分页条。  
-> **位置**：PC 分页在**页面底部**（内容少时 flex 沉底，内容多时 sticky 贴主区底）。  
-> wap/pad：卡片 + `useInfiniteScroll`，**不要**底部分页。
+| 端 | 行为 | UI |
+|----|------|-----|
+| **PC**（`!isApp`） | `page` + `pageSize` **替换**当前页 | `PcPagerBar`（仅桌面渲染） |
+| **WAP/Pad**（`isApp`） | chunk **追加**加载 / 本地无限滚动 | `ListLoadStatus`，**禁止页码条** |
+
+#### PC 底部分页
+
+> 组件：`frontend/src/components/PcPagerBar.vue`  
+> 样式：`.pager-bar.pc-pager`（`style.css`）  
+> **凡有列表数据的业务页，PC 端都必须有分页**；无数据不渲染。  
+> **位置**：页面底部（内容少 flex 沉底，内容多 sticky）。  
+> 组件在 `isApp` 时**自动不渲染**，业务页也可写 `v-if="!isApp"`。
 
 ```html
-<div v-if="total > 0" class="pager-bar pc-pager">
-  <el-button size="small" plain :disabled="page <= 1" @click="goFirstPage">首页</el-button>
-  <el-pagination
-    v-model:current-page="page"
-    v-model:page-size="pageSize"
-    :page-sizes="[10, 20, 50, 100]"
-    :total="total"
-    :pager-count="5"
-    background
-    layout="total, sizes, prev, pager, next, jumper"
-  />
-  <el-button size="small" plain :disabled="page >= totalPages" @click="goLastPage">末页</el-button>
-</div>
+<PcPagerBar
+  v-model:page="page"
+  v-model:page-size="pageSize"
+  :total="total"
+  @change="onPageChange"
+  @size-change="onPageSizeChange"
+/>
 ```
 
 | 项 | 要求 |
 |----|------|
-| class | **必须** `pager-bar` + `pc-pager` |
-| 首页/末页 | `size="small" plain` |
+| class | 组件已带 `pager-bar` + `pc-pager` |
+| 首页/末页 | 组件内置 |
 | PAGE_SIZES | `[10, 20, 50, 100]`，默认 20 |
 | layout | `total, sizes, prev, pager, next, jumper` |
-| 视觉 | 米金卡片条：圆角 12、边框、`#fffdf8` 底 |
+
+#### WAP/Pad 加载状态（替代分页）
+
+> 组件：`frontend/src/components/ListLoadStatus.vue`  
+> 数据：优先 `useServerPagedList`（服务端追加）；前端全量再用 `useInfiniteScroll`。  
+> chunk 默认 **10**（`SCROLL_CHUNK`）；**禁止**对「仅当前服务端页」再套内存无限滚动。
+
+```html
+<div ref="sentinelRef" class="list-load-sentinel">
+  <ListLoadStatus
+    :has-more="hasMore"
+    :loading="loadingMore"
+    :loaded="rows.length"
+    :total="total"
+    @more="loadMore"
+    @retry="loadMore"
+  />
+</div>
+```
+
+| 状态 | 文案 |
+|------|------|
+| 加载中 | 加载中… |
+| 还有更多 | 上拉加载更多 · 已显示 n / total（可点） |
+| 已全部 | 已加载全部 total 条 |
+| 失败 | 加载失败，点击重试 |
+
+#### 弹层表面（表单短编辑）
+
+> `useResponsiveSurface`：PC → `ElDialog`，WAP/Pad → `AppSheet`  
+> 筛选统一 `MobileFilterSheet`（draft → 重置 / 查看结果）  
+> 长表单仍用独立路由页，不塞进弹层。  
+> `AppSheet`：header/footer 固定、仅 body 滚动；底部 Sheet 打开时 `html.oc-sheet-open` 锁背后滚动；层级高于 TabBar。
+
+#### WAP/Pad 视觉系统（全站一次生效）
+
+> 全局：`frontend/src/style.css` 中 **「WAP / Pad visual system v3 · 米金轻奢 App 表面」**  
+> 覆盖：页面暖金底、列表卡片（含左金线）、按钮、输入、Tag、空态、Tabs、Dialog/AppSheet、MessageBox。  
+> 组件：`CompactFilterBar` / `MobileFilterSheet` / `MobileActionBar` / `ListLoadStatus` / `AppTabBar` / `AppRail` 已对齐同一套。  
+> **不要**在业务页 scoped 里再写一套冷灰 `#f2f4f7` / 直角 8px 卡片，会冲掉全站美化。
+
+#### 编码与文件写入（必读，防乱码）
+
+| 项 | 要求 |
+|----|------|
+| 源文件编码 | **UTF-8（无 BOM）** |
+| 禁止 | 用 PowerShell `Set-Content` / 默认编码重写整份 `.vue`（易把中文写成乱码并打断标签） |
+| 推荐 | 编辑器用工具内写盘；脚本读写用 `encoding='utf-8'` |
+| 出现乱码 | 先 `git checkout -- <file>` 或从干净 UTF-8 版本恢复，再小步重放逻辑改动 |
+
+### 2.5 服务端分页（推荐，素材/学生已落地）
 
 ### 2.5 服务端分页（推荐，素材/学生已落地）
 

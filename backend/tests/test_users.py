@@ -110,6 +110,48 @@ def test_reset_password(client):
     assert client.post("/api/v1/auth/login", json={"username": "ops", "password": "newpass1"}).status_code == 200
 
 
+def test_admin_can_reset_any_user_password(client):
+    """负责人可重置任意账号密码（含老师），无需对方当前密码。"""
+    headers = auth_header(client, "admin", "admin123")
+    users = _user_items(client, headers, page_size=100)["items"]
+    teacher = next(u for u in users if u["username"] == "teacher1")
+    res = client.post(
+        f"/api/v1/users/{teacher['id']}/reset-password",
+        headers=headers,
+        json={"new_password": "resetbyadmin"},
+    )
+    assert res.status_code == 200, res.text
+    assert (
+        client.post("/api/v1/auth/login", json={"username": "teacher1", "password": "t123"}).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            "/api/v1/auth/login", json={"username": "teacher1", "password": "resetbyadmin"}
+        ).status_code
+        == 200
+    )
+
+
+def test_non_admin_cannot_reset_others_password(client):
+    """运营/老师不能走用户管理重置他人密码。"""
+    admin_headers = auth_header(client, "admin", "admin123")
+    users = _user_items(client, admin_headers, page_size=100)["items"]
+    teacher = next(u for u in users if u["username"] == "teacher1")
+    ops_headers = auth_header(client, "ops", "ops123")
+    res = client.post(
+        f"/api/v1/users/{teacher['id']}/reset-password",
+        headers=ops_headers,
+        json={"new_password": "hacked1"},
+    )
+    assert res.status_code == 403
+    # 原密码仍可登录
+    assert (
+        client.post("/api/v1/auth/login", json={"username": "teacher1", "password": "t123"}).status_code
+        == 200
+    )
+
+
 def test_deactivate_user_blocks_login(client):
     headers = auth_header(client, "admin", "admin123")
     users = _user_items(client, headers, page_size=100)["items"]
