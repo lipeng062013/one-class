@@ -173,7 +173,7 @@ docker compose up -d
 
 ### TypeScript 与部署失败
 
-前端 Docker 构建会执行 `npm run build`（内含 `vue-tsc`）。类型错误会导致**整次部署失败**。
+类型检查在**部署前**完成；服务器 Docker 只跑 `vite build`（`npm run build:docker`），避免小规格 VPS 上 `vue-tsc` 拖过 SSH `command_timeout`（40m）。
 
 防护顺序：
 
@@ -181,7 +181,7 @@ docker compose up -d
 |------|--------|
 | 本地 pre-push | `frontend` 的 `npm run typecheck`，失败则禁止 push |
 | GitHub Actions `typecheck` job | 部署 workflow **先**跑 vue-tsc；失败则**不** SSH、不调服务器 |
-| 服务器 `docker compose build` | 再次 `vue-tsc`（双保险） |
+| 服务器 `docker compose build` | 仅 `vite build`（类型已由上面两关保证） |
 
 手动部署时可在 Actions **Run workflow** 里设 `skip_typecheck=1`（仅紧急情况）；也可勾选 `skip_backup=1`。
 
@@ -209,6 +209,7 @@ bash scripts/deploy/remote-deploy.sh
 | 现象 | 处理 |
 |------|------|
 | Actions 报 Permission denied (publickey) | 公钥是否写入 `authorized_keys`；Secret 私钥是否完整 |
+| `Run Command Timeout` / SSH 约 40m 失败 | 多半卡在服务器 Docker 构建；确认前端 Dockerfile 用 `build:docker`（不跑 vue-tsc）；必要时在服务器手动 `docker compose build` 看卡在哪一步 |
 | 健康检查失败 | 服务器 `docker compose logs`；防火墙 8080 |
 | 备份 exit 2 | `.env` 里 OSS 四项是否齐全 |
 | 备份 exit 3 | `bash scripts/setup/install-ossutil.sh` |

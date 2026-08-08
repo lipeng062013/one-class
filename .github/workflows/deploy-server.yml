@@ -1,5 +1,5 @@
 # Push master → 先 TypeScript 检查 → 通过后再 SSH 部署
-# 避免 vue-tsc 错误拖到服务器 docker build 才失败
+# 类型检查只在 GitHub 跑；服务器 Docker 用 build:docker（仅 vite），避免 VPS 上 vue-tsc 超时
 # 所需 Secrets 见 docs/ops-auto-deploy.md
 name: Deploy to Server
 
